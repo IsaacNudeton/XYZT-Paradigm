@@ -1,0 +1,37 @@
+# XYZT-OS config.txt
+# Pi Zero 2 bare metal boot configuration
+#
+# Works on both Pi Zero 2 W and non-W variants.
+# We use the mini UART (AUX UART1) which our code initializes directly.
+# No device tree overlays — we set GPIO pin functions ourselves.
+
+# Boot in 64-bit mode (AArch64)
+arm_64bit=1
+
+# Enable UART on GPIO 14/15
+# On boards with BT: puts mini UART on pins (what we use)
+# On boards without BT: puts PL011 on pins (our code overrides to Alt5)
+enable_uart=1
+
+# CRITICAL: Fix VPU core clock to 250 MHz.
+# Mini UART baud rate = core_freq / (8 * (baud_reg + 1))
+# 250000000 / (8 * 271) = 115,313 baud (~115200, 0.1% error)
+# Without this, core_freq varies with CPU load -> garbage baud rate.
+core_freq=250
+
+# Explicit kernel filename
+kernel=kernel8.img
+
+# No splash screen
+disable_splash=1
+
+# Minimum GPU memory — we don't use graphics
+gpu_mem=16
+
+# DO NOT add dtoverlay=disable-bt
+# That remaps PL011 to GPIO 14/15 and disconnects mini UART.
+# Our driver uses mini UART (AUX registers). The overlay kills it.
+#
+# DO NOT add dtoverlay=disable-wifi
+# On non-W boards: overlay doesn't exist, may cause boot error.
+# On W boards: unnecessary, we don't use wifi.
