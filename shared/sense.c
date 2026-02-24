@@ -21,10 +21,11 @@
  * Isaac Oravec & Claude — February 2026
  */
 
-#ifndef TEST_SENSE
-#include "xyzt_os.h"
-#include "hw.h"
-#endif
+/*
+ * Platform headers: the including file (kernel.c, main.c, or test harness)
+ * must provide stdint.h + any board-specific types before #include "sense.c".
+ * When building tests, define TEST_SENSE — sense.c needs nothing else.
+ */
 
 /* =========================================================================
  * FEATURE TYPES — structural, not semantic

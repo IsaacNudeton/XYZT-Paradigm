@@ -73,7 +73,7 @@ WireGraph *wire_get(void) { return &g_wire; }
 void capture_for_duration(capture_buf_t *b, uint64_t d) { (void)b; (void)d; }
 
 #define TEST_SENSE
-#include "sense.c"
+#include "../shared/sense.c"
 
 /* ═══════════════════════════════════════════════════════════════
  * SIMULATE PIO CAPTURE OF REAL I2C

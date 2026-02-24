@@ -134,7 +134,7 @@ static int v6_obs_count(uint64_t cp) { return __builtin_popcountll(cp); }
 static int v6_obs_parity(uint64_t cp) { return __builtin_popcountll(cp) & 1; }
 
 #define TEST_SENSE
-#include "sense.c"
+#include "../shared/sense.c"
 
 /* ═══════════════════════════════════════════════════════════════
  * SIGNAL GENERATORS — 7 distinct patterns

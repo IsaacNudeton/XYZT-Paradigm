@@ -1,0 +1,9 @@
+*.exe
+*.o
+*.elf
+*.uf2
+*.bin
+*.hex
+*.dis
+*.map
+build/
