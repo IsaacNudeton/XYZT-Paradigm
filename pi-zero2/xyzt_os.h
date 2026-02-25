@@ -6,7 +6,10 @@
  *   2. Position is identity (where = what)
  *   3. Observation creates meaning (observer interprets co-presence)
  *
- * The engine routes. The observer decides.
+ * Same soul as the Pico. Different body.
+ * Pi Zero 2: Cortex-A53, 512MB RAM, 1GHz, 26 usable GPIO.
+ * No PIO — CPU polls GPIO directly. System timer for timestamps.
+ * UART on GPIO 14/15 for telemetry (what PIO1+GPIO28 does on Pico).
  *
  * Isaac Oravec & Claude — February 2026
  */
@@ -16,7 +19,6 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "v6_core.h"
 
 /* =========================================================================
  * LAYER 0: HARDWARE (drivers.c)
@@ -46,99 +48,102 @@ void     uart_dec(uint32_t val);
 void     uart_dec_signed(int32_t val);
 
 /* =========================================================================
- * LAYER 1: GRID LAYOUT — Pi Zero 2
+ * PIN LAYOUT
  *
- * [0-27]   GPIO bridge (28 pins, 14/15 reserved for UART)
- * [28-43]  User data (16 positions)
- * [44-51]  Program word (8 positions)
- * [52-53]  Observer selector (2 bits)
- * [54]     Execution output
- * [55-63]  Scratch / expansion
+ * 28 GPIO total. Pins 14/15 = UART (telemetry). 26 usable.
+ * All start as input. Body discovery classifies them.
  * ========================================================================= */
 
-#define PI_GPIO_BASE    0
-#define PI_GPIO_COUNT   28
-#define PI_DATA_BASE    28
-#define PI_DATA_WIDTH   16
-#define PI_PROG_BASE    44
-#define PI_PROG_WIDTH   8
-#define PI_OBS_BASE     52
-#define PI_OUT_POS      54
-#define PI_SCRATCH_BASE 55
+#define OBS_PIN_COUNT   28
+#define OBS_PIN_MASK    0x0FFFFFFFu  /* bits 0-27 */
+#define UART_PIN_MASK   ((1u << 14) | (1u << 15))  /* reserved for UART */
+#define SENSE_PIN_MASK  (OBS_PIN_MASK & ~UART_PIN_MASK)  /* 26 usable pins */
 
 /* =========================================================================
- * LAYER 2: WIRE — Hebbian Graph (wire.c)
+ * BODY MAP — discovered at boot
  * ========================================================================= */
 
-#define WIRE_MAX_NODES   64
-#define WIRE_MAX_EDGES   256
-#define WIRE_NAME_LEN    48
-#define W_INIT    128
-#define W_LEARN   20
-#define W_MIN     5
-#define W_MAX     250
-
-#define WNODE_FILE     0
-#define WNODE_PROBLEM  1
-#define WNODE_CONCEPT  2
+#define PIN_UNKNOWN    0
+#define PIN_FLOATING   1
+#define PIN_WORLD_IN   2
+#define PIN_SELF_LINK  3
+#define PIN_OUTPUT     4
+#define PIN_RESERVED   5   /* UART pins */
 
 typedef struct {
-    char     name[WIRE_NAME_LEN];
-    uint8_t  type;
-    uint16_t hit_count;
-    uint8_t  _pad;
-} WireNode;
-
-typedef struct {
-    uint16_t src, dst;
-    uint8_t  weight;
-    uint8_t  passes, fails, _pad;
-} WireEdge;
-
-typedef struct {
-    uint32_t n_nodes;
-    uint32_t n_edges;
-    uint32_t total_learns;
-    WireNode nodes[WIRE_MAX_NODES];
-    WireEdge edges[WIRE_MAX_EDGES];
-} WireGraph;
-
-void       wire_init(void);
-int        wire_find(const char *name);
-int        wire_add(const char *name, uint8_t type);
-void       wire_connect(int a, int b);
-void       wire_learn(int node_id, int pass);
-int        wire_weight(int src, int dst);
-void       wire_print(void);
-void       wire_query(const char *name);
-void       wire_reset(void);
-WireGraph *wire_get(void);
+    uint8_t  role[OBS_PIN_COUNT];
+    uint8_t  responds_to[OBS_PIN_COUNT];
+    uint32_t world_activity[OBS_PIN_COUNT];
+    uint32_t probe_response[OBS_PIN_COUNT];
+    uint8_t  n_world;
+    uint8_t  n_self;
+    uint8_t  n_floating;
+    uint8_t  probed;
+} body_map_t;
 
 /* =========================================================================
- * GPIO CAPTURE (onetwo.c)
+ * ENGINE — same as Pico, inlined for bare-metal
  * ========================================================================= */
 
-#define CAPTURE_BUF_SIZE 4096
-
-typedef struct { uint64_t timestamp; uint32_t pin_state; } edge_event_t;
+#define GRID_SIZE 64
 
 typedef struct {
-    edge_event_t events[CAPTURE_BUF_SIZE];
-    uint32_t head, count, pin_mask;
+    uint8_t  marks[GRID_SIZE];
+    uint8_t  snap[GRID_SIZE];
+    uint8_t  co_present[GRID_SIZE];
+    uint32_t tick_count;
+    uint16_t pop;
+    uint16_t co_pop;
+} xyzt_grid_t;
+
+/* =========================================================================
+ * WIRE GRAPH — same as Pico
+ * ========================================================================= */
+
+#define WIRE_MAX_FEATURES 128
+#define WIRE_STRENGTHEN   8
+#define WIRE_DECAY        1
+#define WIRE_SATURATE     255
+
+typedef struct {
+    uint8_t  edge[WIRE_MAX_FEATURES][WIRE_MAX_FEATURES];
+    uint32_t fire_count[WIRE_MAX_FEATURES];
+    uint16_t n_features;
+} wire_graph_t;
+
+/* =========================================================================
+ * CAPTURE BUFFER
+ * ========================================================================= */
+
+#define CAPTURE_MAX_EDGES 4096
+
+typedef struct {
+    uint64_t timestamp_us;  /* microseconds from system timer */
+    uint32_t pin_state;
+} edge_event_t;
+
+typedef struct {
+    edge_event_t edges[CAPTURE_MAX_EDGES];
+    uint32_t count;
 } capture_buf_t;
 
-typedef struct {
-    uint32_t active_lines, idle_state;
-    uint64_t min_period_us, max_period_us;
-    int has_clock_line;
-    uint32_t clock_pin, bits_per_frame;
-    const char *protocol_name;
-    uint32_t confidence;
-} sense_result_t;
+/* =========================================================================
+ * FEATURE SLOTS — match Pico sense.c exactly
+ * ========================================================================= */
 
-void capture_init(capture_buf_t *buf, uint32_t pin_mask);
-void capture_for_duration(capture_buf_t *buf, uint64_t duration_us);
-void sense_decompose(capture_buf_t *buf, sense_result_t *result);
-void sense_print(sense_result_t *result);
+#define FEAT_REG_BASE    0
+#define FEAT_REG_COUNT   16
+#define FEAT_CORR_BASE   16
+#define FEAT_CORR_COUNT  8
+#define FEAT_BURST_BASE  24
+#define FEAT_BURST_COUNT 8
+#define FEAT_PAT_BASE    32
+#define FEAT_PAT_COUNT   8
+#define FEAT_ACT_BASE    40
+#define FEAT_ACT_COUNT   8
+#define FEAT_SELF_BASE   48
+#define FEAT_SELF_COUNT  8
+#define FEAT_OUT_BASE    56
+#define FEAT_OUT_COUNT   8
 
 #endif

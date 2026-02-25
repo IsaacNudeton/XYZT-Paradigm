@@ -13,7 +13,7 @@ CFLAGS = -Wall -Wextra -O2 -ffreestanding -nostdlib -nostartfiles
 CFLAGS += -mcpu=cortex-a53 -mgeneral-regs-only
 
 ASM_SRCS = boot.S
-C_SRCS = drivers.c wire.c onetwo.c kernel.c
+C_SRCS = drivers.c kernel.c
 
 ASM_OBJS = $(ASM_SRCS:.S=.o)
 C_OBJS = $(C_SRCS:.c=.o)
@@ -37,7 +37,7 @@ $(TARGET).elf: $(OBJS) link.ld
 boot.o: boot.S
 	$(AS) $(CFLAGS) -c $< -o $@
 
-%.o: %.c xyzt_os.h hw.h v6_core.h
+%.o: %.c xyzt_os.h hw.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
