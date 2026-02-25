@@ -1,30 +1,33 @@
 cmake_minimum_required(VERSION 3.13)
 
-set(PICO_SDK_PATH "E:/dev/pico-sdk")
+# Point to pico-sdk (set PICO_SDK_PATH env var or edit this)
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
-include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
-
-project(pico_xyzt C CXX ASM)
+project(xyzt_pico C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
 pico_sdk_init()
 
-add_executable(pico_xyzt
-    main.c
-)
+add_executable(xyzt_pico main.c)
 
-pico_generate_pio_header(pico_xyzt ${CMAKE_CURRENT_LIST_DIR}/sampler.pio)
-
-target_link_libraries(pico_xyzt
-    pico_stdlib
+# Bare metal. No USB stack. No stdio. No OS.
+# Only hardware libraries the silicon needs.
+target_link_libraries(xyzt_pico
+    pico_stdlib          # minimal runtime (startup, clocks, no stdio used)
     hardware_pio
     hardware_dma
+    hardware_gpio
+    hardware_timer
     hardware_clocks
-    pico_unique_id
 )
 
-# USB serial output (not UART)
-pico_enable_stdio_usb(pico_xyzt 1)
-pico_enable_stdio_uart(pico_xyzt 0)
+# Disable ALL stdio — no USB serial, no UART serial. Nothing.
+pico_enable_stdio_usb(xyzt_pico 0)
+pico_enable_stdio_uart(xyzt_pico 0)
 
-pico_add_extra_outputs(pico_xyzt)
+# Generate .uf2 for drag-and-drop flash
+pico_add_uf2_output(xyzt_pico)
+
+# That's it. cmake --build build → xyzt_pico.uf2
+# Hold BOOTSEL, plug Pico, drag .uf2 onto the drive.
+# Board is alive.
