@@ -141,10 +141,8 @@ static void telemetry_init(void) {
 
     pio_sm_init(pio_tap, tap_sm, offset, &c);
 
-    /* Force line high via set pins before enabling */
+    /* Force line high via set pins before enabling (UART idle = HIGH) */
     pio_sm_exec(pio_tap, tap_sm, 0xe001);  /* set pins, 1 — idle high */
-
-    pio_sm_init(pio_tap, tap_sm, offset, &c);
 
     /* DMA: RAM → PIO1 TX FIFO, one-shot per frame */
     tap_dma = dma_claim_unused_channel(true);
