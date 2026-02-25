@@ -14,6 +14,8 @@
  *   CORRELATION — pins that transition together (differential pairs)
  *   BURST       — clusters of activity with gaps (packets)
  *   PATTERN     — repeating bit sequences (SYNC, preambles)
+ *   ACTIVITY    — raw transition density per pin
+ *   SELF        — features the device caused itself (body awareness)
  *
  * Isaac Oravec & Claude — February 2026
  */
@@ -46,15 +48,28 @@
 #define FEAT_BURST_BASE  24
 #define FEAT_BURST_COUNT 8
 
-/* Pattern features: positions 32-47
+/* Pattern features: positions 32-39
  * Repeating bit sequences detected in edge stream. */
 #define FEAT_PAT_BASE    32
-#define FEAT_PAT_COUNT   16
+#define FEAT_PAT_COUNT   8
 
-/* Activity features: positions 48-55
+/* Activity features: positions 40-47
  * Raw transition density. How alive is each pin? */
-#define FEAT_ACT_BASE    48
+#define FEAT_ACT_BASE    40
 #define FEAT_ACT_COUNT   8
+
+/* Self features: positions 48-55
+ * What happened because I drove a pin.
+ * Separated from world so the device knows self from other. */
+#define FEAT_SELF_BASE   48
+#define FEAT_SELF_COUNT  8
+
+/* Output features: positions 56-63
+ * Wire graph pressure toward expression.
+ * When these are strongly wired to world features,
+ * the device has something to say. */
+#define FEAT_OUT_BASE    56
+#define FEAT_OUT_COUNT   8
 
 /* ═══════════════════════════════════════════════════════════
  * STATE — persistent across observe cycles
@@ -63,7 +78,7 @@
 static xyzt_grid_t  grid;
 static wire_graph_t wires;
 static uint32_t     observe_count = 0;
-static uint8_t      prev_features[GRID_SIZE]; /* last cycle's active features */
+static uint8_t      prev_features[GRID_SIZE];
 static uint32_t     prev_feature_count = 0;
 
 /* Histogram for regularity detection */
@@ -75,8 +90,12 @@ static uint32_t pattern_shift = 0;
 static uint32_t pattern_history[64];
 static uint32_t pattern_hist_idx = 0;
 
+/* Output state: which pins are currently being driven */
+static uint8_t  output_active[OBS_PIN_COUNT];
+static uint32_t output_hold_ticks[OBS_PIN_COUNT]; /* how long to hold */
+
 /* ═══════════════════════════════════════════════════════════
- * INIT — called implicitly on first observe
+ * INIT
  * ═══════════════════════════════════════════════════════════ */
 
 static uint8_t sense_initialized = 0;
@@ -86,6 +105,8 @@ static void sense_init(void) {
     wire_init(&wires);
     memset(prev_features, 0, sizeof(prev_features));
     memset(pattern_history, 0, sizeof(pattern_history));
+    memset(output_active, 0, sizeof(output_active));
+    memset(output_hold_ticks, 0, sizeof(output_hold_ticks));
     prev_feature_count = 0;
     observe_count = 0;
     pattern_shift = 0;
@@ -102,6 +123,7 @@ static void sense_init(void) {
  * 4. Read co-presence (Z: what persists = what's real)
  * 5. Hebbian wire: features that co-occur strengthen
  * 6. Decay: features that don't co-occur weaken
+ * 7. Express: if output features are strongly wired, drive pins
  *
  * The wire graph after N cycles IS the model of whatever
  * is connected to the pins. Nobody told it what to learn.
@@ -117,7 +139,7 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     xyzt_clear_all(&grid);
 
     if (buf->count < 2) {
-        /* No edges = silence. Still tick. Wires decay. Still tap. */
+        /* Silence. Still tick. Wires decay. Still tap. */
         wire_decay_all(&wires);
         telemetry_tap(&wires);
         observe_count++;
@@ -131,10 +153,11 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     uint32_t period_hist[PERIOD_BINS];
     memset(period_hist, 0, sizeof(period_hist));
 
-    uint32_t corr_count = 0;       /* edges where multiple pins flip */
+    uint32_t corr_count = 0;
     uint32_t total_edges = buf->count;
-    uint32_t burst_gaps = 0;       /* large gaps = packet boundaries */
-    uint32_t last_edge_ns = buf->edges[0].timestamp_ns;
+    uint32_t burst_gaps = 0;
+    uint32_t pin_activity[OBS_PIN_COUNT];
+    memset(pin_activity, 0, sizeof(pin_activity));
 
     /* Scan all edges */
     for (uint32_t i = 1; i < buf->count; i++) {
@@ -152,16 +175,19 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
         while (tmp) { bits_changed += tmp & 1; tmp >>= 1; }
         if (bits_changed > 1) corr_count++;
 
+        /* Per-pin activity tracking */
+        for (uint pin = 0; pin < OBS_PIN_COUNT; pin++) {
+            if (changed & (1u << pin)) pin_activity[pin]++;
+        }
+
         /* Burst: large gap = packet boundary */
-        if (dt > (window_us * 1000) / 20) {  /* gap > 5% of window */
+        if (dt > (window_us * 1000) / 20) {
             burst_gaps++;
         }
 
         /* Pattern: shift in transition direction */
         uint32_t rising = buf->edges[i].pin_state & ~buf->edges[i-1].pin_state;
         pattern_shift = (pattern_shift << 1) | (rising ? 1 : 0);
-
-        last_edge_ns = buf->edges[i].timestamp_ns;
     }
 
     /* ═══════════════════════════════════════════════════════
@@ -185,7 +211,6 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     /* Correlation: how much of traffic is multi-pin? */
     if (total_edges > 0) {
         uint32_t corr_pct = (corr_count * 100) / total_edges;
-        /* Map 0-100% into CORR positions */
         uint32_t corr_level = (corr_pct * FEAT_CORR_COUNT) / 100;
         if (corr_level >= FEAT_CORR_COUNT) corr_level = FEAT_CORR_COUNT - 1;
         for (uint32_t c = 0; c <= corr_level; c++) {
@@ -210,7 +235,6 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     pattern_history[pattern_hist_idx & 63] = pattern_shift;
     pattern_hist_idx++;
 
-    /* Check for repeating patterns: compare current to history */
     uint32_t pat_matches = 0;
     for (uint32_t h = 0; h < 64; h++) {
         if (pattern_history[h] != 0 &&
@@ -219,7 +243,6 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
         }
     }
     if (pat_matches > 2) {
-        /* Strong pattern detected. Map hash to position. */
         uint8_t pat_pos = FEAT_PAT_BASE + (pattern_shift & (FEAT_PAT_COUNT - 1));
         xyzt_mark(&grid, pat_pos);
         active_features[n_active++] = pat_pos;
@@ -229,7 +252,6 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     {
         uint32_t density = total_edges;
         uint32_t act_level = 0;
-        /* Log-scale binning */
         while (density > 4 && act_level < FEAT_ACT_COUNT - 1) {
             density >>= 1;
             act_level++;
@@ -242,15 +264,37 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     }
 
     /* ═══════════════════════════════════════════════════════
+     * SELF-AWARENESS: mark features caused by my own outputs
+     *
+     * If any pin I'm currently driving shows activity in this
+     * capture window, that's self-caused. Tag it separately
+     * so the wire graph knows self from world.
+     * ═══════════════════════════════════════════════════════ */
+    if (body.probed) {
+        uint32_t self_activity = 0;
+        for (uint pin = 0; pin < OBS_PIN_COUNT; pin++) {
+            if (output_active[pin] && pin_activity[pin] > 0) {
+                self_activity++;
+            }
+        }
+        if (self_activity > 0) {
+            uint32_t self_level = self_activity;
+            if (self_level >= FEAT_SELF_COUNT) self_level = FEAT_SELF_COUNT - 1;
+            for (uint32_t s = 0; s <= self_level; s++) {
+                uint8_t pos = FEAT_SELF_BASE + s;
+                xyzt_mark(&grid, pos);
+                active_features[n_active++] = pos;
+            }
+        }
+    }
+
+    /* ═══════════════════════════════════════════════════════
      * RESOLVE CO-PRESENCE: what persists from last tick?
      * ═══════════════════════════════════════════════════════ */
     xyzt_resolve(&grid);
 
     /* ═══════════════════════════════════════════════════════
      * HEBBIAN WIRING: features that co-occur, wire together
-     *
-     * All active features in this window co-occurred.
-     * Every pair gets strengthened. This IS learning.
      * ═══════════════════════════════════════════════════════ */
     for (uint32_t i = 0; i < n_active; i++) {
         for (uint32_t j = i + 1; j < n_active; j++) {
@@ -268,9 +312,59 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     prev_feature_count = n_active;
 
     /* ═══════════════════════════════════════════════════════
+     * EXPRESSION: if the wire graph has pressure, act
+     *
+     * Output features (56-63) are wired to world features
+     * by the same Hebbian process. When an output feature
+     * is strongly connected to active world features,
+     * the device has learned something worth expressing.
+     *
+     * Map output feature strength to available output pins.
+     * The wire graph decides. Not a programmer.
+     * ═══════════════════════════════════════════════════════ */
+    if (body.probed) {
+        uint8_t out_pin_idx = 0;
+
+        for (int f = 0; f < FEAT_OUT_COUNT; f++) {
+            uint8_t feat = FEAT_OUT_BASE + f;
+            uint32_t pressure = wire_total_weight(&wires, feat);
+
+            /* Find the next available output pin */
+            while (out_pin_idx < OBS_PIN_COUNT &&
+                   body.role[out_pin_idx] != PIN_OUTPUT) {
+                out_pin_idx++;
+            }
+            if (out_pin_idx >= OBS_PIN_COUNT) break;
+
+            if (pressure > 128) {
+                /* Strong connection to active features — express */
+                if (!output_active[out_pin_idx]) {
+                    hw_drive_pin(out_pin_idx, 1);
+                    output_active[out_pin_idx] = 1;
+                    output_hold_ticks[out_pin_idx] = 10;
+
+                    /* Mark self feature so we know we caused this */
+                    if (FEAT_SELF_BASE + f < GRID_SIZE) {
+                        xyzt_mark(&grid, FEAT_SELF_BASE + f);
+                    }
+                }
+            } else if (output_active[out_pin_idx]) {
+                /* Pressure dropped — release */
+                if (output_hold_ticks[out_pin_idx] > 0) {
+                    output_hold_ticks[out_pin_idx]--;
+                } else {
+                    hw_drive_pin(out_pin_idx, 0);
+                    hw_release_pin(out_pin_idx);
+                    output_active[out_pin_idx] = 0;
+                }
+            }
+
+            out_pin_idx++;
+        }
+    }
+
+    /* ═══════════════════════════════════════════════════════
      * TELEMETRY: fire-and-forget one row of wire graph
-     * DMA + PIO1 handle the shift-out. CPU returns immediately.
-     * Full matrix streams out every 128 ticks (128ms).
      * ═══════════════════════════════════════════════════════ */
     telemetry_tap(&wires);
 

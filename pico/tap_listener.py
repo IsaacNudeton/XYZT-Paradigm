@@ -33,7 +33,7 @@ import argparse
 from collections import deque
 
 # ═══════════════════════════════════════════════════════════
-# CONSTANTS — match telemetry.h exactly
+# CONSTANTS — match telemetry.h + sense.c exactly
 # ═══════════════════════════════════════════════════════════
 
 BAUD = 2_000_000
@@ -42,6 +42,24 @@ ROW_SIZE = 128
 FRAME_SIZE = 1 + 1 + ROW_SIZE + 1  # sync + row_idx + data + checksum = 131
 MATRIX_SIZE = 128
 FULL_MATRIX_TICKS = 128  # one row per tick
+
+# Feature position ranges — match sense.c
+FEAT_RANGES = {
+    'regularity': (0, 16),    # periodic signals, binned by period
+    'correlation': (16, 24),  # multi-pin transitions
+    'burst': (24, 32),        # packet boundaries
+    'pattern': (32, 40),      # repeating bit sequences
+    'activity': (40, 48),     # raw transition density
+    'self': (48, 56),         # self-caused features (body awareness)
+    'output': (56, 64),       # expression pressure
+}
+
+def feature_label(idx):
+    """Human-readable label for a feature position."""
+    for name, (lo, hi) in FEAT_RANGES.items():
+        if lo <= idx < hi:
+            return f"{name}[{idx - lo}]"
+    return f"wire[{idx}]"
 
 # ═══════════════════════════════════════════════════════════
 # WIRE GRAPH STATE — the reassembled adjacency matrix
@@ -104,21 +122,54 @@ class WireGraphState:
         """Summary statistics of the wire graph."""
         with self.lock:
             weights = list(self.matrix)
-        
+
         nonzero = sum(1 for w in weights if w > 0)
         crystallized = sum(1 for w in weights if w > 230)  # near saturate
         total = MATRIX_SIZE * MATRIX_SIZE
         mean = sum(weights) / total if total > 0 else 0
         max_w = max(weights)
-        
+        total_weight = sum(weights)
+
         return {
             'nonzero_edges': nonzero // 2,  # symmetric, count once
             'crystallized_edges': crystallized // 2,
             'dissolved_pct': (total - nonzero) / total * 100,
             'mean_weight': mean,
             'max_weight': max_w,
+            'total_weight': total_weight,
             'total_possible': total // 2,
         }
+
+    def get_feature_clusters(self) -> dict:
+        """Which feature categories are wired together?"""
+        with self.lock:
+            m = self.matrix
+
+        clusters = {}
+        for name, (lo, hi) in FEAT_RANGES.items():
+            # Total weight FROM this feature range TO each other range
+            connections = {}
+            for other_name, (olo, ohi) in FEAT_RANGES.items():
+                w = 0
+                for i in range(lo, hi):
+                    for j in range(olo, ohi):
+                        w += m[i * MATRIX_SIZE + j]
+                if w > 0:
+                    connections[other_name] = w
+            if connections:
+                clusters[name] = connections
+
+        return clusters
+
+    def is_converged(self, history: list, window: int = 10) -> bool:
+        """Has the total weight stabilized? (convergence detection)"""
+        if len(history) < window:
+            return False
+        recent = history[-window:]
+        if recent[0] == 0:
+            return False
+        delta = abs(recent[-1] - recent[0]) / max(recent[0], 1)
+        return delta < 0.02  # less than 2% change over window
 
 
 # ═══════════════════════════════════════════════════════════
@@ -361,27 +412,50 @@ def main():
         # Just print stats to terminal
         print("[TAP] Printing stats every second (Ctrl+C to stop)")
         print("[TAP] Use --ws to start WebSocket server for 3D visualization")
+        weight_history = []
+        converged = False
         try:
             while True:
                 time.sleep(1.0)
                 stats = state.get_stats()
                 edges = state.get_top_edges(5)
-                
+                weight_history.append(stats['total_weight'])
+
+                # Convergence detection
+                was_converged = converged
+                converged = state.is_converged(weight_history, window=10)
+                if converged and not was_converged:
+                    print("\n  *** CONVERGED — wire graph has crystallized ***")
+                elif not converged and was_converged:
+                    print("\n  *** DIVERGED — new structure detected ***")
+
                 print(f"\n[Sweep {state.full_sweeps:4d}] "
                       f"frames={state.frames_received} "
                       f"dropped={state.frames_dropped} "
-                      f"fps={state.full_sweeps / max(time.time() - state.t_start, 1):.1f}")
+                      f"fps={state.full_sweeps / max(time.time() - state.t_start, 1):.1f}"
+                      f"{' [STABLE]' if converged else ''}")
                 print(f"  Edges: {stats['nonzero_edges']} active, "
                       f"{stats['crystallized_edges']} crystallized, "
                       f"{stats['dissolved_pct']:.1f}% dissolved")
-                print(f"  Weight: mean={stats['mean_weight']:.2f} "
+                print(f"  Weight: total={stats['total_weight']} "
+                      f"mean={stats['mean_weight']:.2f} "
                       f"max={stats['max_weight']}")
-                
+
                 if edges:
-                    print(f"  Top edges: ", end='')
+                    print(f"  Top: ", end='')
                     for s, d, w in edges:
-                        print(f"[{s}↔{d}:{w}] ", end='')
+                        print(f"[{feature_label(s)}↔{feature_label(d)}:{w}] ", end='')
                     print()
+
+                # Show inter-category connections every 10 sweeps
+                if state.full_sweeps > 0 and state.full_sweeps % 10 == 0:
+                    clusters = state.get_feature_clusters()
+                    if clusters:
+                        print("  Clusters:")
+                        for feat, conns in clusters.items():
+                            top = sorted(conns.items(), key=lambda x: -x[1])[:3]
+                            links = ', '.join(f"{n}={w}" for n, w in top)
+                            print(f"    {feat} → {links}")
         except KeyboardInterrupt:
             print("\n[TAP] Stopped.")
 
