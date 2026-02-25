@@ -124,8 +124,15 @@ static uint32_t pattern_shift = 0;
 static uint32_t pattern_history[64];
 static uint32_t pattern_hist_idx = 0;
 
+static uint8_t  pin_feat[OBS_PIN_COUNT];
 static uint8_t  output_active[OBS_PIN_COUNT];
 static uint32_t output_hold_ticks[OBS_PIN_COUNT];
+static uint8_t  babble_pin = 0;
+static uint32_t babble_cooldown = 0;
+
+#define BABBLE_INTERVAL  50
+#define BABBLE_HOLD       5
+#define EXPRESS_THRESHOLD 128
 
 /* =========================================================================
  * CAPTURE — CPU-driven GPIO polling with system timer timestamps
@@ -439,36 +446,77 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
            n_active < GRID_SIZE ? n_active : GRID_SIZE);
     prev_feature_count = n_active;
 
-    /* Expression */
+    /* Motor system: babble → learn → express */
     if (body.probed) {
-        uint8_t out_pin_idx = 0;
-        for (int f = 0; f < FEAT_OUT_COUNT; f++) {
-            uint8_t feat = FEAT_OUT_BASE + f;
-            uint32_t pressure = wire_total_weight(&wires, feat);
 
-            while (out_pin_idx < OBS_PIN_COUNT &&
-                   body.role[out_pin_idx] != PIN_OUTPUT)
-                out_pin_idx++;
-            if (out_pin_idx >= OBS_PIN_COUNT) break;
+        /* Babble: try output pins, let Hebbian sort them */
+        if (babble_cooldown > 0) {
+            babble_cooldown--;
+        } else {
+            uint8_t tried = 0;
+            while (tried < OBS_PIN_COUNT) {
+                if (body.role[babble_pin] == PIN_OUTPUT &&
+                    !output_active[babble_pin])
+                    break;
+                babble_pin = (babble_pin + 1) % OBS_PIN_COUNT;
+                tried++;
+            }
 
-            if (pressure > 128) {
-                if (!output_active[out_pin_idx]) {
-                    hw_drive_pin(out_pin_idx, 1);
-                    output_active[out_pin_idx] = 1;
-                    output_hold_ticks[out_pin_idx] = 10;
-                    if (FEAT_SELF_BASE + f < GRID_SIZE)
-                        xyzt_mark(&grid, FEAT_SELF_BASE + f);
+            if (tried < OBS_PIN_COUNT) {
+                if (pin_feat[babble_pin] == 0xFF) {
+                    for (int f = 0; f < FEAT_OUT_COUNT; f++) {
+                        uint8_t slot = FEAT_OUT_BASE + f;
+                        uint8_t taken = 0;
+                        for (uint32_t p = 0; p < OBS_PIN_COUNT; p++) {
+                            if (pin_feat[p] == slot) { taken = 1; break; }
+                        }
+                        if (!taken) {
+                            pin_feat[babble_pin] = slot;
+                            break;
+                        }
+                    }
                 }
-            } else if (output_active[out_pin_idx]) {
-                if (output_hold_ticks[out_pin_idx] > 0) {
-                    output_hold_ticks[out_pin_idx]--;
+
+                if (pin_feat[babble_pin] != 0xFF) {
+                    hw_drive_pin(babble_pin, 1);
+                    output_active[babble_pin] = 1;
+                    output_hold_ticks[babble_pin] = BABBLE_HOLD;
+                    xyzt_mark(&grid, pin_feat[babble_pin]);
+
+                    uint8_t self_slot = FEAT_SELF_BASE +
+                        (pin_feat[babble_pin] - FEAT_OUT_BASE);
+                    if (self_slot < FEAT_SELF_BASE + FEAT_SELF_COUNT)
+                        xyzt_mark(&grid, self_slot);
+                }
+
+                babble_pin = (babble_pin + 1) % OBS_PIN_COUNT;
+                babble_cooldown = BABBLE_INTERVAL;
+            }
+        }
+
+        /* Express: drive pins whose learned features have pressure */
+        for (uint32_t pin = 0; pin < OBS_PIN_COUNT; pin++) {
+            if (body.role[pin] != PIN_OUTPUT) continue;
+            if (pin_feat[pin] == 0xFF) continue;
+
+            uint32_t pressure = wire_total_weight(&wires, pin_feat[pin]);
+
+            if (pressure > EXPRESS_THRESHOLD && !output_active[pin]) {
+                hw_drive_pin(pin, 1);
+                output_active[pin] = 1;
+                output_hold_ticks[pin] = BABBLE_HOLD;
+                xyzt_mark(&grid, pin_feat[pin]);
+            }
+
+            if (output_active[pin]) {
+                if (output_hold_ticks[pin] > 0) {
+                    output_hold_ticks[pin]--;
                 } else {
-                    hw_drive_pin(out_pin_idx, 0);
-                    hw_release_pin(out_pin_idx);
-                    output_active[out_pin_idx] = 0;
+                    hw_drive_pin(pin, 0);
+                    hw_release_pin(pin);
+                    output_active[pin] = 0;
                 }
             }
-            out_pin_idx++;
         }
     }
 
@@ -499,8 +547,11 @@ void xyzt_kernel_main(void) {
     wire_init(&wires);
     memset(prev_features, 0, sizeof(prev_features));
     memset(pattern_history, 0, sizeof(pattern_history));
+    memset(pin_feat, 0xFF, sizeof(pin_feat));
     memset(output_active, 0, sizeof(output_active));
     memset(output_hold_ticks, 0, sizeof(output_hold_ticks));
+    babble_pin = 0;
+    babble_cooldown = 0;
 
     /* Body discovery */
     hw_discover_body();

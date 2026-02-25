@@ -90,9 +90,18 @@ static uint32_t pattern_shift = 0;
 static uint32_t pattern_history[64];
 static uint32_t pattern_hist_idx = 0;
 
-/* Output state: which pins are currently being driven */
+/* Motor map: learned pin ↔ output feature binding
+ * pin_feat[pin] = which FEAT_OUT position this pin maps to (0xFF = unassigned)
+ * Babbling assigns them. Wire graph crystallizes the mapping. */
+static uint8_t  pin_feat[OBS_PIN_COUNT];     /* pin → output feature slot */
 static uint8_t  output_active[OBS_PIN_COUNT];
-static uint32_t output_hold_ticks[OBS_PIN_COUNT]; /* how long to hold */
+static uint32_t output_hold_ticks[OBS_PIN_COUNT];
+static uint8_t  babble_pin = 0;              /* next pin to try babbling on */
+static uint32_t babble_cooldown = 0;         /* ticks between babble attempts */
+
+#define BABBLE_INTERVAL  50   /* babble every 50 ticks */
+#define BABBLE_HOLD       5   /* hold babble output for 5 ticks */
+#define EXPRESS_THRESHOLD 128 /* wire pressure needed to drive */
 
 /* ═══════════════════════════════════════════════════════════
  * INIT
@@ -105,8 +114,11 @@ static void sense_init(void) {
     wire_init(&wires);
     memset(prev_features, 0, sizeof(prev_features));
     memset(pattern_history, 0, sizeof(pattern_history));
+    memset(pin_feat, 0xFF, sizeof(pin_feat));
     memset(output_active, 0, sizeof(output_active));
     memset(output_hold_ticks, 0, sizeof(output_hold_ticks));
+    babble_pin = 0;
+    babble_cooldown = 0;
     prev_feature_count = 0;
     observe_count = 0;
     pattern_shift = 0;
@@ -312,54 +324,108 @@ static void sense_observe(const capture_buf_t *buf, uint32_t window_us) {
     prev_feature_count = n_active;
 
     /* ═══════════════════════════════════════════════════════
-     * EXPRESSION: if the wire graph has pressure, act
+     * MOTOR SYSTEM: babble → learn → express
      *
-     * Output features (56-63) are wired to world features
-     * by the same Hebbian process. When an output feature
-     * is strongly connected to active world features,
-     * the device has learned something worth expressing.
+     * Phase 1 — BABBLE: periodically drive a random output
+     * pin. Mark its FEAT_OUT position. Next tick, the sense
+     * layer sees what happened. If the result co-occurs with
+     * world features, wire_bind connects them. If not, decay
+     * dissolves the link. The pin mapping crystallizes the
+     * same way everything else does.
      *
-     * Map output feature strength to available output pins.
-     * The wire graph decides. Not a programmer.
+     * Phase 2 — EXPRESS: for each output pin with a learned
+     * mapping (pin_feat[pin] != 0xFF), check if that FEAT_OUT
+     * position is strongly wired to currently active features.
+     * If so, drive the pin. The wire graph IS the motor map.
+     *
+     * Three forces: STRENGTHEN on resonance, DECAY on silence,
+     * SATURATE when locked in. Same code. Same constants.
+     * No new mechanism.
      * ═══════════════════════════════════════════════════════ */
     if (body.probed) {
-        uint8_t out_pin_idx = 0;
 
-        for (int f = 0; f < FEAT_OUT_COUNT; f++) {
-            uint8_t feat = FEAT_OUT_BASE + f;
-            uint32_t pressure = wire_total_weight(&wires, feat);
-
-            /* Find the next available output pin */
-            while (out_pin_idx < OBS_PIN_COUNT &&
-                   body.role[out_pin_idx] != PIN_OUTPUT) {
-                out_pin_idx++;
+        /* ── BABBLE: try output pins, let Hebbian sort them ── */
+        if (babble_cooldown > 0) {
+            babble_cooldown--;
+        } else {
+            /* Find next available output pin to babble on */
+            uint8_t tried = 0;
+            while (tried < OBS_PIN_COUNT) {
+                if (body.role[babble_pin] == PIN_OUTPUT &&
+                    !output_active[babble_pin]) {
+                    break;
+                }
+                babble_pin = (babble_pin + 1) % OBS_PIN_COUNT;
+                tried++;
             }
-            if (out_pin_idx >= OBS_PIN_COUNT) break;
 
-            if (pressure > 128) {
-                /* Strong connection to active features — express */
-                if (!output_active[out_pin_idx]) {
-                    hw_drive_pin(out_pin_idx, 1);
-                    output_active[out_pin_idx] = 1;
-                    output_hold_ticks[out_pin_idx] = 10;
-
-                    /* Mark self feature so we know we caused this */
-                    if (FEAT_SELF_BASE + f < GRID_SIZE) {
-                        xyzt_mark(&grid, FEAT_SELF_BASE + f);
+            if (tried < OBS_PIN_COUNT) {
+                /* Assign this pin an output feature slot if unassigned */
+                if (pin_feat[babble_pin] == 0xFF) {
+                    /* Find an unused FEAT_OUT slot */
+                    for (int f = 0; f < FEAT_OUT_COUNT; f++) {
+                        uint8_t slot = FEAT_OUT_BASE + f;
+                        uint8_t taken = 0;
+                        for (uint p = 0; p < OBS_PIN_COUNT; p++) {
+                            if (pin_feat[p] == slot) { taken = 1; break; }
+                        }
+                        if (!taken) {
+                            pin_feat[babble_pin] = slot;
+                            break;
+                        }
                     }
                 }
-            } else if (output_active[out_pin_idx]) {
-                /* Pressure dropped — release */
-                if (output_hold_ticks[out_pin_idx] > 0) {
-                    output_hold_ticks[out_pin_idx]--;
-                } else {
-                    hw_drive_pin(out_pin_idx, 0);
-                    hw_release_pin(out_pin_idx);
-                    output_active[out_pin_idx] = 0;
+
+                /* Drive the pin, mark its output feature */
+                if (pin_feat[babble_pin] != 0xFF) {
+                    hw_drive_pin(babble_pin, 1);
+                    output_active[babble_pin] = 1;
+                    output_hold_ticks[babble_pin] = BABBLE_HOLD;
+                    xyzt_mark(&grid, pin_feat[babble_pin]);
+                    active_features[n_active++] = pin_feat[babble_pin];
+
+                    /* Also mark self-feature for this babble */
+                    uint8_t self_slot = FEAT_SELF_BASE +
+                        (pin_feat[babble_pin] - FEAT_OUT_BASE);
+                    if (self_slot < FEAT_SELF_BASE + FEAT_SELF_COUNT) {
+                        xyzt_mark(&grid, self_slot);
+                        active_features[n_active++] = self_slot;
+                    }
                 }
+
+                babble_pin = (babble_pin + 1) % OBS_PIN_COUNT;
+                babble_cooldown = BABBLE_INTERVAL;
+            }
+        }
+
+        /* ── EXPRESS: drive pins whose learned features have pressure ── */
+        for (uint pin = 0; pin < OBS_PIN_COUNT; pin++) {
+            if (body.role[pin] != PIN_OUTPUT) continue;
+            if (pin_feat[pin] == 0xFF) continue;  /* no mapping yet */
+
+            uint32_t pressure = wire_total_weight(&wires, pin_feat[pin]);
+
+            if (pressure > EXPRESS_THRESHOLD && !output_active[pin]) {
+                /* Wire graph says: this output resonates with current input.
+                 * Drive the pin. Mark the feature. Next tick captures the
+                 * result. If it produces coherent structure, the link
+                 * strengthens. If not, it decays. */
+                hw_drive_pin(pin, 1);
+                output_active[pin] = 1;
+                output_hold_ticks[pin] = BABBLE_HOLD;
+                xyzt_mark(&grid, pin_feat[pin]);
             }
 
-            out_pin_idx++;
+            /* Hold and release */
+            if (output_active[pin]) {
+                if (output_hold_ticks[pin] > 0) {
+                    output_hold_ticks[pin]--;
+                } else {
+                    hw_drive_pin(pin, 0);
+                    hw_release_pin(pin);
+                    output_active[pin] = 0;
+                }
+            }
         }
     }
 
