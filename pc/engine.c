@@ -429,7 +429,14 @@ int graph_add(Graph *g, const char *name, uint8_t shell_id, const SubstrateT *T)
     n->layer_zero = 1;
     n->shell_id = shell_id;
     n->child_id = -1;
-    n->coord = coord_pack(id % 1024, shell_id, shell_id);
+    /* Hash name into 3D coords — hash chaining for independent axes */
+    uint32_t hx = hash32((const uint8_t *)name, (int)strlen(name));
+    uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
+    uint32_t hz = hash32((const uint8_t *)&hy, sizeof(hy));
+    int vx = hx % 64;
+    int vy = hy % 64;
+    int vz = hz % 64;
+    n->coord = coord_pack(vx, vy, vz);
     n->Z = (shell_id < 3) ? SHELL_Z[shell_id] : 1.0;
     strncpy(n->name, name, NAME_LEN - 1);
     n->created = n->last_active = (uint32_t)T_now(T);
