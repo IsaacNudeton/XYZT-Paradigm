@@ -393,4 +393,11 @@ int engine_query_name(const Engine *eng, const char *substr,
 int engine_save(const Engine *eng, const char *path);
 int engine_load(Engine *eng, const char *path);
 
+/* Wire graph bridge (toolkit ↔ engine) */
+int engine_wire_import(Engine *eng, const char *path);
+int engine_wire_export(const Engine *eng, const char *path);
+
+/* .xyzt text assembly interpreter */
+int engine_exec(Engine *eng, const char *path);
+
 #endif /* XYZT_ENGINE_H */

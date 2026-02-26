@@ -1301,11 +1301,15 @@ int engine_save(const Engine *eng, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     uint32_t magic = 0x58595A54; /* XYZT */
-    uint32_t version = 9;
+    uint32_t version = 10;       /* v10 = PC engine format */
     fwrite(&magic, 4, 1, f);
     fwrite(&version, 4, 1, f);
+    /* v10 header: n_shells, n_boundary_edges, total_ticks (matches v9 field order) */
+    uint32_t ns = (uint32_t)eng->n_shells;
+    uint32_t nb = (uint32_t)eng->n_boundary_edges;
+    fwrite(&ns, 4, 1, f);
+    fwrite(&nb, 4, 1, f);
     fwrite(&eng->total_ticks, sizeof(eng->total_ticks), 1, f);
-    fwrite(&eng->n_shells, sizeof(eng->n_shells), 1, f);
     for (int s = 0; s < eng->n_shells; s++) {
         const Graph *g = &eng->shells[s].g;
         fwrite(&g->n_nodes, sizeof(g->n_nodes), 1, f);
@@ -1316,7 +1320,6 @@ int engine_save(const Engine *eng, const char *path) {
             fwrite(&g->edges[i], sizeof(Edge), 1, f);
         fwrite(&g->grow_mean, sizeof(g->grow_mean), 1, f);
     }
-    fwrite(&eng->n_boundary_edges, sizeof(eng->n_boundary_edges), 1, f);
     for (int i = 0; i < eng->n_boundary_edges; i++)
         fwrite(&eng->boundary_edges[i], sizeof(Edge), 1, f);
     fclose(f);
@@ -1330,21 +1333,364 @@ int engine_load(Engine *eng, const char *path) {
     fread(&magic, 4, 1, f);
     fread(&version, 4, 1, f);
     if (magic != 0x58595A54) { fclose(f); return -1; }
-    fread(&eng->total_ticks, sizeof(eng->total_ticks), 1, f);
-    fread(&eng->n_shells, sizeof(eng->n_shells), 1, f);
-    for (int s = 0; s < eng->n_shells; s++) {
-        Graph *g = &eng->shells[s].g;
-        fread(&g->n_nodes, sizeof(g->n_nodes), 1, f);
-        for (int i = 0; i < g->n_nodes; i++)
-            fread(&g->nodes[i], sizeof(Node), 1, f);
-        fread(&g->n_edges, sizeof(g->n_edges), 1, f);
-        for (int i = 0; i < g->n_edges; i++)
-            fread(&g->edges[i], sizeof(Edge), 1, f);
-        fread(&g->grow_mean, sizeof(g->grow_mean), 1, f);
+
+    /* v9 packed ShellHdr — must match Solo AI/xyzt.c layout exactly */
+    #pragma pack(push, 1)
+    typedef struct {
+        uint32_t n_nodes, n_edges;
+        uint64_t ticks, learns, grown, pruned, crossings;
+        int32_t  grow_t, prune_t, learn_s, learn_w, learn_r;
+        int32_t  auto_g, auto_p, auto_l;
+        uint8_t  sid, resolve_jt;
+        char     sname[30];
+    } V9ShellHdr;
+    #pragma pack(pop)
+
+    if (version >= 3 && version <= 9) {
+        /* v3-v9 format: packed EngHdr already read magic+version.
+         * Remaining header: n_shells(u32), n_be(u32), ticks(u64). */
+        uint32_t ns, nb;
+        fread(&ns, 4, 1, f);
+        fread(&nb, 4, 1, f);
+        fread(&eng->total_ticks, sizeof(eng->total_ticks), 1, f);
+        eng->n_shells = (int)ns;
+        if (eng->n_shells > MAX_SHELLS) eng->n_shells = MAX_SHELLS;
+        eng->n_boundary_edges = (int)nb;
+        if (eng->n_boundary_edges > eng->max_boundary_edges)
+            eng->n_boundary_edges = eng->max_boundary_edges;
+
+        /* Per-shell: v9 writes packed ShellHdr, then bulk Node[], then bulk Edge[] */
+        for (int s = 0; s < eng->n_shells; s++) {
+            Graph *g = &eng->shells[s].g;
+            V9ShellHdr sh;
+            if (fread(&sh, sizeof(sh), 1, f) != 1) { fclose(f); return -3; }
+            g->n_nodes = (int)sh.n_nodes;
+            g->n_edges = (int)sh.n_edges;
+            if (g->n_nodes > MAX_NODES) g->n_nodes = MAX_NODES;
+            if (g->n_edges > MAX_EDGES) g->n_edges = MAX_EDGES;
+            g->total_ticks = sh.ticks;
+            g->total_learns = sh.learns;
+            g->total_grown = sh.grown;
+            g->total_pruned = sh.pruned;
+            g->total_boundary_crossings = sh.crossings;
+            g->grow_threshold = sh.grow_t;
+            g->prune_threshold = sh.prune_t;
+            g->learn_strengthen = sh.learn_s;
+            g->learn_weaken = sh.learn_w;
+            g->learn_rate = sh.learn_r;
+            g->auto_grow = sh.auto_g;
+            g->auto_prune = sh.auto_p;
+            g->auto_learn = sh.auto_l;
+            eng->shells[s].id = sh.sid;
+            strncpy(eng->shells[s].name, sh.sname, 31);
+            /* v9 bulk reads */
+            for (int i = 0; i < g->n_nodes; i++)
+                if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) { fclose(f); return -4; }
+            for (int i = 0; i < g->n_edges; i++)
+                if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -5; }
+            /* v9 does NOT write grow_mean */
+        }
+        /* Boundary edges */
+        for (int i = 0; i < eng->n_boundary_edges; i++)
+            if (fread(&eng->boundary_edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -6; }
+        /* v9 child graph data — skip (we'll re-spawn from topology) */
+
+    } else if (version == 10) {
+        /* v10 format (PC engine): same header field order, no ShellHdr */
+        uint32_t ns, nb;
+        fread(&ns, 4, 1, f);
+        fread(&nb, 4, 1, f);
+        fread(&eng->total_ticks, sizeof(eng->total_ticks), 1, f);
+        eng->n_shells = (int)ns;
+        if (eng->n_shells > MAX_SHELLS) eng->n_shells = MAX_SHELLS;
+        eng->n_boundary_edges = (int)nb;
+        if (eng->n_boundary_edges > eng->max_boundary_edges)
+            eng->n_boundary_edges = eng->max_boundary_edges;
+
+        for (int s = 0; s < eng->n_shells; s++) {
+            Graph *g = &eng->shells[s].g;
+            fread(&g->n_nodes, sizeof(g->n_nodes), 1, f);
+            if (g->n_nodes > MAX_NODES) g->n_nodes = MAX_NODES;
+            for (int i = 0; i < g->n_nodes; i++)
+                fread(&g->nodes[i], sizeof(Node), 1, f);
+            fread(&g->n_edges, sizeof(g->n_edges), 1, f);
+            if (g->n_edges > MAX_EDGES) g->n_edges = MAX_EDGES;
+            for (int i = 0; i < g->n_edges; i++)
+                fread(&g->edges[i], sizeof(Edge), 1, f);
+            fread(&g->grow_mean, sizeof(g->grow_mean), 1, f);
+        }
+        for (int i = 0; i < eng->n_boundary_edges; i++)
+            fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
+    } else {
+        fprintf(stderr, "Unknown .xyzt version %u\n", version);
+        fclose(f);
+        return -1;
     }
-    fread(&eng->n_boundary_edges, sizeof(eng->n_boundary_edges), 1, f);
-    for (int i = 0; i < eng->n_boundary_edges; i++)
-        fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
+
     fclose(f);
+    return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * WIRE GRAPH BRIDGE — toolkit wire.bin ↔ engine graph
+ * ══════════════════════════════════════════════════════════════ */
+
+/* Toolkit wire.bin format (from tools engine wire.h v3) */
+#define TK_WIRE_MAX_NODES 512
+#define TK_WIRE_MAX_EDGES 4096
+#define TK_WIRE_NAME_LEN  128
+#define TK_WIRE_MAGIC     0x57495245  /* "WIRE" */
+#define TK_WIRE_VER       3
+#define TK_WIRE_ALIVE     128
+
+#pragma pack(push, 1)
+typedef struct {
+    char     name[TK_WIRE_NAME_LEN];
+    uint8_t  type;       /* 0=file, 1=problem, 2=concept */
+    uint8_t  _pad[3];
+    uint32_t created;
+    uint32_t last_active;
+    uint32_t hit_count;
+} TkWireNode;  /* 144 bytes */
+
+typedef struct {
+    uint16_t src;
+    uint16_t dst;
+    uint8_t  weight;     /* 5-250, alive >= 128 */
+    uint8_t  passes;
+    uint8_t  fails;
+    uint8_t  stale;
+    uint32_t created;
+    uint32_t last_active;
+} TkWireEdge;  /* 16 bytes */
+
+typedef struct {
+    uint32_t   magic;
+    uint8_t    version;
+    uint8_t    _pad[3];
+    uint32_t   n_nodes;
+    uint32_t   n_edges;
+    uint32_t   total_learns;
+    TkWireNode nodes[TK_WIRE_MAX_NODES];
+    TkWireEdge edges[TK_WIRE_MAX_EDGES];
+    char       node_shells[TK_WIRE_MAX_NODES][32];
+} TkWireGraph;  /* 155,668 bytes */
+#pragma pack(pop)
+
+int engine_wire_import(Engine *eng, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    TkWireGraph *wg = (TkWireGraph *)calloc(1, sizeof(TkWireGraph));
+    if (!wg) { fclose(f); return -2; }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    size_t to_read = (size_t)fsize;
+    if (to_read > sizeof(TkWireGraph)) to_read = sizeof(TkWireGraph);
+    if (fread(wg, 1, to_read, f) < 16 || wg->magic != TK_WIRE_MAGIC) {
+        free(wg); fclose(f); return -3;
+    }
+    fclose(f);
+
+    Graph *g = &eng->shells[0].g;
+    int imported_nodes = 0;
+    int node_map[TK_WIRE_MAX_NODES];
+    memset(node_map, -1, sizeof(node_map));
+
+    /* Import nodes with non-empty names */
+    for (uint32_t i = 0; i < wg->n_nodes && i < TK_WIRE_MAX_NODES; i++) {
+        if (wg->nodes[i].name[0] == '\0') continue;
+        int eid = graph_add(g, wg->nodes[i].name, 0, &eng->T);
+        if (eid < 0) continue;
+        node_map[i] = eid;
+        g->nodes[eid].hit_count = wg->nodes[i].hit_count;
+        imported_nodes++;
+    }
+
+    /* Import alive, non-stale edges */
+    int imported_edges = 0;
+    for (uint32_t i = 0; i < wg->n_edges && i < TK_WIRE_MAX_EDGES; i++) {
+        TkWireEdge *we = &wg->edges[i];
+        if (we->weight < TK_WIRE_ALIVE) continue;
+        if (we->stale) continue;
+        int s = (we->src < TK_WIRE_MAX_NODES) ? node_map[we->src] : -1;
+        int d = (we->dst < TK_WIRE_MAX_NODES) ? node_map[we->dst] : -1;
+        if (s < 0 || d < 0) continue;
+        /* Engine edges: src_a=s, src_b=s (pass-through), dst=d */
+        if (graph_wire(g, s, s, d, we->weight, 0) >= 0)
+            imported_edges++;
+    }
+
+    free(wg);
+    printf("Wire import: %d nodes, %d edges from '%s'\n",
+           imported_nodes, imported_edges, path);
+    return imported_nodes;
+}
+
+int engine_wire_export(const Engine *eng, const char *path) {
+    TkWireGraph *wg = (TkWireGraph *)calloc(1, sizeof(TkWireGraph));
+    if (!wg) return -1;
+
+    wg->magic = TK_WIRE_MAGIC;
+    wg->version = TK_WIRE_VER;
+
+    const Graph *g = &eng->shells[0].g;
+
+    /* Build alive-node index map (engine idx → export idx) */
+    int export_map[MAX_NODES];
+    memset(export_map, -1, sizeof(export_map));
+
+    uint32_t nn = 0;
+    for (int i = 0; i < g->n_nodes && nn < TK_WIRE_MAX_NODES; i++) {
+        if (!g->nodes[i].alive) continue;
+        export_map[i] = (int)nn;
+        TkWireNode *wn = &wg->nodes[nn];
+        strncpy(wn->name, g->nodes[i].name, TK_WIRE_NAME_LEN - 1);
+        wn->type = g->nodes[i].shell_id;
+        wn->created = g->nodes[i].created;
+        wn->last_active = g->nodes[i].last_active;
+        wn->hit_count = g->nodes[i].hit_count;
+        strncpy(wg->node_shells[nn], "xyzt-pc", 31);
+        nn++;
+    }
+    wg->n_nodes = nn;
+
+    /* Export engine edges */
+    uint32_t ne = 0;
+    for (int i = 0; i < g->n_edges && ne < TK_WIRE_MAX_EDGES; i++) {
+        const Edge *e = &g->edges[i];
+        int ws = export_map[e->src_a];
+        int wd = export_map[e->dst];
+        if (ws < 0 || wd < 0) continue;
+
+        TkWireEdge *we = &wg->edges[ne];
+        we->src = (uint16_t)ws;
+        we->dst = (uint16_t)wd;
+        we->weight = e->weight;
+        we->passes = 0;
+        we->fails = 0;
+        we->stale = 0;
+        we->created = e->created;
+        we->last_active = e->last_active;
+
+        /* Crystallized source node → weight boost */
+        if (g->nodes[e->src_a].crystal_n >= 6 && we->weight < 250) {
+            int nw = (int)we->weight + 20;
+            we->weight = nw > 250 ? 250 : (uint8_t)nw;
+        }
+        ne++;
+    }
+    wg->n_edges = ne;
+    wg->total_learns = (uint32_t)(g->total_learns & 0xFFFFFFFF);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) { free(wg); return -2; }
+    fwrite(wg, sizeof(TkWireGraph), 1, f);
+    fclose(f);
+
+    printf("Wire export: %d nodes, %d edges to '%s'\n", (int)nn, (int)ne, path);
+    free(wg);
+    return (int)nn;
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * .xyzt TEXT ASSEMBLY INTERPRETER
+ * ══════════════════════════════════════════════════════════════ */
+
+int engine_exec(Engine *eng, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "exec: cannot open '%s'\n", path); return -1; }
+
+    int gx = 0, gy = 0, gz = 0;
+    int32_t *grid = NULL;
+    int grid_size = 0;
+
+    char line[512];
+    int linenum = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        linenum++;
+        /* Strip comment and trailing whitespace */
+        char *hash = strchr(line, '#');
+        if (hash) *hash = '\0';
+        int len = (int)strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r' || line[len-1] == ' '))
+            line[--len] = '\0';
+        if (len == 0) continue;
+
+        if (strncmp(line, "LATTICE ", 8) == 0) {
+            if (sscanf(line + 8, "%d %d %d", &gx, &gy, &gz) != 3) {
+                fprintf(stderr, "exec:%d: bad LATTICE\n", linenum);
+                fclose(f); free(grid); return -2;
+            }
+            grid_size = gx * gy * gz;
+            free(grid);
+            grid = (int32_t *)calloc(grid_size, sizeof(int32_t));
+            printf("LATTICE %d×%d×%d = %d positions\n", gx, gy, gz, grid_size);
+        }
+        else if (strncmp(line, "SET ", 4) == 0) {
+            int x, y, z, val;
+            if (sscanf(line + 4, "%d %d %d %d", &x, &y, &z, &val) != 4) continue;
+            if (!grid || x < 0 || x >= gx || y < 0 || y >= gy || z < 0 || z >= gz) continue;
+            int idx = x + y * gx + z * gx * gy;
+            grid[idx] = val;
+        }
+        else if (strncmp(line, "XOR ", 4) == 0 || strncmp(line, "AND ", 4) == 0 ||
+                 strncmp(line, "OR ", 3) == 0) {
+            /* Parse: OP ax ay az  bx by bz -> dx dy dz */
+            int ax, ay, az, bx, by, bz, dx, dy, dz;
+            const char *p = line + 4;
+            if (line[0] == 'O' && line[1] == 'R') p = line + 3;
+            while (*p == ' ') p++;
+            char arrow[4];
+            if (sscanf(p, "%d %d %d %d %d %d %3s %d %d %d",
+                        &ax, &ay, &az, &bx, &by, &bz, arrow, &dx, &dy, &dz) != 10) continue;
+            if (!grid) continue;
+            int ai = ax + ay * gx + az * gx * gy;
+            int bi = bx + by * gx + bz * gx * gy;
+            int di = dx + dy * gx + dz * gx * gy;
+            if (ai < 0 || ai >= grid_size || bi < 0 || bi >= grid_size ||
+                di < 0 || di >= grid_size) continue;
+
+            int32_t va = grid[ai], vb = grid[bi];
+            if (strncmp(line, "XOR", 3) == 0)     grid[di] = va ^ vb;
+            else if (strncmp(line, "AND", 3) == 0) grid[di] = va & vb;
+            else                                   grid[di] = va | vb;
+        }
+        else if (strncmp(line, "RUN ", 4) == 0) {
+            int n = atoi(line + 4);
+            if (n < 1) n = 1;
+            for (int i = 0; i < n; i++)
+                engine_tick(eng);
+        }
+        else if (strncmp(line, "READ ", 5) == 0) {
+            int x, y, z;
+            if (sscanf(line + 5, "%d %d %d", &x, &y, &z) != 3) continue;
+            if (!grid || x < 0 || x >= gx || y < 0 || y >= gy || z < 0 || z >= gz) continue;
+            int idx = x + y * gx + z * gx * gy;
+            printf("READ (%d,%d,%d) = %d\n", x, y, z, grid[idx]);
+        }
+        else if (strcmp(line, "PRINT") == 0) {
+            if (!grid) continue;
+            printf("--- GRID %d×%d×%d ---\n", gx, gy, gz);
+            for (int z = 0; z < gz; z++) {
+                printf("z=%d:\n", z);
+                for (int y = 0; y < gy; y++) {
+                    printf("  ");
+                    for (int x = 0; x < gx; x++) {
+                        int idx = x + y * gx + z * gx * gy;
+                        printf("%d ", grid[idx]);
+                    }
+                    printf("\n");
+                }
+            }
+        }
+    }
+
+    fclose(f);
+    free(grid);
+    printf("exec: %d lines processed\n", linenum);
     return 0;
 }

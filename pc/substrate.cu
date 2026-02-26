@@ -81,17 +81,16 @@ __global__ void kernel_cube_tick(CubeState *cubes, int n_cubes) {
     sr = (sr << 1) | (present != 0 ? 1 : 0);
     c->shift_reg[pos] = sr;
 
-    /* Substrate update: strengthen if co-present, proportional decay if not.
-     * 63/64 decay: halves every ~44 ticks. Gentle enough to survive between
-     * sync intervals (137 ticks) but strong enough to prevent saturation.
-     * After 137 ticks: 96 * (63/64)^137 ≈ 11. Seeding restores it.
-     * Creates spatial gradients: hot near active injections, cool elsewhere. */
+    /* Substrate update: strengthen if active, proportional decay if not.
+     * 63/64 decay (~1.6% per tick). Proven with T3 PASS at this rate.
+     * MUST match kernel_cube_tick_observe — audit caught inconsistency. */
     if (present != 0) {
         int nw = (int)c->substrate[pos] + 1;
         c->substrate[pos] = nw > 255 ? 255 : (uint8_t)nw;
     } else {
-        int nw = (int)c->substrate[pos] * 63 / 64;
-        c->substrate[pos] = (uint8_t)nw;
+        int cur = (int)c->substrate[pos];
+        int nw = cur - (cur / 64 + (cur > 0 ? 1 : 0));  /* floor(cur * 63/64) */
+        c->substrate[pos] = nw < 0 ? 0 : (uint8_t)nw;
     }
 }
 
@@ -172,12 +171,13 @@ __global__ void kernel_cube_tick_observe(
     sr = (sr << 1) | (present != 0 ? 1 : 0);
     c->shift_reg[pos] = sr;
 
-    /* Substrate Hebbian */
+    /* Substrate — proportional 63/64 decay. MUST match kernel_cube_tick. */
     if (present != 0) {
         int nw = (int)c->substrate[pos] + 1;
         c->substrate[pos] = nw > 255 ? 255 : (uint8_t)nw;
     } else {
-        int nw = (int)c->substrate[pos] - 1;
+        int cur = (int)c->substrate[pos];
+        int nw = cur - (cur / 64 + (cur > 0 ? 1 : 0));
         c->substrate[pos] = nw < 0 ? 0 : (uint8_t)nw;
     }
 
@@ -463,22 +463,38 @@ extern "C" int substrate_inject_gateways(int n_cubes) {
 
 extern "C" void substrate_hebbian_update(CubeState *cubes, int n_cubes) {
     /* CPU-side Hebbian: correlate co-presence results between neighbors.
-     * Positions that fire together wire together (strengthen substrate).
-     * Positions that fire apart weaken. */
+     * Bidirectional: co-present → strengthen, active-but-not-co-present → weaken.
+     * Without weakening, all positions saturate to 255 and spatial
+     * information is destroyed. */
     for (int c = 0; c < n_cubes; c++) {
         CubeState *cube = &cubes[c];
         for (int p = 0; p < CUBE_SIZE; p++) {
             if (!cube->active[p]) continue;
             uint64_t cp = cube->co_present[p];
-            if (cp == 0) continue;
+            uint64_t rd = cube->reads[p];
 
-            /* Strengthen: co-present neighbors → boost substrate */
-            uint64_t bits = cp;
-            while (bits) {
-                int b = host_ctzll(bits);
-                int nw = (int)cube->substrate[b] + 2;
-                cube->substrate[b] = nw > 255 ? 255 : (uint8_t)nw;
-                bits &= bits - 1;
+            if (cp != 0) {
+                /* Strengthen: co-present neighbors → boost substrate.
+                 * +1 (not +2). Matches GPU kernel rate. CC proved at this level. */
+                uint64_t bits = cp;
+                while (bits) {
+                    int b = host_ctzll(bits);
+                    int nw = (int)cube->substrate[b] + 1;
+                    cube->substrate[b] = nw > 255 ? 255 : (uint8_t)nw;
+                    bits &= bits - 1;
+                }
+            }
+
+            /* Weaken: wired neighbors that are NOT co-present → decay substrate.
+             * This is the missing half of Hebb's rule. Without it, everything
+             * saturates regardless of activity pattern. */
+            uint64_t absent = rd & ~cp;
+            uint64_t bits2 = absent;
+            while (bits2) {
+                int b = host_ctzll(bits2);
+                int nw = (int)cube->substrate[b] - 1;
+                cube->substrate[b] = nw < 0 ? 0 : (uint8_t)nw;
+                bits2 &= bits2 - 1;
             }
         }
     }
