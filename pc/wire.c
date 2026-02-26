@@ -153,15 +153,24 @@ void wire_hebbian_from_gpu(Engine *eng, const CubeState *cubes, int n_cubes) {
 }
 
 void wire_engine_to_gpu(const Engine *eng, CubeState *cubes, int n_cubes) {
-    /* Map engine node integer values to GPU substrate weights.
-     * Each node injects its val as a substrate boost at its coord position. */
+    /* Content-dependent spatial seeding: spread node's identity fingerprint
+     * across its local cube as a spatial pattern, not a single-point blast.
+     *
+     * Each of the 64 positions in the cube gets a substrate value derived
+     * from the node's identity bitstream. Different content → different
+     * spatial pattern → different retina views for children.
+     *
+     * Capped at SEED_CAP to prevent saturation. SET, not additive —
+     * only raises positions that are below the seeded value. */
 
     const Graph *g0 = &eng->shells[0].g;
+    const int SEED_CAP = 96;  /* above SUB_ALIVE (64) so seeded positions cross threshold,
+                                  well below 255 saturation — leaves room for spatial gradients */
 
     for (int i = 0; i < g0->n_nodes; i++) {
         const Node *n = &g0->nodes[i];
         if (!n->alive || n->layer_zero) continue;
-        if (n->val == 0) continue;
+        if (n->identity.len < 64) continue;  /* need fingerprint for spatial pattern */
 
         int x = coord_x(n->coord) % (VOL_X * CUBE_DIM);
         int y = coord_y(n->coord) % (VOL_Y * CUBE_DIM);
@@ -171,17 +180,36 @@ void wire_engine_to_gpu(const Engine *eng, CubeState *cubes, int n_cubes) {
         int cube_id = cube_id_from(cx, cy, cz);
         if (cube_id < 0 || cube_id >= n_cubes) continue;
 
-        int lx = x % CUBE_DIM, ly = y % CUBE_DIM, lz = z % CUBE_DIM;
-        int lpos = local_idx(lx, ly, lz);
-
         CubeState *cube = &cubes[cube_id];
 
-        /* Inject: boost substrate by abs(val), mark if positive */
-        int boost = abs(n->val);
-        if (boost > 255) boost = 255;
-        int nw = (int)cube->substrate[lpos] + boost;
-        cube->substrate[lpos] = nw > 255 ? 255 : (uint8_t)nw;
-        cube->marked[lpos] = (n->val > 0) ? 1 : 0;
+        /* Seed each position by hashing identity with position index.
+         * Raw bit sampling fails because ONETWO fingerprints are sparse
+         * (~20% density). Instead, hash(identity_word XOR position) gives
+         * full-range values that are deterministic but content-dependent.
+         * Different fingerprints → different spatial patterns. */
+        for (int p = 0; p < CUBE_SIZE; p++) {
+            /* Mix identity words with position to get a content-dependent seed */
+            int word_idx = p % (n->identity.len / 64 + 1);
+            uint64_t id_word = (word_idx < BS_WORDS) ? n->identity.w[word_idx] : 0;
+            uint32_t mix = (uint32_t)(id_word ^ (id_word >> 32)) ^ (uint32_t)(p * 2654435761u);
+            /* FNV-1a hash of the mix for good distribution */
+            uint32_t h = 2166136261u;
+            h ^= mix & 0xFF; h *= 16777619u;
+            h ^= (mix >> 8) & 0xFF; h *= 16777619u;
+            h ^= (mix >> 16) & 0xFF; h *= 16777619u;
+            h ^= (mix >> 24) & 0xFF; h *= 16777619u;
+            /* Map hash to seed range. Use top bits for better uniformity. */
+            int seed = (int)((h >> 24) & 0xFF) * SEED_CAP / 255;
+
+            /* REPLACE semantics: re-stamp the content pattern each sync.
+             * This counteracts co-presence saturation — positions that
+             * the fingerprint says should be cold get pulled back down. */
+            cube->substrate[p] = (uint8_t)seed;
+
+            /* Mark based on whether this position is above threshold */
+            if (cube->substrate[p] >= SUB_ALIVE)
+                cube->marked[p] = 1;
+        }
     }
 }
 

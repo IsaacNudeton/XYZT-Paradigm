@@ -81,13 +81,17 @@ __global__ void kernel_cube_tick(CubeState *cubes, int n_cubes) {
     sr = (sr << 1) | (present != 0 ? 1 : 0);
     c->shift_reg[pos] = sr;
 
-    /* Substrate update: strengthen if active, decay if not */
+    /* Substrate update: strengthen if co-present, proportional decay if not.
+     * 63/64 decay: halves every ~44 ticks. Gentle enough to survive between
+     * sync intervals (137 ticks) but strong enough to prevent saturation.
+     * After 137 ticks: 96 * (63/64)^137 ≈ 11. Seeding restores it.
+     * Creates spatial gradients: hot near active injections, cool elsewhere. */
     if (present != 0) {
         int nw = (int)c->substrate[pos] + 1;
         c->substrate[pos] = nw > 255 ? 255 : (uint8_t)nw;
     } else {
-        int nw = (int)c->substrate[pos] - 1;
-        c->substrate[pos] = nw < 0 ? 0 : (uint8_t)nw;
+        int nw = (int)c->substrate[pos] * 63 / 64;
+        c->substrate[pos] = (uint8_t)nw;
     }
 }
 
