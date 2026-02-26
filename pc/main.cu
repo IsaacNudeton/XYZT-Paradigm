@@ -274,6 +274,44 @@ static void test_wire_mapping(void) {
     engine_destroy(&eng);
 }
 
+static void test_nesting_retina(void) {
+    printf("--- Nesting Retina ---\n");
+    Engine eng;
+    engine_init(&eng);
+
+    /* Ingest two different texts */
+    engine_ingest_text(&eng, "alpha", "alpha data for testing the retina injection pathway");
+    engine_ingest_text(&eng, "beta", "beta data completely different content for retina test");
+
+    /* Force crystallization by maxing valence */
+    Graph *g0 = &eng.shells[0].g;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        if (g0->nodes[i].alive && !g0->nodes[i].layer_zero)
+            g0->nodes[i].valence = 255;
+    }
+
+    /* Tick past SUBSTRATE_INT to trigger nest_check */
+    for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+
+    check("children spawned", 1, eng.n_children > 0 ? 1 : 0);
+
+    if (eng.n_children > 0) {
+        int slot = -1;
+        for (int i = 0; i < MAX_CHILDREN; i++)
+            if (eng.child_owner[i] >= 0) { slot = i; break; }
+        if (slot >= 0) {
+            check("child has 9 nodes", 9, eng.child_pool[slot].n_nodes);
+            check("child has 4 edges", 4, eng.child_pool[slot].n_edges);
+            check("child ticked", 1, eng.child_pool[slot].total_ticks > 0 ? 1 : 0);
+            /* Output node is last (index 8) */
+            check("output node alive", 1, eng.child_pool[slot].nodes[8].alive);
+            check("retina nodes not layer_zero", 0, eng.child_pool[slot].nodes[0].layer_zero);
+        }
+    }
+
+    engine_destroy(&eng);
+}
+
 static void cmd_test(void) {
     printf("=== XYZT PC Self-Test ===\n\n");
 
@@ -282,10 +320,37 @@ static void cmd_test(void) {
     test_gpu_boolean();
     test_transducer();
     test_wire_mapping();
+    test_nesting_retina();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
     if (g_fail == 0) printf("ALL PASS.\n");
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * RETINA HOOKUP — zero-copy pointer entanglement
+ * ══════════════════════════════════════════════════════════════ */
+
+static void hookup_retinas(Engine *eng, CubeState *h_cubes, int n_cubes) {
+    /* For each child graph, point its retina at the parent's substrate slice.
+     * The child reads 64 substrate bytes directly — no copy, no attenuation.
+     * Different parents at different spatial locations → different retina
+     * patterns → distinct child topologies. */
+    for (int c = 0; c < MAX_CHILDREN; c++) {
+        if (eng->child_owner[c] < 0) continue;
+        int owner_id = eng->child_owner[c];
+        if (owner_id >= eng->shells[0].g.n_nodes) continue;
+        Node *owner = &eng->shells[0].g.nodes[owner_id];
+        int x = coord_x(owner->coord) % (VOL_X * CUBE_DIM);
+        int y = coord_y(owner->coord) % (VOL_Y * CUBE_DIM);
+        int z = coord_z(owner->coord) % (VOL_Z * CUBE_DIM);
+        int cx = x / CUBE_DIM, cy = y / CUBE_DIM, cz = z / CUBE_DIM;
+        int cube_id = cube_id_from(cx, cy, cz);
+        if (cube_id >= 0 && cube_id < n_cubes) {
+            eng->child_pool[c].retina = h_cubes[cube_id].substrate;
+            eng->child_pool[c].retina_len = CUBE_SIZE;
+        }
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -306,6 +371,7 @@ static void cmd_run(void) {
     if (gpu_ok) {
         /* Download auto-wired state so h_cubes has reads[]/active[] from kernel_auto_wire_local */
         substrate_download(h_cubes, n_cubes);
+        hookup_retinas(&eng, h_cubes, n_cubes);
         printf("GPU substrate initialized: %d cubes (%d voxels)\n\n", n_cubes, n_cubes * CUBE_SIZE);
     } else {
         printf("GPU init failed, running CPU-only\n\n");
@@ -327,6 +393,7 @@ static void cmd_run(void) {
         if (strcmp(line, "status") == 0) {
             if (gpu_ok) {
                 substrate_download(h_cubes, n_cubes);
+                hookup_retinas(&eng, h_cubes, n_cubes);
                 report_full(&eng, h_cubes, n_cubes);
             } else {
                 report_full(&eng, NULL, 0);
@@ -376,6 +443,7 @@ static void cmd_run(void) {
                  * Cost: ~1ms per sync (6MB PCIe download). */
                 if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
                     substrate_download(h_cubes, n_cubes);
+                    hookup_retinas(&eng, h_cubes, n_cubes);
                     wire_gpu_to_engine(&eng, h_cubes, n_cubes);
                     wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
                     wire_engine_to_gpu(&eng, h_cubes, n_cubes);
@@ -386,6 +454,7 @@ static void cmd_run(void) {
             /* Final sync at end of batch */
             if (gpu_ok) {
                 substrate_download(h_cubes, n_cubes);
+                hookup_retinas(&eng, h_cubes, n_cubes);
                 wire_gpu_to_engine(&eng, h_cubes, n_cubes);
                 wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
             }

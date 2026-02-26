@@ -50,9 +50,25 @@ void report_nesting(const Engine *eng) {
         if (eng->child_owner[i] < 0) continue;
         const Graph *child = &eng->child_pool[i];
         const Node *owner = &eng->shells[0].g.nodes[eng->child_owner[i]];
-        printf("  child[%d] owned by '%s': %d nodes, %d edges, %llu ticks\n",
+        int out_idx = child->n_nodes - 1;
+        int32_t out_val = (out_idx >= 0) ? child->nodes[out_idx].val : 0;
+
+        printf("  child[%d] owned by '%s': %d nodes, %d edges, %llu ticks, out=%d",
                i, owner->name, child->n_nodes, child->n_edges,
-               (unsigned long long)child->total_ticks);
+               (unsigned long long)child->total_ticks, out_val);
+
+        /* Show retina octant values if connected */
+        if (child->retina && child->retina_len >= 64) {
+            printf(" retina=[");
+            for (int r = 0; r < 8 && r < child->n_nodes; r++) {
+                printf("%d", child->nodes[r].val);
+                if (r < 7) printf(",");
+            }
+            printf("]");
+        } else {
+            printf(" (no retina)");
+        }
+        printf("\n");
     }
 }
 

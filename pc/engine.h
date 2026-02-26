@@ -283,6 +283,8 @@ typedef struct {
     int auto_grow, auto_prune, auto_learn;
     int grow_mean;
     int grow_interval, prune_interval;
+    const uint8_t *retina;    /* zero-copy view into parent's substrate cube */
+    int retina_len;            /* positions visible (64 for 4^3 cube) */
 } Graph;
 
 /* Shell — graph with identity */

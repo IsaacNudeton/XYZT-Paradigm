@@ -405,6 +405,8 @@ void graph_init(Graph *g) {
     g->grow_mean = 0;
     g->grow_interval = 10;
     g->prune_interval = 20;
+    g->retina = NULL;
+    g->retina_len = 0;
 }
 
 void graph_destroy(Graph *g) {
@@ -591,15 +593,35 @@ static int nest_spawn(Engine *eng, int node_id) {
     if (slot < 0) return -1;
     graph_init(&eng->child_pool[slot]);
     Graph *child = &eng->child_pool[slot];
-    int inp = graph_add(child, "input", 0, &eng->T);
-    int out = graph_add(child, "output", 0, &eng->T);
-    if (inp >= 0 && out >= 0) {
-        child->nodes[inp].alive = 1;
-        child->nodes[inp].Z = owner->Z;
-        child->nodes[out].alive = 1;
-        child->nodes[out].Z = owner->Z;
-        graph_wire(child, inp, inp, out, 128, 0);
+
+    /* 8 retina input nodes (one per octant of parent's 4^3 cube) + 1 output.
+     * Each retina node reads spatial substrate from its octant.
+     * Replaces scalar int32_t passthrough — children see parent's
+     * spatial structure directly via zero-copy retina pointer. */
+    char rname[32];
+    for (int r = 0; r < 8; r++) {
+        snprintf(rname, 32, "retina_%d", r);
+        int rid = graph_add(child, rname, 0, &eng->T);
+        if (rid >= 0) {
+            child->nodes[rid].alive = 1;
+            child->nodes[rid].layer_zero = 0;  /* NOT source — receives from retina */
+            child->nodes[rid].identity.len = 64;
+            child->nodes[rid].Z = owner->Z;
+        }
     }
+    int out = graph_add(child, "output", 0, &eng->T);
+    if (out >= 0) {
+        child->nodes[out].alive = 1;
+        child->nodes[out].layer_zero = 0;
+        child->nodes[out].identity.len = 64;
+        child->nodes[out].Z = owner->Z;
+    }
+
+    /* Wire retina pairs to output: (r0,r1)→out, (r2,r3)→out, etc.
+     * Paired octants are spatial opposites — natural 2-input edges. */
+    for (int r = 0; r < 8; r += 2)
+        graph_wire(child, r, r + 1, 8, 128, 0);
+
     eng->child_owner[slot] = node_id;
     eng->n_children++;
     owner->child_id = (int8_t)slot;
@@ -894,16 +916,39 @@ void engine_tick(Engine *eng) {
                 if (!n->alive || n->layer_zero) continue;
                 if (n->n_incoming == 0 && n->accum == 0) continue;
 
-                /* Nesting delegation */
+                /* Nesting delegation — retina reads parent's substrate */
                 if (n->child_id >= 0 && n->child_id < MAX_CHILDREN
                     && eng->child_owner[n->child_id] == i) {
                     Graph *child = &eng->child_pool[n->child_id];
-                    if (child->n_nodes > 0 && child->nodes[0].alive)
-                        child->nodes[0].val = n->accum;
+
+                    if (child->retina && child->retina_len >= 64) {
+                        /* Inject retina: 8 octant nodes read spatial substrate.
+                         * Octant r = (ox,oy,oz) where ox=r&1, oy=(r>>1)&1, oz=(r>>2)&1.
+                         * Each octant covers 2x2x2 = 8 substrate positions. */
+                        for (int r = 0; r < 8 && r < child->n_nodes; r++) {
+                            int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
+                            int32_t octant_val = 0;
+                            for (int lz = oz*2; lz < oz*2+2; lz++)
+                                for (int ly = oy*2; ly < oy*2+2; ly++)
+                                    for (int lx = ox*2; lx < ox*2+2; lx++)
+                                        octant_val += child->retina[lx + ly*4 + lz*16];
+                            child->nodes[r].val = octant_val;
+                        }
+                    } else {
+                        /* Fallback: distribute accum across retina nodes */
+                        int n_inp = child->n_nodes > 1 ? child->n_nodes - 1 : 1;
+                        for (int r = 0; r < n_inp && r < child->n_nodes; r++)
+                            child->nodes[r].val = n->accum / n_inp;
+                    }
+
                     for (int ct = 0; ct < 64; ct++)
                         if (!child_tick_once(child)) break;
-                    if (child->n_nodes > 1 && child->nodes[1].alive)
-                        n->val = child->nodes[1].val;
+
+                    /* Read output from last node */
+                    int out_idx = child->n_nodes - 1;
+                    if (out_idx >= 0 && child->nodes[out_idx].alive)
+                        n->val = child->nodes[out_idx].val;
+
                     n->last_active = (uint32_t)T_now(&eng->T);
                     n->n_incoming = 0; n->accum = 0;
                     continue;
