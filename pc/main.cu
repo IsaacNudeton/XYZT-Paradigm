@@ -674,6 +674,98 @@ static void cmd_test(void) {
         check("fresnel T+R=1 for all K", 1, all_ok);
     }
 
+    /* ── Lysis Trigger ────────────────────────────────────────── */
+    printf("--- Lysis Trigger ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int id = engine_ingest_text(&eng, "lysis_a", "data for lysis trigger test with enough content for identity");
+        eng.shells[0].g.nodes[id].valence = 255;
+        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        check("lysis: child spawned", 1, eng.n_children > 0 ? 1 : 0);
+        int child_slot = eng.shells[0].g.nodes[id].child_id;
+        check("lysis: valid child slot", 1, child_slot >= 0 ? 1 : 0);
+
+        eng.shells[0].g.nodes[id].valence = 90;
+        for (int i = 0; i < (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        check("lysis: child removed", 0, eng.n_children);
+        check("lysis: child_id cleared", -1, eng.shells[0].g.nodes[id].child_id);
+        engine_destroy(&eng);
+    }
+
+    /* ── Valence Decay Under Error ───────────────────────────── */
+    printf("--- Valence Decay Under Error ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        engine_ingest_text(&eng, "decay_a", "the quick brown fox jumps over the lazy dog by the river");
+        engine_ingest_text(&eng, "decay_b", "the quick brown cat jumps over the lazy log by the river");
+        /* Stabilize: let ONETWO build history */
+        for (int i = 0; i < (int)SUBSTRATE_INT * 3; i++) engine_tick(&eng);
+
+        Graph *g0 = &eng.shells[0].g;
+        /* Set valence to 180 (below crystallization 200, above lysis 100) */
+        for (int n = 0; n < g0->n_nodes; n++)
+            if (g0->nodes[n].alive) g0->nodes[n].valence = 180;
+        uint8_t valence_before = g0->nodes[0].valence;
+
+        /* Poison ONETWO: inject all-0xFF so prev_match is sky-high */
+        { uint8_t poison[400]; memset(poison, 0xFF, 400);
+          ot_sys_ingest(&eng.onetwo, poison, 400); }
+
+        /* Zero all edge weights: creates massive structural mismatch */
+        for (int e = 0; e < g0->n_edges; e++)
+            g0->edges[e].weight = 0;
+        if (eng.n_shells >= 2) {
+            Graph *g1 = &eng.shells[1].g;
+            for (int e = 0; e < g1->n_edges; e++)
+                g1->edges[e].weight = 0;
+        }
+
+        /* Align to SUBSTRATE_INT boundary, then tick once to trigger feedback */
+        while (eng.total_ticks % SUBSTRATE_INT != (SUBSTRATE_INT - 1))
+            engine_tick(&eng);
+        engine_tick(&eng);
+
+        uint8_t valence_after = g0->nodes[0].valence;
+        int32_t error_1st = eng.onetwo.feedback[7];
+        int32_t energy_1st = eng.onetwo.feedback[5];
+        printf("  1st cycle: error=%d energy=%d  valence: %d -> %d\n",
+               error_1st, energy_1st, valence_before, valence_after);
+        check("error spike from poison", 1, abs(error_1st) > energy_1st / 3 ? 1 : 0);
+        check("valence decayed under error", 1, valence_after < valence_before ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Full Cycle: Lysis + Reuse ───────────────────────────── */
+    printf("--- Full Cycle: Lysis + Reuse ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        const char *names[] = {"cyc_a", "cyc_b", "cyc_c", "cyc_d"};
+        const char *texts[] = {
+            "alpha data for cycle test with unique structural fingerprint aaa",
+            "beta data for cycle test with unique structural fingerprint bbb",
+            "gamma data for cycle test with unique structural fingerprint ccc",
+            "delta data for cycle test with unique structural fingerprint ddd"
+        };
+        int ids[4];
+        for (int k = 0; k < 4; k++) {
+            ids[k] = engine_ingest_text(&eng, names[k], texts[k]);
+            eng.shells[0].g.nodes[ids[k]].valence = 255;
+        }
+        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        check("cycle: all 4 children spawned", MAX_CHILDREN, eng.n_children);
+
+        eng.shells[0].g.nodes[ids[0]].valence = 50;
+        for (int i = 0; i < (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        check("cycle: one child removed by lysis", MAX_CHILDREN - 1, eng.n_children);
+
+        int new_id = engine_ingest_text(&eng, "cyc_e", "epsilon new data spawning into freed slot eee");
+        eng.shells[0].g.nodes[new_id].valence = 255;
+        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        check("cycle: new child spawned into freed slot", MAX_CHILDREN, eng.n_children);
+        check("cycle: new node has child", 1, eng.shells[0].g.nodes[new_id].child_id >= 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
     if (g_fail == 0) printf("ALL PASS.\n");

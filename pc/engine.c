@@ -1141,6 +1141,18 @@ void engine_tick(Engine *eng) {
                     g->grow_interval = adaptive_interval(g->grow_interval, error_mag, 2, 200);
                 }
             }
+            /* Valence decay: sustained sensory error bleeds structural confidence */
+            for (int s = 0; s < eng->n_shells; s++) {
+                Graph *gv = &eng->shells[s].g;
+                for (int i = 0; i < gv->n_nodes; i++) {
+                    Node *n = &gv->nodes[i];
+                    if (!n->alive || n->layer_zero) continue;
+                    if (n->valence > VALENCE_DECAY_RATE)
+                        n->valence -= VALENCE_DECAY_RATE;
+                    else
+                        n->valence = 0;
+                }
+            }
             eng->low_error_run = 0;
         } else {
             eng->low_error_run++;
@@ -1198,6 +1210,19 @@ void engine_tick(Engine *eng) {
                 }
             }
             eng->low_error_run = 0;
+        }
+
+        /* Lysis: apoptosis for nodes whose valence decayed below threshold */
+        {
+            Graph *g0 = &eng->shells[0].g;
+            for (int i = 0; i < g0->n_nodes; i++) {
+                Node *n = &g0->nodes[i];
+                if (n->child_id >= 0 && n->valence <= LYSIS_THRESHOLD) {
+                    printf("  [lysis] node[%d] '%s' valence=%d -> apoptosis\n",
+                           i, n->name, n->valence);
+                    nest_remove(eng, i);
+                }
+            }
         }
     }
 }
