@@ -779,8 +779,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         g0->nodes[id0].layer_zero = 0;
         g1->nodes[id1].layer_zero = 0;
         g0->total_boundary_crossings++;
-        if (g0->nodes[id0].valence < 255) g0->nodes[id0].valence++;
-        if (g1->nodes[id1].valence < 255) g1->nodes[id1].valence++;
+        /* Valence growth moved to resolve phase: collision-only (n_incoming >= 2) */
 
         /* Auto-wire within shell 1 */
         if (g1->auto_grow) {
@@ -919,6 +918,7 @@ void engine_tick(Engine *eng) {
                     int32_t va = e->invert_a ? -na->val : na->val;
                     int32_t vb = e->invert_b ? -nb->val : nb->val;
                     nd->accum += va + vb;
+                    nd->I_energy += abs(va) + abs(vb); /* total incoming energy */
                     nd->n_incoming++;
                     if (e->weight < 255) e->weight++;
                 } else {
@@ -991,6 +991,21 @@ void engine_tick(Engine *eng) {
                 }
                 int32_t cap = abs(old_val) + abs(n->accum);
                 if (abs(n->val) > cap) n->val = n->val > 0 ? cap : -cap;
+
+                /* I_energy: collision energy in current when voltage cancelled.
+                 * I_energy was accumulated as abs(va)+abs(vb) during propagation.
+                 * Subtract the resolved voltage energy to get the magnetic remainder.
+                 * Large I_energy + small |val| = destructive collision = XOR. */
+                if (n->n_incoming >= 2) {
+                    int32_t val_energy = abs(n->val);
+                    n->I_energy = (n->I_energy > val_energy) ?
+                        n->I_energy - val_energy : 0;
+                    /* Collision-only valence: mass forms at interaction vertices */
+                    if (n->valence < 255) n->valence++;
+                } else {
+                    n->I_energy = 0;
+                }
+
                 n->last_active = (uint32_t)T_now(&eng->T);
                 n->n_incoming = 0; n->accum = 0;
             }

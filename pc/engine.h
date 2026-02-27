@@ -266,6 +266,7 @@ typedef struct {
     uint8_t   crystal_n;
     int32_t   val;
     int32_t   accum;
+    int32_t   I_energy;       /* magnetic/current energy at node (for XOR detection) */
     int8_t    child_id;
 } Node;
 
@@ -324,6 +325,10 @@ static inline int obs_bool(int32_t v)        { return v > 0 ? 1 : 0; }
 static inline int obs_all(int32_t v, int n)  { return v >= n ? 1 : 0; }
 static inline int obs_parity(int32_t v)      { return (v & 1) ? 1 : 0; }
 static inline int obs_raw(int32_t v)         { return v; }
+/* XOR = energy arrived but voltage cancelled (destructive collision) */
+static inline int obs_xor(int32_t I_energy, int32_t val) {
+    return (I_energy > 0 && val == 0) ? 1 : 0;
+}
 
 /* Fresnel physics */
 static inline double fresnel_T(double K) {

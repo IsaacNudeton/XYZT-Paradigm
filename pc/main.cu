@@ -674,6 +674,40 @@ static void cmd_test(void) {
         check("fresnel T+R=1 for all K", 1, all_ok);
     }
 
+    /* ── XOR Observer + I_energy ────────────────────────────────── */
+    printf("--- XOR Observer ---\n");
+    {
+        /* obs_xor: energy present but voltage absent = destructive collision */
+        check("xor: no energy no val", 0, obs_xor(0, 0));
+        check("xor: energy + val (constructive)", 0, obs_xor(100, 42));
+        check("xor: energy + no val (destructive)", 1, obs_xor(100, 0));
+        check("xor: no energy + val (passthrough)", 0, obs_xor(0, 42));
+
+        /* I_energy via collision: two sources cancel voltage but leave current */
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int sa = graph_add(g0, "xor_a", 0, &eng.T);
+        int sb = graph_add(g0, "xor_b", 0, &eng.T);
+        int sd = graph_add(g0, "xor_d", 0, &eng.T);
+        for (int n = sa; n <= sd; n++) {
+            g0->nodes[n].layer_zero = 0;
+            g0->nodes[n].identity.len = 64;
+            memset(g0->nodes[n].identity.w, 0xFF, 8);
+        }
+        /* Two edges deliver opposite signals → destructive collision at sd */
+        int sc = graph_add(g0, "xor_c", 0, &eng.T);
+        g0->nodes[sc].layer_zero = 0; g0->nodes[sc].identity.len = 64;
+        memset(g0->nodes[sc].identity.w, 0xFF, 8);
+        g0->nodes[sa].val = 50; g0->nodes[sc].val = -50;
+        graph_wire(g0, sa, sa, sd, 255, 0);  /* edge 1: sa→sd */
+        graph_wire(g0, sc, sc, sd, 255, 0);  /* edge 2: sc→sd */
+        engine_tick(&eng);
+        /* Two edges fired (n_incoming=2), voltages cancel, I_energy remains */
+        check("destructive: I_energy > 0", 1, g0->nodes[sd].I_energy > 0 ? 1 : 0);
+        check("destructive: val cancelled", 1, abs(g0->nodes[sd].val) < 50 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
     /* ── Lysis Trigger ────────────────────────────────────────── */
     printf("--- Lysis Trigger ---\n");
     {
