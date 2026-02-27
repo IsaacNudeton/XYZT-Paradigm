@@ -1,0 +1,15 @@
+XYZT Paradigm
+Copyright (c) 2026 Isaac Oravec & Claude
+
+This is a computing paradigm that operates through co-presence
+and topology instead of arithmetic. tick() propagates — it does
+not calculate. Computation emerges from collision, not instruction.
+
+This is not a toy. It is proven (436 tests, Lean4 formal proofs,
+GPU substrate verified) and it works on real hardware.
+
+Use it to learn. Use it to research. Use it to understand.
+Do not use it to profit. Do not be reckless with it.
+
+Licensed under PolyForm Noncommercial 1.0.0
+https://polyformproject.org/licenses/noncommercial/1.0.0
