@@ -1,0 +1,48 @@
+# 2-BIT ADDER in XYZT
+#
+# Inputs (z=0):
+#   (0,0,0) = A0   (bit 0 of A)
+#   (1,0,0) = A1   (bit 1 of A)
+#   (2,0,0) = B0   (bit 0 of B)
+#   (3,0,0) = B1   (bit 1 of B)
+#
+# Outputs (z=2):
+#   (0,0,2) = S0   (bit 0 of sum)
+#   (1,0,2) = S1   (bit 1 of sum)
+#   (2,0,2) = S2   (carry out)
+
+LATTICE 4 1 3
+
+# Set inputs: A=3 (11), B=2 (10)
+# A0=1, A1=1, B0=0, B1=1
+SET 0 0 0 1
+SET 1 0 0 1
+SET 2 0 0 0
+SET 3 0 0 1
+
+# Layer 1: Half adder for bit 0
+XOR 0 0 0  2 0 0 -> 0 0 1
+AND 0 0 0  2 0 0 -> 1 0 1
+
+# Layer 1: XOR and AND for bit 1
+XOR 1 0 0  3 0 0 -> 2 0 1
+AND 1 0 0  3 0 0 -> 3 0 1
+
+# Propagate layer 1
+RUN 1
+
+# Layer 2: Complete the adder
+# S0 is already at (0,0,1) - just wire it up
+XOR 2 0 1  1 0 1 -> 0 0 2
+AND 2 0 1  1 0 1 -> 1 0 2
+OR  3 0 1  1 0 2 -> 2 0 2
+
+# Propagate layer 2
+RUN 1
+
+# Read outputs
+PRINT
+READ 0 0 1
+READ 0 0 2
+READ 1 0 2
+READ 2 0 2

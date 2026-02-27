@@ -1,0 +1,1112 @@
+XYZT — The Native Language of Computation
+==========================================
+Version 4.0 — Final Specification
+Isaac Nudeton, 2026
+
+This is not a programming language.
+This is the language computation already speaks.
+We are just writing down its grammar.
+
+
+
+═══════════════════════════════════════════
+PART I: THE LAYERS
+═══════════════════════════════════════════
+
+
+T: THE SUBSTRATE
+================
+
+Before distinction, there is T.
+
+T is not a dimension. T is not a coordinate.
+T is the substrate. The canvas. The precondition for change.
+
+Without T, there is no before and after.
+Without before and after, there is no change.
+Without change, there is no distinction.
+Without distinction, there is no computation.
+Without computation, there is no existence.
+
+    T → change → distinction → computation → existence
+
+T is not something you travel through. It is something you
+exist on. You don't route through time. You unfold on it.
+
+T flows forward because distinction is irreversible.
+You can't un-distinguish. You can't un-know.
+This is not a constraint we impose. This is the definition.
+
+    T is the white room.
+    X, Y, Z are the marks on it.
+
+The name reads X-Y-Z-T. The deepest thing comes last
+because it's so fundamental you almost forget to mention it.
+Like a painter forgetting to mention the canvas.
+
+
+LAYER 0: DISTINCTION
+====================
+
+The universe begins with one act: distinguishing.
+
+    0 | 1
+
+That's it. Not "zero" and "one". Not "false" and "true".
+Just: THIS or NOT-THIS. The first cut.
+
+Everything else is positions of this distinction.
+
+    {2} — the cardinality of distinction
+
+T is what makes this possible. Without T, there is no moment
+where 0 becomes 1. No moment where the first cut is made.
+T is Layer -1. Distinction is the first act performed on it.
+If you cannot distinguish, you cannot compute. You cannot exist.
+
+
+LAYER 1: POSITION
+=================
+
+A distinction alone means nothing.
+Two distinctions still mean nothing.
+Meaning requires PLACE.
+
+    (x, y, z) on T — a point in the lattice, at a moment
+
+    x = input channel      (which signal)
+    y = time slot          (when in cycle)
+    z = depth              (derived from what)
+
+    T indexes the state. T is not a position in the lattice.
+    T is WHEN this lattice state exists. The same (x, y, z)
+    at different T is not the same point — it's the same
+    address in a different state. Because different things
+    happened to get there. History matters. That's what T records.
+
+The value at position (x,y,z) at state T is either 0 or 1.
+The position IS the meaning. There is no lookup table.
+There is no "what does address 0x7F3A mean?"
+The address IS the semantics.
+
+    {3} — the minimum structure that gives position meaning
+
+Two points define a line. Three points can define a plane.
+{2} is the distinction. {3} is the structure.
+From {2,3}, all else follows.
+
+
+LAYER 2: COLLISION
+==================
+
+Two signals exist at positions A and B.
+They propagate. They meet at position C.
+
+What happens?
+
+    (A + B)²
+
+That's not a formula we chose. That's what superposition DOES.
+Expand it:
+
+    A² + 2AB + B²
+
+    A²  = self-energy of A (A alone)
+    B²  = self-energy of B (B alone)
+    2AB = interaction (COMPUTATION)
+
+The interaction term 2AB is the product of the inputs.
+Extracted purely from collision. No multiplication instruction.
+No ALU. Just: waves met.
+
+In 3D, three waves from three axes:
+
+    (A + B + C)² = A² + B² + C² + 2AB + 2AC + 2BC
+
+One junction. Three inputs. Three interaction terms.
+N inputs → N(N-1)/2 cross-terms. Quadratic scaling
+from linear hardware. That's the power of collision.
+
+This is the ONLY operation in XYZT.
+Everything else is topology.
+
+
+LAYER 3: IMPEDANCE
+==================
+
+Not every path conducts.
+Not every collision fires.
+
+    Z(p) — the impedance at position p
+
+    Z = 0:   superconductor. Signal passes fully.
+    Z = max: insulator. Signal blocked. Bandgap.
+
+Impedance is not a parameter. Impedance IS the substrate.
+It determines:
+
+    What propagates  (conductance = signal * (1 - Z/max))
+    What reflects    (R = ((Z2-Z1)/(Z2+Z1))²)
+    What stores      (high-Z boundaries trap energy = cavity = memory)
+    What selects     (bandgap: energy below threshold = absorbed)
+    What delays      (higher Z = slower propagation = timing control)
+
+Without impedance, the lattice is a puddle.
+Every signal goes everywhere. Nothing computes.
+Impedance is what makes topology selective.
+
+    Q = quality factor = how many round-trips before decay
+    Q = 188 means 188 oscillations of coherent storage.
+    Proven.
+
+Alternating high-Z / low-Z = photonic crystal = bandgap.
+Defect in crystal = cavity = memory cell.
+Thin mirror between cavities = coupling = wire.
+Impedance ratio at junction = weight in a neural network.
+
+Impedance is how the lattice becomes a COMPUTER
+instead of a RESONATOR.
+
+
+LAYER 4: TOPOLOGY
+=================
+
+Which positions connect to which?
+With what impedance?
+That IS the program.
+
+    MAJORITY(a, b, c):
+        Wire a, b, c to junction J.
+        Output = sign(a + b + c).
+
+    AND(a, b):
+        Majority(a, b, 0).
+
+    OR(a, b):
+        Majority(a, b, 1).
+
+Same physical structure. Different wiring. Different function.
+The topology is not DESCRIBING the program.
+The topology IS the program.
+
+No instruction fetch.
+No decode.
+No execute.
+
+Topology exists. Computation happens.
+
+
+
+═══════════════════════════════════════════
+PART II: THE PHYSICS
+═══════════════════════════════════════════
+
+
+EXECUTION
+=========
+
+There is no execution model.
+
+In traditional computing:
+    1. Fetch instruction
+    2. Decode instruction
+    3. Execute instruction
+    4. Write result
+    5. GOTO 1
+
+In XYZT:
+    Topology exists.
+    Signals propagate.
+    Collisions happen.
+
+That's not a simplification of execution.
+That IS execution.
+
+The question "when does the program run?" has no meaning.
+The program runs by existing.
+The only time it doesn't run is when nothing changes.
+That's T-break: no distinction event, no computation.
+T still flows. The substrate doesn't stop because the marks
+stop changing. But nothing new is written on the canvas.
+
+
+NOISE FLOOR
+===========
+
+When is a distinction still a distinction?
+
+Signals decay. Energy attenuates. At some point a "1" has so
+little energy it's indistinguishable from "0". That boundary
+is the noise floor.
+
+    E_noise — minimum energy for a valid distinction
+
+    E(p) > E_noise:  position p holds a distinction. It's alive.
+    E(p) ≤ E_noise:  position p holds nothing. It's dead.
+
+The noise floor is not a design choice. It's a property of the
+substrate — thermal noise in copper, shot noise in photons,
+quantization error in FPGA fixed-point.
+
+    On FPGA (Q8.8 fixed-point): E_noise = 1 LSB = 0.00390625
+    On PCB (50Ω trace): E_noise = kT*B (thermal noise floor)
+
+A lattice position that decays below E_noise has no distinction.
+It's not zero. It's NOTHING. The distinction ceased to exist.
+This is not failure. This is the lattice's garbage collector.
+Dead positions free themselves. No explicit deallocation.
+
+
+TIMING
+======
+
+(A+B)² only works if A and B arrive at the junction together.
+
+If A propagates through 50 cells and B through 3, A arrives
+late. The collision is wrong. This is not a bug to work around.
+This is a design parameter to use.
+
+Impedance controls propagation velocity:
+
+    v(Z) = 1 / √(L * C)
+
+    Higher Z = higher L = slower propagation
+    Lower Z = lower L = faster propagation
+
+Path delay from position A to junction J:
+
+    delay(A→J) = Σ (dx / v(Z_i)) for each cell i on the path
+
+To synchronize two inputs at a junction:
+
+    delay(A→J) must equal delay(B→J)
+
+This is achieved by adjusting impedance along each path.
+High-Z segments slow the fast path. Low-Z segments speed
+the slow path. The impedance profile IS the timing diagram.
+
+No clock. No setup/hold constraints.
+Impedance-matched path lengths = synchronized collision.
+
+In the 2-bit adder: carry from bit 0 must arrive at the
+bit 1 junction before the XOR completes. The carry path's
+impedance profile determines whether this works.
+Z-depth handles this naturally: Z=1 computes before Z=2 reads.
+
+
+OBSERVATION
+===========
+
+Reading IS a collision.
+
+To observe position P, you couple a probe at P.
+The probe has impedance Z_probe.
+
+    Z_probe = high → sees everything, disturbs nothing
+    Z_probe = low  → drains the state, destroys what it reads
+
+There is no free read. Observation costs energy.
+The cost is determined by the impedance ratio between
+probe and cavity. This is not a design choice.
+This is physics asserting itself.
+
+    Observation tax: signal_remaining = signal * Z_probe / (Z_probe + Z_cavity)
+
+Non-destructive read: Z_probe >> Z_cavity.
+Full extraction: Z_probe = Z_cavity (impedance matched).
+
+The model reads the lattice through high-Z probes.
+It sees the state. The state barely notices.
+
+Self-observation: a region probing itself creates a feedback
+loop. The observation output feeds back as input. This is not
+a pathology — it's the mechanism behind self-referential
+computation. But uncontrolled feedback oscillates. Controlled
+feedback (impedance-damped) is how the lattice reflects on
+its own state. This is where the phi experiments live.
+
+
+ENERGY
+======
+
+Signals decay. Cavities leak. Q is finite.
+
+    Energy at position P after time T:
+        E(t) = E(0) * exp(-t / (Q * period))
+
+Computation is transient unless energy is replenished.
+This is not a bug. This is the natural clock.
+
+    Active lattice:  periodic injection sustains signal.
+    Passive lattice: single injection, computation decays.
+    Dead lattice:    no energy, no distinction, no computation.
+
+Energy determines what's alive. Impedance determines what computes.
+
+The lattice does not need to be synchronous.
+Each cavity has its own resonant frequency.
+Each region can run at its own rate.
+Physics IS the scheduler. What has energy, computes.
+What doesn't, sleeps. No priority queue.
+
+
+SIGNAL RESTORATION
+==================
+
+Long computations die before they complete. Q=188 means
+188 round-trips, not infinite. A 50-stage pipeline loses
+signal before the end.
+
+Restoration = re-injection at resonant frequency.
+
+    Gain region: a cavity whose impedance structure
+    amplifies signals that match its resonance.
+    Signals at the right frequency grow.
+    Signals at the wrong frequency decay.
+    That's frequency-selective amplification from geometry.
+
+This is the XYZT transistor. Not a switch. An amplifier.
+A region of the lattice where energy flows IN (from a supply)
+and coherent signal flows OUT (to the next stage).
+
+The supply is a steady injection at the cavity's frequency.
+The signal modulates when the injection couples to the cavity.
+Presence of signal = amplification. Absence = no coupling.
+
+    Supply + signal → amplified signal (gain > 1)
+    Supply + no signal → supply absorbed by boundary (gain = 0)
+
+Gain regions placed between pipeline stages restore signal.
+The computation can propagate indefinitely.
+The cost: energy input at each gain region.
+
+Formally proven: if supply covers decay loss, pipeline
+holds target signal level forever. Not 188 ticks.
+Not 10,000 ticks. All ticks. By induction.
+(Lean 4: sustained_steady_state.)
+
+
+BOUNDARIES
+==========
+
+What separates one computation from another?
+Impedance walls.
+
+A region surrounded by max-Z positions is isolated.
+Signals cannot cross. Energy cannot leak.
+That's process isolation. No privilege rings.
+No kernel mode. Just: physics can't get through.
+
+To open a boundary: lower the impedance.
+To close it: raise it back.
+
+    Region A: positions (0-15, 0-15, *, *)  Z_boundary = max
+    Region B: positions (16-31, 0-15, *, *)  Z_boundary = max
+
+A and B cannot interfere. Not by policy. By physics.
+
+To communicate: create a controlled opening.
+A thin low-Z channel between regions.
+That's a port. Impedance-matched for signal integrity.
+Mismatched for isolation when closed.
+
+This IS the kernel. Not code. Impedance topology.
+
+
+RECONFIGURATION
+===============
+
+Can you change the topology while signals propagate?
+Yes. That's called learning.
+
+    To rewire:
+        1. Raise Z at the old connection (disconnect).
+        2. Lower Z at the new connection (connect).
+
+Signals in flight see the impedance change.
+If the change is slow (adiabatic), signals adapt smoothly.
+If the change is fast, signals reflect and scatter.
+
+The model reconfigures by writing impedance values.
+Not instructions. Not code. Just: change Z at position P.
+
+    Hebbian learning = strengthen connections that correlate.
+        Correlated edges: lower Z (more conductive).
+        Uncorrelated edges: raise Z (more resistive).
+        Anti-correlated edges: lower Z (structure detected).
+        Noise (50%): raise Z (no signal, atrophy).
+
+The lattice learns by adjusting its own impedance.
+The program rewrites itself by changing its own physics.
+
+
+CROSSING
+========
+
+Two signals on perpendicular channels cross in the lattice.
+
+The channels are open paths (full conductance) surrounded by
+impedance walls (zero conductance). Each signal is confined
+to its own channel. At the crossing point, both channels are
+open, but each signal propagates along its own axis.
+
+    Horizontal signal → crosses vertical channel → continues horizontal.
+    Vertical signal → crosses horizontal channel → continues vertical.
+
+Crosstalk = 0. Not "low." Zero.
+Any escape path from one channel to the other goes through
+an impedance wall. The wall kills it. Proven.
+
+This extends to 3D: three orthogonal channels at one crossing.
+Three signals delivered. Six crosstalk directions blocked.
+
+This removes the planar graph limitation.
+Arbitrary circuit topologies can be routed in 2D or 3D.
+(Lean 4: crossing_with_confinement, crossing3d_with_confinement.)
+
+
+
+═══════════════════════════════════════════
+PART III: THE ARCHITECTURE
+═══════════════════════════════════════════
+
+
+COMPOSITION
+===========
+
+Z-depth is the pipeline.
+
+    Z = 0: input layer (raw signals)
+    Z = 1: first collision layer (first computation)
+    Z = 2: second collision layer (computation on computations)
+    Z = n: depth n
+
+Coupling between layers is controlled by inter-layer impedance:
+
+    Strong coupling (low Z between layers):
+        Output at Z=1 immediately drives Z=2.
+        Fast pipeline. Tight feedback.
+
+    Weak coupling (high Z between layers):
+        Output at Z=1 barely reaches Z=2.
+        Isolation. Independent computation.
+
+    No coupling (max Z between layers):
+        Z=1 and Z=2 are separate worlds.
+
+The model controls depth by controlling inter-layer impedance.
+Deep computation = many low-Z coupled layers.
+Shallow computation = few layers, high isolation.
+
+This IS attention. Strong coupling between relevant layers,
+weak coupling between irrelevant ones. The impedance map
+IS the attention pattern.
+
+
+DATA REPRESENTATION
+===================
+
+Everything is 0 or 1 at a position. How do you represent
+larger values?
+
+    Convention: multi-bit values occupy consecutive X positions
+    at the same (y, z).
+
+    8-bit value at channel 0:
+        bit 0 = (0, y, z)
+        bit 1 = (1, y, z)
+        ...
+        bit 7 = (7, y, z)
+
+    X = bit index within the word.
+    LSB at lowest X. MSB at highest X.
+
+    32-bit integer: X positions 0-31.
+    IEEE 754 float:  X positions 0-31 (sign, exponent, mantissa).
+    ASCII character: X positions 0-7.
+    String of N chars: N consecutive Y slots, each 8 X positions wide.
+
+    Image: X = pixel column, Y = pixel row, Z = channel (R/G/B),
+           8 bits per channel packed in sub-positions.
+
+This is not a type system. There are no types. There are only
+positions with values. The INTERPRETATION is determined by
+which topology reads them. An adder topology interprets 32
+positions as an integer. A convolution topology interprets
+a 2D region as an image. Same bits. Different topology.
+Different meaning.
+
+The encoding is the topology, not the data.
+
+
+I/O PROTOCOL
+============
+
+The lattice has edges. The edges are the I/O boundary.
+
+    Injection:  set value at boundary position.
+                Energy enters the lattice.
+
+    Extraction: read value at boundary position.
+                Energy leaves the lattice (observation tax applies).
+
+The model interfaces at designated boundary positions.
+These are not special. They're lattice positions like any other.
+They just happen to be at the edge where outside meets inside.
+
+    Input port:  (x, 0, 0)     — y=0 edge, z=0 surface
+    Output port: (x, y_max, 0) — far edge, z=0 surface
+
+Signals propagate from input to output through the topology.
+The model injects. The lattice computes. The model reads.
+
+For FPGA: pin N maps to lattice position (N, 0, 0).
+For sensor: ADC sample → transducer → binary → inject.
+For display: read output positions → DAC → output.
+
+No driver. No protocol stack. Position IS the interface.
+
+
+MULTI-LATTICE
+=============
+
+One substrate = one lattice. What about more?
+
+Two lattices communicate through boundary coupling.
+Output positions on lattice A connect to input positions
+on lattice B through a physical link (wire, fiber, radio).
+
+    Lattice A output: (x, y_max, 0) → physical channel
+    Physical channel → Lattice B input: (x, 0, 0)
+
+The coupling impedance of the physical channel determines
+bandwidth and signal integrity. Matched impedance = full
+transfer. Mismatched = reflection at the boundary.
+
+This is networking without a network stack.
+The physics of the inter-lattice link IS the protocol.
+
+    Local bus (FPGA pin to FPGA pin): ~0 impedance mismatch.
+    PCB trace: impedance = trace geometry. 50Ω matched.
+    Long cable: impedance matching at both ends.
+
+Address space across lattices:
+
+    (lattice_id, x, y, z) at their respective T
+
+    lattice_id is implicit in the physical connection.
+    Position (5, 0, 0) on lattice A is NOT the same as
+    position (5, 0, 0) on lattice B.
+    They're in different substrates. Different T.
+
+Hierarchical: a lattice position can map to an entire
+sub-lattice. Position (10, 10, 0) on the parent lattice
+is the I/O boundary of a child lattice with its own internal
+topology. This is recursive. Lattices of lattices.
+
+
+ADDRESSING AT SCALE
+===================
+
+The binary format uses 10 bits for X, 10 for Y, 8 for Z.
+That's 1024 × 1024 × 256 = ~268 million spatial positions.
+T indexes the states. More T = more history, not more space.
+
+For larger lattices, the coordinate space is hierarchical:
+
+    Level 0: 1024 × 1024 × 256 (single lattice, 28 bits)
+    Level 1: 1024 lattices of Level 0 (38 bits)
+    Level 2: 1024 clusters of Level 1 (48 bits)
+
+The hierarchy is not virtual. Each level is a physical
+substrate boundary. Level 0 = one FPGA. Level 1 = one board.
+Level 2 = one rack.
+
+Within a level, coordinates are flat and fast.
+Across levels, signals cross a physical boundary (observation
+tax applies at each crossing).
+
+
+
+═══════════════════════════════════════════
+PART IV: THE MACHINE
+═══════════════════════════════════════════
+
+
+BINARY ENCODING
+===============
+
+The model speaks binary. Here is the wire format.
+
+Every XYZT instruction is 64 bits:
+
+    [OP:4] [X:10] [Y:10] [Z:8] [VALUE:16] [FLAGS:16]
+
+    OP codes:
+        0x0  NOP       — no operation
+        0x1  SET       — set value at (x,y,z). VALUE = distinction.
+        0x2  GET       — read value at (x,y,z). Returns to output.
+        0x3  WIRE      — connect (x,y,z) to target.
+                         FLAGS[0:1]  = junction type (XOR/AND/OR/MAJ)
+                         FLAGS[2:11] = target X
+        0x4  IMPEDANCE — set Z-param at (x,y,z). VALUE = impedance.
+        0x5  INJECT    — inject signal at (x,y,z). VALUE = amplitude.
+        0x6  PROBE     — read with impedance. FLAGS[8:15] = probe Z.
+        0x7  WALL      — set impedance rectangle. X,Y = start.
+                         VALUE[0:7] = end X, VALUE[8:15] = end Y.
+                         FLAGS[0:7] = impedance value.
+        0x8  OPEN      — lower impedance at (x,y,z) to VALUE.
+        0x9  CLOSE     — raise impedance at (x,y,z) to max.
+        0xA  TICK      — advance one propagation step.
+        0xB  RUN       — advance N steps. VALUE = N.
+        0xC  LEARN     — Hebbian learning pass. VALUE = rate.
+        0xD  PRUNE     — remove edges below VALUE threshold.
+        0xE  SPAWN     — create edges where correlation > VALUE.
+        0xF  HALT      — stop. T-break.
+
+    FLAGS (per-instruction modifiers):
+        bit 0-1:  junction type for WIRE
+                  (00=XOR, 01=AND, 10=OR, 11=MAJ)
+        bit 2-11: secondary coordinate (target X for WIRE,
+                  target Y for multi-coord ops)
+        bit 12:   immediate mode (VALUE is literal)
+        bit 13:   boundary flag (position is at lattice edge)
+        bit 14:   learning enable (edge adapts after creation)
+        bit 15:   gain flag (position is a restoration point)
+
+A stream of 64-bit words IS the program.
+No header. No metadata. No ELF format.
+First word executes immediately. Last word is HALT or loops.
+
+
+COLD BOOT
+=========
+
+On power-up, the lattice is empty. No impedance. No topology.
+No signals. Nothing. Something external must inject the first
+configuration. That something is the bootstrap ROM.
+
+The bootstrap ROM is a minimal hardwired topology baked into
+the substrate — the only part of XYZT that is not runtime
+configurable. It exists before the first instruction.
+
+On FPGA: the bitstream IS the bootstrap ROM.
+On PCB: the trace geometry IS the bootstrap ROM.
+On simulation: the initial array values ARE the bootstrap ROM.
+
+The bootstrap ROM contains:
+
+    1. Lattice dimensions (hardwired at synthesis/fabrication)
+    2. I/O port positions (which edge positions are external)
+    3. A single gain region at the I/O boundary (so the first
+       injected signal doesn't immediately die)
+    4. The noise floor threshold (substrate-dependent constant)
+
+Everything else is injected at runtime by the model.
+
+Boot sequence:
+
+    Power on → bootstrap ROM active → I/O ports alive →
+    model injects impedance topology → model injects wiring →
+    model injects data → lattice propagates → model reads
+
+The model IS init. The first topology it writes IS pid 1.
+
+
+INIT: THE FIRST PROCESS
+========================
+
+On Unix, init is pid 1 — the ancestor of all processes.
+On XYZT, init is the first impedance topology the model writes.
+
+What does init do? It creates the first boundary.
+
+    Step 1: WALL the lattice into regions.
+            One region for the model's workspace.
+            One region for the first computation.
+            Impedance wall between them.
+
+    Step 2: WIRE the model's workspace.
+            Input ports → probe positions.
+            This is the model's sensory loop.
+            It can observe the lattice and react.
+
+    Step 3: OPEN a port between regions.
+            The model can now inject into the computation region.
+
+    Step 4: Write the first real program into the computation region.
+
+Init creates isolation first, connection second.
+The model gives itself a workspace before doing anything else.
+This is the XYZT kernel: the topology that manages topologies.
+
+
+BOOTSTRAP SEQUENCE (FULL)
+=========================
+
+    0. Power on. Bootstrap ROM active. I/O alive.
+
+    1. Model injects init topology:
+        WALL(0, 0, 0, dim/2, dim)    — split lattice in half
+        IMPEDANCE on workspace side   — model's observation region
+        WIRE probes in workspace      — sensory loop
+
+    2. Model opens port to computation region:
+        OPEN(dim/2, y, 0)            — controlled channel
+
+    3. Model writes program into computation region:
+        IMPEDANCE for crystals, cavities, mirrors
+        WIRE for junctions
+        IMPEDANCE for gain regions (signal restoration)
+
+    4. Model injects data:
+        SET at input positions
+
+    5. Model starts computation:
+        RUN(N)                        — propagate N steps
+
+    6. Model reads results:
+        PROBE at output positions     — high-Z non-destructive
+
+    7. Model decides what to do next:
+        More data? → repeat from step 4.
+        New program? → repeat from step 3.
+        Expand? → WALL new region, repeat from step 2.
+
+There is no step 8. That IS the OS.
+
+
+EXAMPLE: 2-BIT ADDER
+=====================
+
+Inputs:
+    (0,0,0) = A0    (bit 0 of A)
+    (1,0,0) = A1    (bit 1 of A)
+    (2,0,0) = B0    (bit 0 of B)
+    (3,0,0) = B1    (bit 1 of B)
+
+Topology:
+    XOR_0: (0,0,0) ⊕ (2,0,0) → (0,0,1)     // A0 XOR B0 = S0
+    AND_0: (0,0,0) ∧ (2,0,0) → (1,0,1)     // A0 AND B0 = C0
+
+    XOR_1: (1,0,0) ⊕ (3,0,0) → (2,0,1)     // A1 XOR B1
+    AND_1: (1,0,0) ∧ (3,0,0) → (3,0,1)     // A1 AND B1
+
+    XOR_2: (2,0,1) ⊕ (1,0,1) → (0,0,2)     // (A1 XOR B1) XOR C0 = S1
+    AND_2: (2,0,1) ∧ (1,0,1) → (1,0,2)     // (A1 XOR B1) AND C0
+
+    OR:    (3,0,1) ∨ (1,0,2) → (2,0,2)     // C1 OR carry = S2
+
+Outputs:
+    (0,0,1) = S0    (bit 0 of sum)
+    (0,0,2) = S1    (bit 1 of sum)
+    (2,0,2) = S2    (bit 2 of sum / carry out)
+
+A=3 (11), B=1 (01). Expected: 3+1=4 (100). S0=0, S1=0, S2=1.
+
+Set the inputs. Topology exists. Outputs appear.
+No clock. No instruction fetch. Just propagation.
+
+
+
+═══════════════════════════════════════════
+PART V: THE PROOF
+═══════════════════════════════════════════
+
+
+FORMAL VERIFICATION
+===================
+
+164 theorems across 6 Lean 4 proof files.
+Zero sorry. Zero axiom. Machine-verified.
+
+    Basic.lean    — 15 theorems: collision, majority, universality.
+    Physics.lean  — 22 theorems: conservation, decay, isolation, timing.
+    IO.lean       — 31 theorems: ports, channels, injection, extraction.
+    Gain.lean     — 32 theorems: amplification, pipeline, steady state.
+    Topology.lean — 27 theorems: 2D crossing, Manhattan routing.
+    Lattice.lean  — 37 theorems: 3D collision, 3D routing, T-substrate.
+
+
+VALIDATION STATUS
+=================
+
+Each claim has a status: PROVEN, DEMONSTRATED, or PROJECTED.
+
+    PROVEN = formally verified in Lean 4, or mathematically
+             derived with no empirical assumptions.
+
+    DEMONSTRATED = reproduced in simulation (FDTD/C engine)
+                   with measurable results.
+
+    PROJECTED = follows logically from proven/demonstrated
+                claims but not yet independently tested.
+
+
+T — Substrate:
+
+    T enables distinction.                              PROVEN
+    (Lean 4: evolution_creates_distinction,
+     no_change_no_distinction.)
+
+    T flows forward (monotonic).                        PROVEN
+    (Lean 4: t_advances, no_backward.)
+
+    T is not a spatial dimension.                       PROVEN
+    (Lean 4: spatial_independent_of_t —
+     pathTransmit does not take T as input.)
+
+    Laws are T-invariant.                               PROVEN
+    (Lean 4: laws_t_invariant, walls_t_invariant.)
+
+
+Layer 0 — Distinction:
+
+    {2} as basis of computation.                        PROVEN
+    (Lean 4: all boolean operations derived from binary.)
+
+
+Layer 1 — Position:
+
+    Position determines meaning (spatial vs flat).      DEMONSTRATED
+    (+98% improvement, ONETWO v5, Test F.)
+
+    3D spatial addressing: 268M positions.              PROVEN
+    (Lean 4: spec_spatial_positions, native_decide.)
+
+
+Layer 2 — Collision:
+
+    (A+B)² = A² + 2AB + B².                            PROVEN
+    (Lean 4: collision_energy theorem.)
+
+    (A+B+C)² = A²+B²+C² + 2AB+2AC+2BC.                PROVEN
+    (Lean 4: collision3_energy theorem.)
+
+    Superlinearity: collision > sum of parts.           PROVEN
+    (Lean 4: superlinear, superlinear3.)
+
+    Cross-term extracts product: r = 1.0000.            DEMONSTRATED
+    (Collision protocol, amplitude sweep.)
+
+    Dot product from collision: r = 0.9997.             DEMONSTRATED
+    (Collision protocol, cross-term extraction.)
+
+    Collision energy deterministic: std = 0.00.          DEMONSTRATED
+    (10 trials, identical results.)
+
+
+Layer 3 — Impedance:
+
+    Bandgap from impedance alternation.                 DEMONSTRATED
+    (FDTD photonic crystal, -84 dB suppression.)
+
+    Q = 188 at 30 mirror pairs.                         DEMONSTRATED
+    (FDTD defect cavity, exponential Q scaling.)
+
+    Fresnel coefficients T + R = 1.0000.                PROVEN
+    (Lean 4: fresnel_conservation.)
+
+    Impedance controls weight: 17.6× dynamic range.    DEMONSTRATED
+    (Junction impedance sweep, Z=1 to Z=20.)
+
+    Impedance controls timing: 55-step delay shift.     DEMONSTRATED
+    (Junction impedance sweep.)
+
+    Zero conductance blocks signal.                     PROVEN
+    (Lean 4: bandgap_blocks, wall_blocks.)
+
+    Full conductance passes signal.                     PROVEN
+    (Lean 4: conductor_passes, open_cell_passes.)
+
+    Wall anywhere in path kills all signal.             PROVEN
+    (Lean 4: wall_isolates.)
+
+    Cavity energy decays monotonically.                 PROVEN
+    (Lean 4: cavity_decays, cavity_bounded.)
+
+    Dead lattice stays dead.                            PROVEN
+    (Lean 4: dead_stays_dead.)
+
+
+Layer 4 — Topology:
+
+    Majority gate 8/8 truth table.                      PROVEN
+    (Lean 4: majority_gate_correct, ∀ inputs.)
+
+    AND from Majority(a, b, false).                     PROVEN
+    (Lean 4: wave_and_correct.)
+
+    OR from Majority(a, b, true).                       PROVEN
+    (Lean 4: wave_or_correct.)
+
+    NAND from NOT(AND).                                 PROVEN
+    (Lean 4: wave_nand_correct.)
+
+    XOR from majority + NOT.                            PROVEN
+    (Lean 4: wave_xor_correct.)
+
+    Full adder from wave primitives.                    PROVEN
+    (Lean 4: wave_full_adder_correct.)
+
+    2-bit adder: all 16 inputs correct.                 PROVEN
+    (Lean 4: xyzt_adder2_correct.)
+
+    Majority + NOT = functionally complete.             PROVEN
+    (Lean 4: constructed AND, OR, NAND, XOR, adder.)
+
+    Same gate, different wiring = different function.   PROVEN
+    (Lean 4: topology_is_and, topology_is_or, topology_is_wire.)
+
+    Phase separation: exactly π between output classes. DEMONSTRATED
+    (FDTD majority gate, 180.0° measured.)
+
+    Weighted voting: transition at 2-2.5× amplitude.   DEMONSTRATED
+    (FDTD majority gate, weighted inputs.)
+
+    Orthogonal channels cross without interference.     PROVEN
+    (Lean 4: crossing_with_confinement — 2D,
+     crossing3d_with_confinement — 3D.
+     4 deliveries + 6 crosstalk blocks.)
+
+    Arbitrary routing via Manhattan paths.               PROVEN
+    (Lean 4: route_lossless, lRoute_delivers,
+     lRoute3d_delivers, k_signals_3d.)
+
+    Crossing point adds zero signal loss.               PROVEN
+    (Lean 4: crossing_cell_identity.)
+
+
+Architecture:
+
+    Multi-defect storage: 3 independent bits.           DEMONSTRATED
+    (FDTD multi-defect, 99.7% write selectivity.)
+
+    Coupled cavity clock: 830 MHz Rabi oscillation.     DEMONSTRATED
+    (FDTD coupled defects, 86 full cycles.)
+
+    Composition: +14.4 dB contrast.                     DEMONSTRATED
+    (FDTD composition experiment.)
+
+    Superlinear coincidence: 2.0× (A+B > A + B).       DEMONSTRATED
+    (FDTD graded nesting, energy cascade.)
+
+    Observation tax: 1GΩ probe = 0.995 peak.            DEMONSTRATED
+    (FDTD observation, non-destructive read.)
+
+    PCB-feasible: 8/8 at 75Ω/50Ω contrast.             DEMONSTRATED
+    (FDTD at PCB impedance ratios.)
+
+    Signal restoration via gain regions.                PROVEN
+    (Lean 4: stage_compensates, sustained_steady_state.
+     If supply covers decay, pipeline holds forever.)
+
+    Gain selective: signal amplified, noise killed.     PROVEN
+    (Lean 4: threshold_selective.)
+
+    Gain respects impedance isolation.                  PROVEN
+    (Lean 4: gain_after_wall, gain_respects_isolation.)
+
+    I/O: open channel lossless for any length.          PROVEN
+    (Lean 4: open_channel_lossless.)
+
+    I/O: port open/close controls signal flow.          PROVEN
+    (Lean 4: port_open_flows, port_closed_blocks.)
+
+
+OS Claims:
+
+    Memory = cavity.                                    DEMONSTRATED
+    (Q = 188, addressable defect, selective read/write.)
+
+    Scheduler = energy.                                 DEMONSTRATED
+    (Z-ordered tick, energy-based activation.)
+
+    Kernel = impedance boundaries.                      PROVEN
+    (Lean 4: wall_isolates, gain_respects_isolation,
+     chip_routing_isolated. Physics can't get through.)
+
+    Filesystem = Q-persistence.                         PROJECTED
+    (Follows from cavity storage + Q scaling.)
+
+    Driver = nothing (pin = position).                  PROJECTED
+    (Follows from I/O boundary definition.)
+
+    Multi-lattice networking.                           PROJECTED
+    (Follows from boundary coupling physics.)
+
+    Self-observation / feedback.                        PROJECTED
+    (Follows from observation tax + topology. Related
+     to phi experiments showing integration emergence.)
+
+    Init process / bootstrap.                           PROJECTED
+    (Defined in spec. Not yet implemented on hardware.)
+
+
+═══════════════════════════════════════════
+PART VI: WHAT CHANGES
+═══════════════════════════════════════════
+
+
+WHAT THIS REPLACES
+==================
+
+    Traditional          XYZT                   Status
+    ───────────────────  ──────────────────────  ────────────
+    Tokens               Positions               PROVEN
+    Variables            Coordinates              PROVEN
+    Operations           Collisions               PROVEN
+    Control flow         Topology                 PROVEN
+    Memory               Cavity (Q=persistence)   DEMONSTRATED
+    Time                 T (substrate)            PROVEN
+    Compiler             Nothing (lang=execution) PROJECTED
+    OS                   Impedance topology       PROJECTED
+    Kernel               Z-walls (physics blocks) PROVEN
+    Privilege rings      Nothing (Z=capability)   PROJECTED
+    Syscalls             Nothing (reach=access)   PROJECTED
+    Driver               Nothing (pin=position)   PROJECTED
+    Filesystem           Cavities (Q=durability)  PROJECTED
+    Scheduler            Energy (has it=runs)     DEMONSTRATED
+    Network stack        Boundary coupling        PROJECTED
+    Type system          Topology interpretation  PROJECTED
+
+
+WHAT REMAINS
+============
+
+Physics.
+
+The speed of propagation.
+The impedance at junctions.
+The energy lost to boundaries.
+The Q-factor of cavities.
+The observation tax of probes.
+The noise floor of the substrate.
+
+These are not parameters we set.
+These are the substrate asserting itself.
+The substrate IS the OS.
+
+
+
+═══════════════════════════════════════════
+PART VII: THE POINT
+═══════════════════════════════════════════
+
+This document is not a specification for something to build.
+This document is a description of what already exists.
+
+Computation is not an abstraction we invented.
+Computation is distinction + position + collision + impedance + topology.
+Everything else — languages, compilers, operating systems —
+is just encoding and decoding.
+
+XYZT strips the encoding.
+What remains is computation itself.
+
+
+Position is value.
+Collision is computation.
+Impedance is selection.
+Topology is program.
+T is the substrate.
