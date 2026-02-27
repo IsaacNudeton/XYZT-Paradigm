@@ -628,6 +628,18 @@ static int nest_spawn(Engine *eng, int node_id) {
     return slot;
 }
 
+void nest_remove(Engine *eng, int node_id) {
+    Graph *g0 = &eng->shells[0].g;
+    if (node_id < 0 || node_id >= g0->n_nodes) return;
+    Node *owner = &g0->nodes[node_id];
+    if (owner->child_id < 0) return;
+    int slot = owner->child_id;
+    graph_destroy(&eng->child_pool[slot]);
+    eng->child_owner[slot] = -1;
+    eng->n_children--;
+    owner->child_id = -1;
+}
+
 static void nest_check(Engine *eng) {
     if (eng->n_children >= MAX_CHILDREN) return;
     Graph *g0 = &eng->shells[0].g;
@@ -848,21 +860,26 @@ void engine_tick(Engine *eng) {
         Node *src = &g0->nodes[be->src_a], *dst = &g1->nodes[be->dst];
         if (src->layer_zero || src->identity.len < 1) continue;
 
-        int prob = be->weight;
+        int raw_prob = be->weight;
         double K = dst->Z / (src->Z > 0 ? src->Z : 1.0);
-        prob = (int)(prob * fresnel_T(K) + 0.5);
-        if (prob >= 255 || (rand() % 255) < prob) {
+        int prob = (int)(raw_prob * fresnel_T(K) + 0.5);
+        int rprob = raw_prob - prob;  /* T + R = raw (energy conservation) */
+        { uint32_t h = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)(i * 2246822519u);
+          h ^= h >> 16; h *= 0x45d9f3b; h ^= h >> 16;
+        if (prob >= 255 || (h & 0xFF) < (unsigned)prob) {
             dst->accum += src->val;
             dst->n_incoming++;
             dst->layer_zero = 0;
             dst->last_active = (uint32_t)T_now(&eng->T);
             g0->total_boundary_crossings++;
         } else {
-            int rprob = 255 - be->weight;
-            if (rprob > 0 && (rand() % 255) < rprob) {
+            uint32_t hr = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)((i + 0x9e3779b9) * 2246822519u);
+            hr ^= hr >> 16; hr *= 0x45d9f3b; hr ^= hr >> 16;
+            if (rprob > 0 && (hr & 0xFF) < (unsigned)rprob) {
                 src->accum += dst->val;
                 src->n_incoming++;
             }
+        }
         }
     }
 
@@ -889,23 +906,29 @@ void engine_tick(Engine *eng) {
                 if (na->layer_zero || nb->layer_zero) continue;
                 if (na->identity.len < 1 || nb->identity.len < 1) continue;
 
-                int prob = e->weight;
+                int raw_prob = e->weight;
+                int prob = raw_prob;
                 if (e->intershell) {
                     double K = nd->Z / (na->Z > 0 ? na->Z : 1.0);
-                    prob = (int)(prob * fresnel_T(K) + 0.5);
+                    prob = (int)(raw_prob * fresnel_T(K) + 0.5);
                 }
-                if (prob >= 255 || (rand() % 255) < prob) {
+                int rprob = raw_prob - prob;  /* T + R = raw (energy conservation) */
+                { uint32_t h = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)(i * 2246822519u);
+                  h ^= h >> 16; h *= 0x45d9f3b; h ^= h >> 16;
+                if (prob >= 255 || (h & 0xFF) < (unsigned)prob) {
                     int32_t va = e->invert_a ? -na->val : na->val;
                     int32_t vb = e->invert_b ? -nb->val : nb->val;
                     nd->accum += va + vb;
                     nd->n_incoming++;
                     if (e->weight < 255) e->weight++;
                 } else {
-                    int rprob = 255 - e->weight;
-                    if (rprob > 0 && (rand() % 255) < rprob) {
+                    uint32_t hr = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)((i + 0x9e3779b9) * 2246822519u);
+                    hr ^= hr >> 16; hr *= 0x45d9f3b; hr ^= hr >> 16;
+                    if (rprob > 0 && (hr & 0xFF) < (unsigned)rprob) {
                         na->accum += nd->val;
                         na->n_incoming++;
                     }
+                }
                 }
             }
 

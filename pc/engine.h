@@ -327,6 +327,9 @@ static inline int obs_raw(int32_t v)         { return v; }
 static inline double fresnel_T(double K) {
     double d = K + 1.0; return (4.0 * K) / (d * d);
 }
+static inline double fresnel_R(double K) {
+    double d = (K - 1.0) / (K + 1.0); return d * d;
+}
 static inline uint8_t apply_fresnel(int raw, double Z_src, double Z_dst) {
     if (Z_src <= 0.0) Z_src = 1.0;
     double K = Z_dst / Z_src;
@@ -392,6 +395,9 @@ int engine_query_name(const Engine *eng, const char *substr,
 /* Save / Load */
 int engine_save(const Engine *eng, const char *path);
 int engine_load(Engine *eng, const char *path);
+
+/* Nesting */
+void nest_remove(Engine *eng, int node_id);
 
 /* Wire graph bridge (toolkit ↔ engine) */
 int engine_wire_import(Engine *eng, const char *path);

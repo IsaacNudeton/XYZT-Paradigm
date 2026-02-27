@@ -480,6 +480,200 @@ static void cmd_test(void) {
         remove("test_adder.xyzt");
     }
 
+    /* ── Tier 2: T1 Auto-wiring ────────────────────────────────── */
+    printf("--- T1 Auto-wiring ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int a = engine_ingest_text(&eng, "fw_a", "the cat sat on the warm soft mat by the door");
+        int b = engine_ingest_text(&eng, "fw_b", "the cat ran to the warm soft hat by the door");
+        for (int i = 0; i < 200; i++) engine_tick(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int e_ab = graph_find_edge(g0, a, b, a);
+        if (e_ab < 0) e_ab = graph_find_edge(g0, b, a, b);
+        check("auto-wired edge exists", 1, e_ab >= 0 ? 1 : 0);
+        check("boundary edges created", 1, eng.n_boundary_edges > 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T3 Hebbian ──────────────────────────────────── */
+    printf("--- T3 Hebbian ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int ha = engine_ingest_text(&eng, "heb_a", "the quick brown fox jumps over the lazy dog near the river");
+        int hb = engine_ingest_text(&eng, "heb_b", "the quick brown cat jumps over the lazy log near the river");
+        int hc = engine_ingest_text(&eng, "heb_c", "0xDEADBEEF 10110101 binary noise random static burst xyz");
+        Graph *g0 = &eng.shells[0].g;
+        int e_sim = graph_find_edge(g0, ha, hb, ha);
+        int e_diff = graph_find_edge(g0, ha, hc, ha);
+        if (e_sim < 0) e_sim = graph_find_edge(g0, hb, ha, hb);
+        if (e_diff < 0) e_diff = graph_find_edge(g0, hc, ha, hc);
+        uint8_t w_sim_before = (e_sim >= 0) ? g0->edges[e_sim].weight : 0;
+        uint8_t w_diff_before = (e_diff >= 0) ? g0->edges[e_diff].weight : 0;
+        (void)w_sim_before; (void)w_diff_before;
+        graph_learn(g0);
+        uint8_t w_sim_after = (e_sim >= 0) ? g0->edges[e_sim].weight : 0;
+        uint8_t w_diff_after = (e_diff >= 0) ? g0->edges[e_diff].weight : 0;
+        check("similar edge exists", 1, e_sim >= 0 ? 1 : 0);
+        check("hebbian: similar >= different", 1, w_sim_after >= w_diff_after ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T10 Crystallization ─────────────────────────── */
+    printf("--- T10 Crystallization ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int c1 = graph_add(g0, "crystal_hi", 0, &eng.T);
+        int c2 = graph_add(g0, "crystal_lo", 0, &eng.T);
+        int feeder = graph_add(g0, "feeder", 0, &eng.T);
+        g0->nodes[c1].layer_zero = 0; g0->nodes[c1].identity.len = 64;
+        g0->nodes[c2].layer_zero = 0; g0->nodes[c2].identity.len = 64;
+        g0->nodes[feeder].layer_zero = 0; g0->nodes[feeder].identity.len = 64;
+        graph_wire(g0, feeder, feeder, c1, 250, 0);
+        graph_wire(g0, feeder, feeder, c2, 10, 0);
+        crystal_update(&g0->nodes[c1], g0->edges, g0->n_edges, c1);
+        crystal_update(&g0->nodes[c2], g0->edges, g0->n_edges, c2);
+        check("crystal: strong > weak", 1, crystal_strength(&g0->nodes[c1]) > crystal_strength(&g0->nodes[c2]) ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T11 Z-chain ─────────────────────────────────── */
+    printf("--- T11 Z-chain ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int src = graph_add(g0, "z_src", 0, &eng.T);
+        int mid = graph_add(g0, "z_mid", 0, &eng.T);
+        int dst = graph_add(g0, "z_dst", 0, &eng.T);
+        for (int n = src; n <= dst; n++) {
+            g0->nodes[n].layer_zero = 0;
+            g0->nodes[n].identity.len = 64;
+            memset(g0->nodes[n].identity.w, 0xFF, 8);
+        }
+        g0->nodes[src].val = 42;
+        graph_wire(g0, src, src, mid, 255, 0);
+        graph_wire(g0, mid, mid, dst, 255, 0);
+        int max_z = graph_compute_z(g0);
+        check("Z chain has depth", 1, max_z >= 2 ? 1 : 0);
+        check("src at Z=0", 0, coord_z(g0->nodes[src].coord));
+        check("mid at Z=1", 1, coord_z(g0->nodes[mid].coord));
+        check("dst at Z=2", 2, coord_z(g0->nodes[dst].coord));
+        engine_tick(&eng);
+        check("mid received signal", 1, g0->nodes[mid].val != 0 ? 1 : 0);
+        check("dst received cascade", 1, g0->nodes[dst].val != 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T17 Accumulation ────────────────────────────── */
+    printf("--- T17 Accumulation ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int a = graph_add(g0, "acc_a", 0, &eng.T);
+        int b = graph_add(g0, "acc_b", 0, &eng.T);
+        int d = graph_add(g0, "acc_d", 0, &eng.T);
+        for (int n = a; n <= d; n++) {
+            g0->nodes[n].layer_zero = 0;
+            g0->nodes[n].identity.len = 64;
+            memset(g0->nodes[n].identity.w, 0xFF, 8);
+        }
+        g0->nodes[a].val = 7; g0->nodes[b].val = 3;
+        graph_wire(g0, a, b, d, 255, 0);
+        engine_tick(&eng);
+        check("accumulation: 7+3=10", 10, g0->nodes[d].val);
+        check("accum cleared", 0, g0->nodes[d].accum);
+        check("n_incoming cleared", 0, g0->nodes[d].n_incoming);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T18 Adaptive timing ─────────────────────────── */
+    printf("--- T18 Adaptive Timing ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int old_interval = eng.shells[0].g.grow_interval;
+        engine_ingest_text(&eng, "at_a", "alpha timing test data with enough content to trigger auto grow");
+        engine_ingest_text(&eng, "at_b", "beta timing test data with enough content to trigger auto grow");
+        engine_ingest_text(&eng, "at_c", "gamma timing test data with enough content to trigger auto grow");
+        for (int i = 0; i < 500; i++) engine_tick(&eng);
+        int new_interval = eng.shells[0].g.grow_interval;
+        check("adaptive timing changed", 1, old_interval != new_interval ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T20 Energy bounded ──────────────────────────── */
+    printf("--- T20 Energy Bounded ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int ea = graph_add(g0, "en_a", 0, &eng.T);
+        int eb = graph_add(g0, "en_b", 0, &eng.T);
+        int ed = graph_add(g0, "en_d", 0, &eng.T);
+        for (int n = ea; n <= ed; n++) {
+            g0->nodes[n].layer_zero = 0;
+            g0->nodes[n].identity.len = 64;
+            memset(g0->nodes[n].identity.w, 0xFF, 8);
+        }
+        g0->nodes[ea].val = 7; g0->nodes[eb].val = 3; g0->nodes[ed].val = 0;
+        graph_wire(g0, ea, eb, ed, 255, 0);
+        engine_tick(&eng);
+        check("energy bounded", 1, abs(g0->nodes[ed].val) <= 10 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Tier 2: T23 ONETWO val ──────────────────────────────── */
+    printf("--- T23 ONETWO Val ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int id = engine_ingest_text(&eng, "ot_test", "the quick brown fox jumps over the lazy dog");
+        Node *n = &eng.shells[0].g.nodes[id];
+        check("onetwo val not zero", 1, n->val != 0 ? 1 : 0);
+        check("onetwo ticks ran", 1, eng.onetwo.tick_count > 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* ── Nest Remove ─────────────────────────────────────────── */
+    printf("--- Nest Remove ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int id = engine_ingest_text(&eng, "nr_parent", "data for nest remove test with enough content");
+        eng.shells[0].g.nodes[id].valence = 255;
+        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        int had = eng.n_children;
+        check("child spawned for remove test", 1, had > 0 ? 1 : 0);
+        eng.shells[0].g.nodes[id].alive = 0;
+        nest_remove(&eng, id);
+        check("child removed", had - 1, eng.n_children);
+        check("parent child_id cleared", -1, eng.shells[0].g.nodes[id].child_id);
+        engine_destroy(&eng);
+    }
+
+    /* ── Invariant: Dead stays dead ──────────────────────────── */
+    printf("--- Invariant: Dead Stays Dead ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        int dd = graph_add(g0, "dead_node", 0, &eng.T);
+        g0->nodes[dd].val = 0;
+        g0->nodes[dd].alive = 0;
+        for (int i = 0; i < 100; i++) engine_tick(&eng);
+        check("dead node val unchanged", 0, g0->nodes[dd].val);
+        check("dead node still dead", 0, (int)g0->nodes[dd].alive);
+        engine_destroy(&eng);
+    }
+
+    /* ── Invariant: Fresnel T+R=1 ────────────────────────────── */
+    printf("--- Invariant: Fresnel Conservation ---\n");
+    {
+        double K_vals[] = { 0.5, 1.0, 1.5, 2.25, 0.1, 10.0 };
+        int all_ok = 1;
+        for (int i = 0; i < 6; i++) {
+            double T = fresnel_T(K_vals[i]);
+            double R = fresnel_R(K_vals[i]);
+            if (fabs(T + R - 1.0) > 1e-10) all_ok = 0;
+        }
+        check("fresnel T+R=1 for all K", 1, all_ok);
+    }
+
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
     if (g_fail == 0) printf("ALL PASS.\n");
