@@ -329,6 +329,20 @@ static inline int obs_raw(int32_t v)         { return v; }
 static inline int obs_xor(int32_t I_energy, int32_t val) {
     return (I_energy > 0 && val == 0) ? 1 : 0;
 }
+/* Z=1: AND = both inputs exceed threshold (energy gating) */
+static inline int obs_and(int32_t val, int32_t I_energy, int threshold) {
+    return (abs(val) > threshold && I_energy > threshold) ? 1 : 0;
+}
+/* Z=3: frequency detector — high n_incoming relative to valence = resonant node */
+static inline int obs_freq(uint16_t n_incoming, uint8_t valence) {
+    return (n_incoming >= 2 && valence > 0 && n_incoming * 255 > valence * 4) ? 1 : 0;
+}
+/* Z=4: correlation — val and I_energy trend same direction (co-moving) */
+static inline int obs_corr(int32_t val, int32_t prev_val, int32_t I_energy) {
+    int val_up = (val > prev_val) ? 1 : 0;
+    int energy_present = (I_energy > 0) ? 1 : 0;
+    return (val_up == energy_present) ? 1 : 0;
+}
 
 /* Fresnel physics */
 static inline double fresnel_T(double K) {
