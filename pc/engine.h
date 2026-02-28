@@ -14,6 +14,7 @@
 #define XYZT_ENGINE_H
 
 #include <stdint.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -79,6 +80,7 @@ static inline int xyzt_ctzll(uint64_t x) {
 #define MISMATCH_TAX_NUM    81u    /* 81/2251 ≈ 0.035982 */
 #define MISMATCH_TAX_DEN  2251u
 #define PRUNE_FLOOR          9u    /* ≈ 0.036 * 255 */
+#define VAL_CEILING        1000000 /* hard ceiling on node values (±1M) */
 #define LYSIS_THRESHOLD    100     /* valence below this -> kill child (apoptosis) */
 #define VALENCE_DECAY_RATE   2     /* per SUBSTRATE_INT cycle under high error */
 
@@ -265,7 +267,7 @@ typedef struct {
     uint8_t   crystal_hist[8];
     uint8_t   crystal_n;
     int32_t   val;
-    int32_t   accum;
+    int64_t   accum;
     int32_t   I_energy;       /* magnetic/current energy at node (for XOR detection) */
     int8_t    child_id;
 } Node;

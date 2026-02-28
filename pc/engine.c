@@ -553,7 +553,11 @@ static int child_tick_once(Graph *g) {
         if (!nb->alive || nb->layer_zero || nb->identity.len < 1) continue;
         int32_t va = e->invert_a ? -na->val : na->val;
         int32_t vb = e->invert_b ? -nb->val : nb->val;
-        nd->accum += va + vb;
+        int64_t sum64 = (int64_t)va + (int64_t)vb;
+        if (sum64 > INT32_MAX/2) sum64 = INT32_MAX/2;
+        if (sum64 < INT32_MIN/2) sum64 = INT32_MIN/2;
+        nd->accum += sum64;
+        nd->I_energy += abs(va) + abs(vb);
         nd->n_incoming++;
     }
     for (int i = 0; i < g->n_nodes; i++) {
@@ -562,18 +566,33 @@ static int child_tick_once(Graph *g) {
         if (n->n_incoming == 0 && n->accum == 0) continue;
         int32_t old_val = n->val;
         if (n->n_incoming <= 1) {
-            n->val = n->accum;
+            n->val = (int32_t)n->accum;
         } else {
-            int32_t total = n->accum + n->val;
+            int64_t total = n->accum + (int64_t)n->val;
             int N = n->n_incoming + 1;
-            n->val = 2 * total / N - old_val;
+            int64_t resolved = 2 * total / N - old_val;
+            if (resolved > INT32_MAX/2) resolved = INT32_MAX/2;
+            if (resolved < INT32_MIN/2) resolved = INT32_MIN/2;
+            n->val = (int32_t)resolved;
         }
         if (n->valence > 0) {
             n->val = (int32_t)((int64_t)old_val * n->valence +
                                (int64_t)n->val * (255 - n->valence)) / 255;
         }
-        int32_t cap = abs(old_val) + abs(n->accum);
+        int64_t cap64 = (int64_t)abs(old_val) + llabs(n->accum);
+        if (cap64 > INT32_MAX/2) cap64 = INT32_MAX/2;
+        int32_t cap = (int32_t)cap64;
         if (abs(n->val) > cap) n->val = n->val > 0 ? cap : -cap;
+        if (n->val > VAL_CEILING) n->val = VAL_CEILING;
+        if (n->val < -VAL_CEILING) n->val = -VAL_CEILING;
+        /* I_energy: collision remainder after voltage resolution */
+        if (n->n_incoming >= 2) {
+            int32_t val_energy = abs(n->val);
+            n->I_energy = (n->I_energy > val_energy) ?
+                n->I_energy - val_energy : 0;
+        } else {
+            n->I_energy = 0;
+        }
         if (n->val != old_val) changed = 1;
         n->n_incoming = 0;
         n->accum = 0;
@@ -640,6 +659,8 @@ void nest_remove(Engine *eng, int node_id) {
     owner->child_id = -1;
 }
 
+/* nest_check: shell 0 only. Shell 1 mirrors would create duplicates.
+ * Shell 2 re-spawn after shell 0 lysis is a future design decision. */
 static void nest_check(Engine *eng) {
     if (eng->n_children >= MAX_CHILDREN) return;
     Graph *g0 = &eng->shells[0].g;
@@ -842,15 +863,29 @@ int engine_ingest_file(Engine *eng, const char *path) {
  * ENGINE TICK — the full loop
  * ══════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════
+ * ENGINE TICK PIPELINE — 10 stages, order is load-bearing.
+ *
+ * S1  Nesting check       reads: valence.           Writes: child_pool.
+ * S2  Boundary propagation reads: val, weight.       Writes: accum, n_incoming.
+ * S3  Per-shell propagate  reads: val, weight, Z.    Writes: accum, n_incoming, I_energy.
+ * S4  Per-shell resolve    reads: accum, n_incoming. Writes: val. Clears: accum, n_incoming.
+ * S5  Grow                 reads: identity.          Writes: edges (new).
+ * S6  Prune                reads: weight.            Writes: edges (removed).
+ * S7  T-driven decay       reads: T.count.           Writes: weight.
+ * S8  Intershell wiring    reads: identity, Z.       Writes: boundary_edges.
+ * S9  Hebbian + Z          reads: identity.          Writes: weight, valence, Z.
+ * S10 ONETWO + lysis       reads: feedback, valence. Writes: valence, child (lysis).
+ * ═══════════════════════════════════════════════════════════════ */
 void engine_tick(Engine *eng) {
     T_tick(&eng->T);
     eng->total_ticks++;
 
-    /* v9: nesting check */
+    /* ── S1: Nesting check ───────────────────── */
     if (eng->total_ticks % SUBSTRATE_INT == 0)
         nest_check(eng);
 
-    /* Boundary propagation */
+    /* ── S2: Boundary propagation ────────────── */
     for (int i = 0; i < eng->n_boundary_edges; i++) {
         Edge *be = &eng->boundary_edges[i];
         if (be->weight == 0) continue;
@@ -882,7 +917,7 @@ void engine_tick(Engine *eng) {
         }
     }
 
-    /* Per-shell processing */
+    /* ── S3: Per-shell propagate ────────────── */
     for (int s = 0; s < eng->n_shells; s++) {
         Graph *g = &eng->shells[s].g;
         g->total_ticks++;
@@ -917,7 +952,10 @@ void engine_tick(Engine *eng) {
                 if (prob >= 255 || (h & 0xFF) < (unsigned)prob) {
                     int32_t va = e->invert_a ? -na->val : na->val;
                     int32_t vb = e->invert_b ? -nb->val : nb->val;
-                    nd->accum += va + vb;
+                    int64_t sum64 = (int64_t)va + (int64_t)vb;
+                    if (sum64 > INT32_MAX/2) sum64 = INT32_MAX/2;
+                    if (sum64 < INT32_MIN/2) sum64 = INT32_MIN/2;
+                    nd->accum += sum64;
                     nd->I_energy += abs(va) + abs(vb); /* total incoming energy */
                     nd->n_incoming++;
                     if (e->weight < 255) e->weight++;
@@ -932,7 +970,7 @@ void engine_tick(Engine *eng) {
                 }
             }
 
-            /* Resolve */
+            /* ── S4: Per-shell resolve ────────────── */
             for (int i = 0; i < g->n_nodes; i++) {
                 Node *n = &g->nodes[i];
                 if (coord_z(n->coord) != zl) continue;
@@ -961,7 +999,7 @@ void engine_tick(Engine *eng) {
                         /* Fallback: distribute accum across retina nodes */
                         int n_inp = child->n_nodes > 1 ? child->n_nodes - 1 : 1;
                         for (int r = 0; r < n_inp && r < child->n_nodes; r++)
-                            child->nodes[r].val = n->accum / n_inp;
+                            child->nodes[r].val = (int32_t)(n->accum / n_inp);
                     }
 
                     for (int ct = 0; ct < 64; ct++)
@@ -979,18 +1017,27 @@ void engine_tick(Engine *eng) {
 
                 int32_t old_val = n->val;
                 if (n->n_incoming <= 1) {
-                    n->val = n->accum;
+                    n->val = (int32_t)n->accum;
                 } else {
-                    int32_t total = n->accum + n->val;
+                    int64_t total = n->accum + (int64_t)n->val;
                     int N = n->n_incoming + 1;
-                    n->val = 2 * total / N - old_val;
+                    int64_t resolved = 2 * total / N - old_val;
+                    if (resolved > INT32_MAX/2) resolved = INT32_MAX/2;
+                    if (resolved < INT32_MIN/2) resolved = INT32_MIN/2;
+                    n->val = (int32_t)resolved;
                 }
                 if (n->valence > 0) {
                     n->val = (int32_t)((int64_t)old_val * n->valence +
                                        (int64_t)n->val * (255 - n->valence)) / 255;
                 }
-                int32_t cap = abs(old_val) + abs(n->accum);
+                int64_t cap64 = (int64_t)abs(old_val) + llabs(n->accum);
+                if (cap64 > INT32_MAX/2) cap64 = INT32_MAX/2;
+                int32_t cap = (int32_t)cap64;
                 if (abs(n->val) > cap) n->val = n->val > 0 ? cap : -cap;
+
+                /* Hard ceiling: prevents unbounded accumulation */
+                if (n->val > VAL_CEILING) n->val = VAL_CEILING;
+                if (n->val < -VAL_CEILING) n->val = -VAL_CEILING;
 
                 /* I_energy: collision energy in current when voltage cancelled.
                  * I_energy was accumulated as abs(va)+abs(vb) during propagation.
@@ -1011,7 +1058,7 @@ void engine_tick(Engine *eng) {
             }
         }
 
-        /* Safety clear */
+        /* S4 cont: Safety clear — catch nodes missed by z-layer iteration */
         for (int i = 0; i < g->n_nodes; i++) {
             if (g->nodes[i].n_incoming > 0 || g->nodes[i].accum != 0) {
                 g->nodes[i].n_incoming = 0;
@@ -1019,14 +1066,26 @@ void engine_tick(Engine *eng) {
             }
         }
 
-        /* Grow phase */
+        /* ── S5: Grow ────────────────────────── */
         if (g->auto_grow && g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
             long long mc_sum = 0; int mc_count = 0, total_grown = 0;
+            /* Popcount precompute: skip pairs with low min/max ratio */
+            int id_pop[MAX_NODES];
             for (int i = 0; i < g->n_nodes; i++) {
-                if (!g->nodes[i].alive || g->nodes[i].layer_zero || g->nodes[i].identity.len < 16) continue;
+                if (!g->nodes[i].alive || g->nodes[i].layer_zero || g->nodes[i].identity.len < 16)
+                    id_pop[i] = -1;
+                else
+                    id_pop[i] = bs_popcount(&g->nodes[i].identity);
+            }
+            for (int i = 0; i < g->n_nodes; i++) {
+                if (id_pop[i] < 0) continue;
                 int top_j[GROW_K], top_c[GROW_K], n_top = 0;
                 for (int j = 0; j < g->n_nodes; j++) {
-                    if (i == j || !g->nodes[j].alive || g->nodes[j].layer_zero || g->nodes[j].identity.len < 16) continue;
+                    if (i == j || id_pop[j] < 0) continue;
+                    /* Popcount ratio filter: mutual_contain bounded by min/max */
+                    int mn = id_pop[i] < id_pop[j] ? id_pop[i] : id_pop[j];
+                    int mx = id_pop[i] > id_pop[j] ? id_pop[i] : id_pop[j];
+                    if (mx > 0 && mn * 100 / mx < g->grow_mean) continue;
                     int corr = bs_mutual_contain(&g->nodes[i].identity, &g->nodes[j].identity);
                     mc_sum += corr; mc_count++;
                     if (corr <= g->grow_mean) continue;
@@ -1050,7 +1109,7 @@ void engine_tick(Engine *eng) {
             g->grow_interval = adaptive_interval(g->grow_interval, total_grown, 2, 200);
         }
 
-        /* Prune phase */
+        /* ── S6: Prune ───────────────────────── */
         if (g->auto_prune && g->prune_interval > 0 && (g->total_ticks % (unsigned)g->prune_interval == 0)) {
             int pre = g->n_edges, w = 0;
             for (int i = 0; i < g->n_edges; i++) {
@@ -1063,7 +1122,7 @@ void engine_tick(Engine *eng) {
             g->prune_interval = adaptive_interval(g->prune_interval, pre - w, 4, 400);
         }
 
-        /* T-driven decay */
+        /* ── S7: T-driven decay ──────────────── */
         for (int i = 0; i < g->n_nodes; i++) {
             Node *n = &g->nodes[i];
             if (!n->alive || n->layer_zero) continue;
@@ -1079,18 +1138,34 @@ void engine_tick(Engine *eng) {
         }
     }
 
-    /* Dynamic intershell wiring */
+    /* ── S8: Intershell wiring ──────────────── */
     if (eng->boundary_interval > 0 && eng->total_ticks % (unsigned)eng->boundary_interval == 0 && eng->n_shells >= 2) {
         int before = eng->n_boundary_edges;
         Graph *g0 = &eng->shells[0].g, *g1 = &eng->shells[1].g;
+        /* Bloom filter for O(1) exists-check instead of O(b) scan */
+        #define BMAP_BITS 65536
+        uint8_t bmap[BMAP_BITS / 8];
+        memset(bmap, 0, sizeof(bmap));
+        for (int b = 0; b < eng->n_boundary_edges; b++) {
+            uint32_t key = ((uint32_t)eng->boundary_edges[b].src_a << 16)
+                          | (uint32_t)eng->boundary_edges[b].dst;
+            uint32_t h = key * 2654435761u;
+            bmap[(h >> 16) / 8] |= 1 << ((h >> 16) % 8);
+        }
         for (int i = 0; i < g0->n_nodes; i++) {
             if (!g0->nodes[i].alive || g0->nodes[i].layer_zero || g0->nodes[i].identity.len < 16) continue;
             for (int j = 0; j < g1->n_nodes; j++) {
                 if (!g1->nodes[j].alive || g1->nodes[j].layer_zero || g1->nodes[j].identity.len < 16) continue;
+                /* Bloom check + linear fallback on hit */
+                uint32_t key = ((uint32_t)i << 16) | (uint32_t)j;
+                uint32_t h = key * 2654435761u;
+                int bloom_hit = (bmap[(h >> 16) / 8] >> ((h >> 16) % 8)) & 1;
                 int exists = 0;
-                for (int b = 0; b < eng->n_boundary_edges; b++) {
-                    if (eng->boundary_edges[b].src_a == (uint16_t)i &&
-                        eng->boundary_edges[b].dst == (uint16_t)j) { exists = 1; break; }
+                if (bloom_hit) {
+                    for (int b = 0; b < eng->n_boundary_edges; b++) {
+                        if (eng->boundary_edges[b].src_a == (uint16_t)i &&
+                            eng->boundary_edges[b].dst == (uint16_t)j) { exists = 1; break; }
+                    }
                 }
                 if (exists) continue;
                 int corr = bs_mutual_contain(&g0->nodes[i].identity, &g1->nodes[j].identity);
@@ -1106,7 +1181,7 @@ void engine_tick(Engine *eng) {
         eng->boundary_interval = adaptive_interval(eng->boundary_interval, eng->n_boundary_edges - before, 10, 500);
     }
 
-    /* Hebbian + Z */
+    /* ── S9: Hebbian + Z ─────────────────── */
     if (eng->learn_interval > 0 && eng->total_ticks % (unsigned)eng->learn_interval == 0) {
         for (int s = 0; s < eng->n_shells; s++) {
             graph_learn(&eng->shells[s].g);
@@ -1114,23 +1189,23 @@ void engine_tick(Engine *eng) {
         }
     }
 
-    /* ONETWO feedback loop */
+    /* ── S10: ONETWO + lysis ────────────── */
     if (eng->total_ticks % SUBSTRATE_INT == 0) {
         uint8_t state_buf[512];
         int pos = 0;
 
-        /* Observe structural state, not raw vals.
-         * Edge weights change by +1/-1 (Hebbian) → monotonic runs, constant deltas.
-         * Valence increments by 1 → predictable sequences.
-         * ONETWO's autocorrelation and run-length bands detect these patterns.
-         * Raw vals (millions, oscillating) look like noise to the encoder. */
-        for (int s = 0; s < eng->n_shells && pos < 400; s++) {
+        /* Two-pass state observation: edges first (structure), then nodes (state).
+         * All shells contribute — shell 2 (verifier) was invisible in single-pass
+         * because shell 0 edges often filled the 400-byte budget alone. */
+        /* Pass 1: edge weights from ALL shells */
+        for (int s = 0; s < eng->n_shells; s++) {
             Graph *g = &eng->shells[s].g;
-            /* Edge weight distribution (sorted-ish via traversal order) */
-            for (int e = 0; e < g->n_edges && pos < 400; e++) {
+            for (int e = 0; e < g->n_edges && pos < 400; e++)
                 state_buf[pos++] = g->edges[e].weight;
-            }
-            /* Node valence and crystal strength */
+        }
+        /* Pass 2: node state from ALL shells */
+        for (int s = 0; s < eng->n_shells; s++) {
+            Graph *g = &eng->shells[s].g;
             for (int i = 0; i < g->n_nodes && pos < 500; i++) {
                 if (g->nodes[i].alive && !g->nodes[i].layer_zero) {
                     state_buf[pos++] = g->nodes[i].valence;
