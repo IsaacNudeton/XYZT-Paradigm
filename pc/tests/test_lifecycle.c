@@ -89,7 +89,9 @@ void run_lifecycle_tests(void) {
         int child_slot = eng.shells[0].g.nodes[id].child_id;
         check("lysis: valid child slot", 1, child_slot >= 0 ? 1 : 0);
 
-        eng.shells[0].g.nodes[id].valence = 90;
+        /* Force low valence + incoherent: boredom won't save it */
+        eng.shells[0].g.nodes[id].valence = 50;
+        eng.shells[0].g.nodes[id].coherent = -1;
         for (int i = 0; i < (int)SUBSTRATE_INT; i++) engine_tick(&eng);
         check("lysis: child removed", 0, eng.n_children);
         check("lysis: child_id cleared", -1, eng.shells[0].g.nodes[id].child_id);
@@ -130,7 +132,9 @@ void run_lifecycle_tests(void) {
         printf("  1st cycle: error=%d energy=%d  valence: %d -> %d\n",
                error_1st, energy_1st, valence_before, valence_after);
         check("error spike from poison", 1, abs(error_1st) > energy_1st / 3 ? 1 : 0);
-        check("valence decayed under error", 1, valence_after < valence_before ? 1 : 0);
+        /* Targeted decay: coherent nodes are protected. With edges zeroed,
+         * all nodes lack neighbors → scale<2 → coherent → no decay. */
+        check("coherent nodes protected under error", 1, valence_after == valence_before ? 1 : 0);
         engine_destroy(&eng);
     }
 
@@ -162,6 +166,157 @@ void run_lifecycle_tests(void) {
         for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
         check("cycle: new child spawned into freed slot", MAX_CHILDREN, eng.n_children);
         check("cycle: new node has child", 1, eng.shells[0].g.nodes[new_id].child_id >= 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* Grow Opportunity: should create collision points (n_in >= 2) */
+    printf("--- Grow Opportunity ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        for (int k = 0; k < 6; k++) {
+            char nm[16]; snprintf(nm, sizeof(nm), "gop_%d", k);
+            engine_ingest_text(&eng, nm,
+                "shared content for grow opportunity test with structural overlap");
+        }
+
+        for (int i = 0; i < (int)SUBSTRATE_INT * 3; i++) engine_tick(&eng);
+
+        int n_collision = 0;
+        int n_in_count[MAX_NODES]; memset(n_in_count, 0, sizeof(n_in_count));
+        for (int e = 0; e < g0->n_edges; e++)
+            if (g0->edges[e].weight > 0) n_in_count[g0->edges[e].dst]++;
+        for (int i = 0; i < g0->n_nodes; i++)
+            if (g0->nodes[i].alive && !g0->nodes[i].layer_zero && n_in_count[i] >= 2)
+                n_collision++;
+
+        printf("  collision vertices: %d out of %d alive nodes\n", n_collision, g0->n_nodes);
+        check("grow created collision points", 1, n_collision > 0 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* Crystal Coherence: coherence field is computed for all alive nodes */
+    printf("--- Coherence Computed ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        int id = engine_ingest_text(&eng, "coh_a",
+            "coherence test content alpha with structural fingerprint");
+        int nbr = engine_ingest_text(&eng, "coh_b",
+            "coherence test content beta different fingerprint pattern");
+        graph_wire(&eng.shells[0].g, id, id, nbr, 200, 0);
+        graph_wire(&eng.shells[0].g, nbr, nbr, id, 200, 0);
+
+        /* Run past first SUBSTRATE_INT to establish prev_val, then another to compute coherence */
+        for (int i = 0; i < (int)SUBSTRATE_INT * 2 + 1; i++) engine_tick(&eng);
+
+        /* Both nodes should have coherent field set (not 0 = unknown) */
+        int8_t ca = eng.shells[0].g.nodes[id].coherent;
+        int8_t cb = eng.shells[0].g.nodes[nbr].coherent;
+        printf("  coh_a coherent=%d, coh_b coherent=%d\n", ca, cb);
+        check("coh_a computed", 1, ca != 0 ? 1 : 0);
+        check("coh_b computed", 1, cb != 0 ? 1 : 0);
+
+        /* Prev_val should be set (not still 0 from init) */
+        check("prev_val tracked", 1,
+              (eng.shells[0].g.nodes[id].prev_val != 0 ||
+               eng.shells[0].g.nodes[nbr].prev_val != 0) ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* Frustration erodes incoherent crystal, spares coherent */
+    printf("--- Frustration Erodes Incoherent ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        int id = engine_ingest_text(&eng, "frust_target",
+            "frustration erosion target content for close loop test");
+        g0->nodes[id].valence = 220;
+        g0->nodes[id].coherent = -1;   /* incoherent */
+        g0->nodes[id].val = 500;       /* far from mean */
+
+        int nbr = engine_ingest_text(&eng, "frust_safe",
+            "frustration safe neighbor coherent content different");
+        g0->nodes[nbr].valence = 200;
+        g0->nodes[nbr].coherent = 1;   /* coherent */
+        g0->nodes[nbr].val = 100;
+
+        graph_wire(g0, id, id, nbr, 200, 0);
+        graph_wire(g0, nbr, nbr, id, 200, 0);
+
+        uint8_t target_before = g0->nodes[id].valence;
+        uint8_t safe_before = g0->nodes[nbr].valence;
+
+        /* Force high error to trigger frustration */
+        eng.onetwo.feedback[7] = 500;
+        eng.onetwo.feedback[4] = 0;
+
+        for (int i = 0; i < 20; i++) engine_tick(&eng);
+
+        printf("  incoherent crystal: valence %d -> %d\n",
+               target_before, g0->nodes[id].valence);
+        printf("  coherent crystal: valence %d -> %d\n",
+               safe_before, g0->nodes[nbr].valence);
+
+        check("frustration: incoherent eroded", 1,
+              g0->nodes[id].valence < target_before ? 1 : 0);
+        check("frustration: coherent mostly held", 1,
+              g0->nodes[nbr].valence >= safe_before - 5 ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* Boredom crystallizes coherent active nodes */
+    printf("--- Boredom Crystallizes Coherent ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        int id = engine_ingest_text(&eng, "bore_target",
+            "boredom crystallization coherent active test content");
+        g0->nodes[id].valence = 100;
+        g0->nodes[id].coherent = 1;    /* coherent */
+        g0->nodes[id].val = 50;        /* nonzero = active */
+        g0->nodes[id].last_active = (uint32_t)T_now(&eng.T);
+
+        uint8_t val_before = g0->nodes[id].valence;
+
+        /* Force low error + stable = boredom */
+        eng.onetwo.feedback[7] = 10;
+        eng.onetwo.feedback[4] = 1;
+
+        for (int i = 0; i < 50; i++) engine_tick(&eng);
+
+        printf("  coherent node: valence %d -> %d\n",
+               val_before, g0->nodes[id].valence);
+        check("boredom: coherent gained valence", 1,
+              g0->nodes[id].valence > val_before ? 1 : 0);
+        engine_destroy(&eng);
+    }
+
+    /* Curiosity leaves system alone */
+    printf("--- Curiosity No Interference ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        int id = engine_ingest_text(&eng, "curious_node",
+            "curiosity drive state no interference test content");
+        g0->nodes[id].valence = 150;
+        g0->nodes[id].val = 100;
+
+        uint8_t val_before = g0->nodes[id].valence;
+
+        /* Error at MISMATCH_TAX_NUM boundary: curiosity zone */
+        eng.onetwo.feedback[7] = (int32_t)(MISMATCH_TAX_NUM);
+        eng.onetwo.feedback[4] = 0;   /* not stable = not boredom */
+
+        for (int i = 0; i < 20; i++) engine_tick(&eng);
+
+        printf("  curiosity: valence %d -> %d\n",
+               val_before, g0->nodes[id].valence);
+        check("curiosity: no major valence change", 1,
+              abs((int)g0->nodes[id].valence - (int)val_before) < 10 ? 1 : 0);
         engine_destroy(&eng);
     }
 }

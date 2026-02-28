@@ -76,7 +76,9 @@ static inline int xyzt_ctzll(uint64_t x) {
 /* ══════════════════════════════════════════════════════════════
  * {2,3} SUBSTRATE CONSTANTS — from Lean proofs
  * ══════════════════════════════════════════════════════════════ */
+#ifndef SUBSTRATE_INT
 #define SUBSTRATE_INT      137u    /* 2^7 + 3^2 */
+#endif
 #define MISMATCH_TAX_NUM    81u    /* 81/2251 ≈ 0.035982 */
 #define MISMATCH_TAX_DEN  2251u
 #define PRUNE_FLOOR          9u    /* ≈ 0.036 * 255 */
@@ -267,8 +269,10 @@ typedef struct {
     uint8_t   crystal_hist[8];
     uint8_t   crystal_n;
     int32_t   val;
+    int32_t   prev_val;       /* val at last SUBSTRATE_INT boundary (for coherence) */
     int64_t   accum;
     int32_t   I_energy;       /* magnetic/current energy at node (for XOR detection) */
+    int8_t    coherent;       /* +1 coherent, -1 incoherent, 0 unknown */
     int8_t    child_id;
 } Node;
 
@@ -300,6 +304,15 @@ typedef struct { Graph g; uint8_t id; char name[32]; } Shell;
 #define MAX_CHILDREN 4
 
 /* ══════════════════════════════════════════════════════════════
+ * SENSE — temporal feature extraction result
+ * ══════════════════════════════════════════════════════════════ */
+#define SENSE_MAX_FEATS 64
+typedef struct {
+    int node_ids[SENSE_MAX_FEATS];
+    int n_features;
+} sense_result_t;
+
+/* ══════════════════════════════════════════════════════════════
  * THE ENGINE
  * ══════════════════════════════════════════════════════════════ */
 typedef struct {
@@ -316,6 +329,7 @@ typedef struct {
     int   n_children;
     int   low_error_run;
     SubstrateT T;
+    sense_result_t last_sense;
 } Engine;
 
 /* ══════════════════════════════════════════════════════════════

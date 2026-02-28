@@ -10,6 +10,7 @@
 #include "engine.h"
 #include "onetwo.h"
 #include "transducer.h"
+#include "sense.h"
 
 /* ══════════════════════════════════════════════════════════════
  * ENCODERS
@@ -1077,9 +1078,15 @@ void engine_tick(Engine *eng) {
                 else
                     id_pop[i] = bs_popcount(&g->nodes[i].identity);
             }
+            /* Incoming edge count: opportunity scoring prefers wiring to relays
+             * (n_in<=1 → collision), not saturated nodes (n_in>=4). */
+            int n_in[MAX_NODES];
+            memset(n_in, 0, g->n_nodes * sizeof(int));
+            for (int e = 0; e < g->n_edges; e++)
+                if (g->edges[e].weight > 0) n_in[g->edges[e].dst]++;
             for (int i = 0; i < g->n_nodes; i++) {
                 if (id_pop[i] < 0) continue;
-                int top_j[GROW_K], top_c[GROW_K], n_top = 0;
+                int top_j[GROW_K], top_c[GROW_K], top_raw[GROW_K], n_top = 0;
                 for (int j = 0; j < g->n_nodes; j++) {
                     if (i == j || id_pop[j] < 0) continue;
                     /* Popcount ratio filter: mutual_contain bounded by min/max */
@@ -1088,20 +1095,32 @@ void engine_tick(Engine *eng) {
                     if (mx > 0 && mn * 100 / mx < g->grow_mean) continue;
                     int corr = bs_mutual_contain(&g->nodes[i].identity, &g->nodes[j].identity);
                     mc_sum += corr; mc_count++;
-                    if (corr <= g->grow_mean) continue;
+                    /* Opportunity scoring: prefer creating collision points.
+                     * relay→collision is highest leverage edge. */
+                    int opp;
+                    if (n_in[j] <= 1) opp = 3;      /* relay → collision */
+                    else if (n_in[j] <= 3) opp = 2;  /* active vertex */
+                    else opp = 1;                      /* saturated */
+                    int eff_corr = corr * opp / 3;
+                    if (eff_corr <= g->grow_mean) continue;
                     if (n_top < GROW_K) {
-                        top_j[n_top] = j; top_c[n_top] = corr; n_top++;
+                        top_j[n_top] = j; top_c[n_top] = eff_corr;
+                        top_raw[n_top] = corr; n_top++;
                     } else {
                         int min_k = 0;
                         for (int k = 1; k < GROW_K; k++)
                             if (top_c[k] < top_c[min_k]) min_k = k;
-                        if (corr > top_c[min_k]) { top_j[min_k] = j; top_c[min_k] = corr; }
+                        if (eff_corr > top_c[min_k]) {
+                            top_j[min_k] = j; top_c[min_k] = eff_corr;
+                            top_raw[min_k] = corr;
+                        }
                     }
                 }
                 for (int k = 0; k < n_top; k++) {
                     if (graph_find_edge(g, i, top_j[k], i) >= 0) continue;
-                    graph_wire(g, i, top_j[k], i, (uint8_t)(top_c[k] * 255 / 100), 0);
-                    graph_wire(g, top_j[k], i, top_j[k], (uint8_t)(top_c[k] * 255 / 100), 0);
+                    /* Edge weight from raw corr (identity overlap), not opportunity score */
+                    graph_wire(g, i, top_j[k], i, (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    graph_wire(g, top_j[k], i, top_j[k], (uint8_t)(top_raw[k] * 255 / 100), 0);
                     g->total_grown += 2; total_grown += 2;
                 }
             }
@@ -1214,7 +1233,71 @@ void engine_tick(Engine *eng) {
                 }
             }
         }
+
+        /* Precompute incoming edge count for shell 0 (used by coherence + profile) */
+        Graph *g0_s10 = &eng->shells[0].g;
+        int s10_n_in[MAX_NODES];
+        memset(s10_n_in, 0, g0_s10->n_nodes * sizeof(int));
+        for (int e = 0; e < g0_s10->n_edges; e++)
+            if (g0_s10->edges[e].weight > 0) s10_n_in[g0_s10->edges[e].dst]++;
+
+        /* Computational profile: 3 bytes summarizing topology's operation mix.
+         * ONETWO detects structural regression (losing collision points)
+         * as distinct from noise (edge weight shifts). */
+        {
+            int n_relay = 0, n_collision = 0, n_crystal = 0;
+            for (int i = 0; i < g0_s10->n_nodes; i++) {
+                Node *np = &g0_s10->nodes[i];
+                if (!np->alive || np->layer_zero) continue;
+                if (np->valence >= 200) n_crystal++;
+                else if (s10_n_in[i] >= 2) n_collision++;
+                else n_relay++;
+            }
+            if (pos < 506) {
+                state_buf[pos++] = (uint8_t)(n_relay > 255 ? 255 : n_relay);
+                state_buf[pos++] = (uint8_t)(n_collision > 255 ? 255 : n_collision);
+                state_buf[pos++] = (uint8_t)(n_crystal > 255 ? 255 : n_crystal);
+            }
+        }
+
         if (pos > 0) ot_sys_ingest(&eng->onetwo, state_buf, pos);
+
+        /* Sense pass: extract temporal features from structural state */
+        if (pos > 0) sense_pass(eng, state_buf, pos, &eng->last_sense);
+
+        /* Coherence: compare each node's val change to its neighbors' average.
+         * Role-dependent threshold: crystals tight, relays loose. */
+        for (int i = 0; i < g0_s10->n_nodes; i++) {
+            Node *n = &g0_s10->nodes[i];
+            if (!n->alive || n->layer_zero) continue;
+            int32_t my_delta = abs(n->val - n->prev_val);
+            /* Compute neighbor average delta */
+            int64_t nbr_sum = 0; int nbr_count = 0;
+            for (int e = 0; e < g0_s10->n_edges; e++) {
+                Edge *ed = &g0_s10->edges[e];
+                if (ed->weight == 0) continue;
+                int nbr = -1;
+                if (ed->src_a == (uint16_t)i) nbr = ed->dst;
+                else if (ed->dst == (uint16_t)i) nbr = ed->src_a;
+                if (nbr >= 0 && nbr < g0_s10->n_nodes && g0_s10->nodes[nbr].alive) {
+                    nbr_sum += abs(g0_s10->nodes[nbr].val - g0_s10->nodes[nbr].prev_val);
+                    nbr_count++;
+                }
+            }
+            int32_t scale = nbr_count > 0 ? (int32_t)(nbr_sum / nbr_count) : 0;
+            /* Role-dependent divisor */
+            int divisor;
+            if (n->valence >= 200)     divisor = 4;  /* crystal: tight */
+            else if (s10_n_in[i] >= 2) divisor = 3;  /* collision: 1/e */
+            else                        divisor = 2;  /* relay: loose */
+            if (scale < 2)
+                n->coherent = 1;   /* nothing moved */
+            else if (my_delta > scale / divisor)
+                n->coherent = -1;  /* incoherent */
+            else
+                n->coherent = 1;   /* coherent */
+            n->prev_val = n->val;
+        }
 
         int32_t error = eng->onetwo.feedback[7];
         int32_t stability = eng->onetwo.feedback[4];
@@ -1231,12 +1314,14 @@ void engine_tick(Engine *eng) {
                     g->grow_interval = adaptive_interval(g->grow_interval, error_mag, 2, 200);
                 }
             }
-            /* Valence decay: sustained sensory error bleeds structural confidence */
+            /* Targeted valence decay: only incoherent nodes lose confidence.
+             * Coherent nodes survive error — localization, not carpet bombing. */
             for (int s = 0; s < eng->n_shells; s++) {
                 Graph *gv = &eng->shells[s].g;
                 for (int i = 0; i < gv->n_nodes; i++) {
                     Node *n = &gv->nodes[i];
                     if (!n->alive || n->layer_zero) continue;
+                    if (n->coherent >= 0) continue;  /* coherent or unknown: skip */
                     if (n->valence > VALENCE_DECAY_RATE)
                         n->valence -= VALENCE_DECAY_RATE;
                     else
@@ -1313,6 +1398,108 @@ void engine_tick(Engine *eng) {
                     nest_remove(eng, i);
                 }
             }
+        }
+    }
+
+    /* ═══ FEEDBACK → TOPOLOGY: the loop closes ═══
+     *
+     * Runs EVERY TICK with potentially stale feedback — intentional.
+     * feedback[] only updates at SUBSTRATE_INT boundaries. Between boundaries,
+     * this block fires with the same values: a 137-tick heartbeat of sustained
+     * drive response between observations. The staleness IS the feature.
+     *
+     * Three drive states. Three responses. Modulating existing machinery.
+     * No new phases, no new outputs. The organism steers itself through
+     * the machinery it already has.
+     */
+    {
+        int32_t error = eng->onetwo.feedback[7];
+        int32_t abs_error = error < 0 ? -error : error;
+        int32_t stability = eng->onetwo.feedback[4];
+
+        int32_t frustration_thresh = (int32_t)(SUBSTRATE_INT / 4);
+        int32_t silence_thresh    = (int32_t)(MISMATCH_TAX_NUM);
+
+        /* ── FRUSTRATION: error above threshold ──
+         * Seek connections. Grow faster. Find and erode the worst
+         * incoherent node — not the most deviant, but the most WRONG.
+         * A coherent node far from the mean is learning (moved WITH neighbors).
+         * An incoherent node far from the mean is broken. */
+        if (abs_error > frustration_thresh) {
+            Graph *g0 = &eng->shells[0].g;
+
+            /* Accelerate growth: shrink interval toward minimum */
+            g0->grow_interval = g0->grow_interval * 2 / 3;
+            if (g0->grow_interval < 2) g0->grow_interval = 2;
+
+            /* Find worst node: incoherent > coherent, crystal > non-crystal.
+             * Scoring: base = deviation from mean val.
+             * +10,000 if incoherent. +20,000 if incoherent crystal. */
+            int64_t val_sum = 0;
+            int val_count = 0;
+            for (int i = 0; i < g0->n_nodes; i++) {
+                if (g0->nodes[i].alive && !g0->nodes[i].layer_zero) {
+                    val_sum += g0->nodes[i].val;
+                    val_count++;
+                }
+            }
+            if (val_count > 0) {
+                int32_t mean_val = (int32_t)(val_sum / val_count);
+                int max_score = 0, target = -1;
+                for (int i = 0; i < g0->n_nodes; i++) {
+                    Node *n = &g0->nodes[i];
+                    if (!n->alive || n->layer_zero) continue;
+                    int score = abs(n->val - mean_val);
+                    if (n->coherent < 0) score += 10000;         /* incoherent */
+                    if (n->coherent < 0 && n->valence >= 200)
+                        score += 20000;                            /* incoherent crystal */
+                    if (score > max_score) { max_score = score; target = i; }
+                }
+                /* Erode the target's crystallization at mismatch tax rate */
+                if (target >= 0 && g0->nodes[target].valence > 0) {
+                    int erosion = (int)g0->nodes[target].valence
+                                * (int)MISMATCH_TAX_NUM / (int)MISMATCH_TAX_DEN;
+                    if (erosion < 1) erosion = 1;
+                    g0->nodes[target].valence -= erosion;
+                }
+            }
+        }
+
+        /* ── CURIOSITY: error positive but not alarming ──
+         * The system is learning. Do nothing. The absence of intervention
+         * IS curiosity. This comment exists so the absence is intentional. */
+
+        /* ── BOREDOM: error below noise floor + system stable ──
+         * Crystallize COHERENT active nodes only. A node must be:
+         * - coherent (moving WITH its neighbors, not trivially silent)
+         * - active (val != 0, recently touched)
+         * Coherent by silence doesn't count. Only nodes carrying signal
+         * that agrees with their neighborhood harden. */
+        if (abs_error < silence_thresh && stability) {
+            Graph *g0 = &eng->shells[0].g;
+
+            for (int i = 0; i < g0->n_nodes; i++) {
+                Node *n = &g0->nodes[i];
+                if (!n->alive || n->layer_zero) continue;
+                if (n->coherent <= 0) continue;  /* must be actively coherent */
+                uint32_t age = T_now(&eng->T) - n->last_active;
+                if (n->val != 0 && age < SUBSTRATE_INT) {
+                    if (n->valence < 255) n->valence++;
+                    /* Strengthen incoming edges: they carried signal that worked */
+                    for (int e = 0; e < g0->n_edges; e++) {
+                        if (g0->edges[e].dst == (uint16_t)i && g0->edges[e].weight < 254)
+                            g0->edges[e].weight++;
+                    }
+                }
+            }
+
+            /* Prune faster: weak edges are noise that survived by chance */
+            g0->prune_interval = g0->prune_interval * 2 / 3;
+            if (g0->prune_interval < 4) g0->prune_interval = 4;
+
+            /* Grow slower: stop seeking, digest what you have */
+            g0->grow_interval = g0->grow_interval * 3 / 2;
+            if (g0->grow_interval > 200) g0->grow_interval = 200;
         }
     }
 }

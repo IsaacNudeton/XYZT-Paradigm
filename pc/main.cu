@@ -27,6 +27,7 @@ extern "C" {
 #include "onetwo.h"
 #include "wire.h"
 #include "transducer.h"
+#include "sense.h"
 }
 #include "substrate.cuh"
 
@@ -120,6 +121,110 @@ void run_gpu_tests(void);
 void run_lifecycle_tests(void);
 void run_observer_tests(void);
 void run_stress_tests(void);
+void run_sense_tests(void);
+void run_tracking_sweep(void);
+}
+
+static void cmd_sweep(void) {
+    /* Metric collection: 25-sentence corpus with overlapping themes, 40 cycles */
+    Engine eng; engine_init(&eng);
+
+    const char *corpus[] = {
+        "the quick brown fox jumps over the lazy dog near the river bank",
+        "hydrogen helium lithium beryllium boron carbon nitrogen oxygen fluorine neon",
+        "struct node val accum identity valence crystal relay collision threshold",
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima",
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen",
+        "the brown fox sleeps under the oak tree by the quiet river bank at dawn",
+        "sodium magnesium aluminum silicon phosphorus sulfur chlorine argon potassium",
+        "edge weight source destination propagate impedance fresnel junction boundary",
+        "mike november oscar papa quebec romeo sierra tango uniform victor whiskey",
+        "fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty",
+        "a lazy dog rests near the brown fox while the river flows toward the sea",
+        "calcium scandium titanium vanadium chromium manganese iron cobalt nickel copper",
+        "graph shell observer substrate lattice topology coherent valence crystal lysis",
+        "xray yankee zulu alpha bravo charlie one two three four five six seven eight",
+        "hundred thousand million billion trillion quadrillion quintillion sextillion",
+        "the river bank where the fox and dog meet is shaded by ancient oak trees",
+        "zinc gallium germanium arsenic selenium bromine krypton rubidium strontium",
+        "accumulate propagate crystallize observe prune grow wire resolve identity bloom",
+        "nine eight seven six five four three two one zero ignition liftoff altitude",
+        "the dog chases the fox across the river bank and through the oak forest",
+        "yttrium zirconium niobium molybdenum technetium ruthenium rhodium palladium",
+        "impedance matching fresnel conservation energy bounded lysis trigger nesting",
+        "delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa",
+        "fibonacci prime composite perfect abundant deficient amicable sociable happy",
+        "both the fox and the dog drink from the same river under the same oak tree",
+    };
+    int n_corpus = 25;
+    for (int k = 0; k < n_corpus; k++)
+        engine_ingest_text(&eng, corpus[k], corpus[k]);
+
+    int total_ticks = 40 * (int)SUBSTRATE_INT;
+    int64_t total_error = 0;
+    int crystal_cycles = 0;
+
+    /* Escape probability accumulators */
+    int uncoupled_total = 0, alive_total = 0, cycles = 0;
+
+    for (int t = 0; t < total_ticks; t++) {
+        engine_tick(&eng);
+        if ((t + 1) % SUBSTRATE_INT == 0) {
+            total_error += abs(eng.onetwo.feedback[7]);
+
+            Graph *g = &eng.shells[0].g;
+
+            /* Count crystals */
+            for (int i = 0; i < g->n_nodes; i++) {
+                Node *n = &g->nodes[i];
+                if (n->alive && !n->layer_zero && n->valence >= 200) crystal_cycles++;
+            }
+
+            /* Escape probability: count uncoupled nodes */
+            int n_in[MAX_NODES]; memset(n_in, 0, g->n_nodes * (int)sizeof(int));
+            for (int e = 0; e < g->n_edges; e++)
+                if (g->edges[e].weight > 0) n_in[g->edges[e].dst]++;
+
+            int uncoupled = 0, alive = 0;
+            for (int i = 0; i < g->n_nodes; i++) {
+                Node *n = &g->nodes[i];
+                if (!n->alive || n->layer_zero) continue;
+                alive++;
+                if (n_in[i] == 0) uncoupled++;
+            }
+            uncoupled_total += uncoupled;
+            alive_total += alive;
+            cycles++;
+        }
+    }
+
+    /* Final topology snapshot */
+    int n_alive = 0, n_relay = 0, n_collision = 0, n_crystal_final = 0;
+    int total_valence = 0, n_incoherent = 0, total_edges = 0;
+    Graph *gf = &eng.shells[0].g;
+    int n_in_f[MAX_NODES]; memset(n_in_f, 0, gf->n_nodes * (int)sizeof(int));
+    for (int e = 0; e < gf->n_edges; e++)
+        if (gf->edges[e].weight > 0) { n_in_f[gf->edges[e].dst]++; total_edges++; }
+
+    for (int i = 0; i < gf->n_nodes; i++) {
+        Node *n = &gf->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        n_alive++;
+        total_valence += n->valence;
+        if (n->coherent < 0) n_incoherent++;
+        if (n->valence >= 200) n_crystal_final++;
+        else if (n_in_f[i] >= 2) n_collision++;
+        else n_relay++;
+    }
+
+    double uncoupled_frac = alive_total > 0 ? (double)uncoupled_total / (double)alive_total : 0.0;
+
+    printf("SWEEP\t%d\t%d\t%d\t%d\t%d\t%lld\t%d\t%d\t%.4f\t%d\t%d\t%d\n",
+           (int)SUBSTRATE_INT, n_alive, n_relay, n_collision, n_crystal_final,
+           (long long)total_error, total_valence, crystal_cycles, uncoupled_frac,
+           gf->grow_interval, gf->prune_interval, total_edges);
+
+    engine_destroy(&eng);
 }
 
 static void cmd_test(void) {
@@ -130,6 +235,7 @@ static void cmd_test(void) {
     run_lifecycle_tests();
     run_observer_tests();
     run_stress_tests();
+    run_sense_tests();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
@@ -408,6 +514,7 @@ static void cmd_t3(int argc, char *argv[]) {
             substrate_download(h_cubes, n_cubes);
             hookup_retinas(&eng, h_cubes, n_cubes);
             wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+            sense_feedback(&eng, &eng.last_sense);
             wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
             wire_engine_to_gpu(&eng, h_cubes, n_cubes);
             substrate_upload(h_cubes, n_cubes);
@@ -474,6 +581,7 @@ static void cmd_t3(int argc, char *argv[]) {
             substrate_download(h_cubes, n_cubes);
             hookup_retinas(&eng, h_cubes, n_cubes);
             wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+            sense_feedback(&eng, &eng.last_sense);
             wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
             wire_engine_to_gpu(&eng, h_cubes, n_cubes);
             substrate_upload(h_cubes, n_cubes);
@@ -830,6 +938,10 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[1], "test") == 0) {
         cmd_test();
         return g_fail;
+    } else if (strcmp(argv[1], "sweep") == 0) {
+        cmd_sweep();
+    } else if (strcmp(argv[1], "tracking") == 0) {
+        run_tracking_sweep();
     } else if (strcmp(argv[1], "bench") == 0) {
         cmd_bench();
     } else if (strcmp(argv[1], "ingest") == 0 && argc >= 3) {
@@ -906,6 +1018,7 @@ int main(int argc, char *argv[]) {
         if (gpu_ok) {
             substrate_download(h_cubes, n_cubes);
             wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+            sense_feedback(&eng, &eng.last_sense);
             wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
         }
 
