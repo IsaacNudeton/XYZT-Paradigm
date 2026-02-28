@@ -468,6 +468,31 @@ int graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter) {
     return id;
 }
 
+/* Set invert flags on an edge based on negation asymmetry.
+ * Only fires when exactly one of src_a/src_b is negated (XOR).
+ * Double negation = agreement, so both negated → no invert. */
+void edge_set_negation_invert(Graph *g, int edge_id) {
+    if (edge_id < 0 || edge_id >= g->n_edges) return;
+    Edge *e = &g->edges[edge_id];
+    Node *na = &g->nodes[e->src_a];
+    Node *nb = &g->nodes[e->src_b];
+    if (na->has_negation != nb->has_negation) {
+        /* Asymmetric: exactly one is negated */
+        if (na->has_negation) e->invert_a = 1;
+        if (nb->has_negation) e->invert_b = 1;
+        /* Contradiction detected: mark and crack the non-negated node.
+         * The contradicted node loses crystallization and gets flagged so
+         * all valence++ paths skip it. Without this flag, three separate
+         * paths (resolve, feedback, boredom) re-crystallize within ticks. */
+        Node *target = na->has_negation ? nb : na;
+        target->contradicted = 1;
+        if (target->valence > 0) {
+            target->valence /= 2;
+            target->coherent = -1;
+        }
+    }
+}
+
 int graph_learn(Graph *g) {
     int changed = 0;
     for (int i = 0; i < g->n_edges; i++) {
@@ -776,10 +801,29 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
                 if (corr > top_c[min_k]) { top_j[min_k] = i; top_c[min_k] = corr; }
             }
         }
+        int has_invert = 0;
+        int64_t target_val_sum = 0;
+        int target_val_count = 0;
         for (int k = 0; k < n_top; k++) {
-            graph_wire(g0, id0, top_j[k], id0, (uint8_t)(top_c[k] * 255 / 100), 0);
-            graph_wire(g0, top_j[k], id0, top_j[k], (uint8_t)(top_c[k] * 255 / 100), 0);
+            int eid1 = graph_wire(g0, id0, top_j[k], id0, (uint8_t)(top_c[k] * 255 / 100), 0);
+            int eid2 = graph_wire(g0, top_j[k], id0, top_j[k], (uint8_t)(top_c[k] * 255 / 100), 0);
+            edge_set_negation_invert(g0, eid1);
+            edge_set_negation_invert(g0, eid2);
+            if (eid1 >= 0 && (g0->edges[eid1].invert_a || g0->edges[eid1].invert_b)) {
+                has_invert = 1;
+                target_val_sum += (int64_t)abs(g0->nodes[top_j[k]].val);
+                target_val_count++;
+            }
             g0->total_grown += 2;
+        }
+        /* Contradiction bootstrap: if this node wired with invert flags,
+         * its val must be competitive with its targets' val or the inverted
+         * signal will be invisible. Set val to targets' mean so destructive
+         * interference can actually occur in accumulation. */
+        if (has_invert && target_val_count > 0) {
+            int32_t mean_target = (int32_t)(target_val_sum / target_val_count);
+            if (abs(g0->nodes[id0].val) < mean_target)
+                g0->nodes[id0].val = mean_target;
         }
     }
 
@@ -788,7 +832,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
     if (id1 >= 0) {
         g1->nodes[id1].identity = *data;
         g1->nodes[id1].hit_count++;
-        g1->nodes[id1].val = onetwo_val;
+        g1->nodes[id1].val = g0->nodes[id0].val;  /* inherit boosted val if any */
         if (eng->n_boundary_edges < eng->max_boundary_edges) {
             Edge *be = &eng->boundary_edges[eng->n_boundary_edges++];
             memset(be, 0, sizeof(*be));
@@ -800,6 +844,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         }
         g0->nodes[id0].layer_zero = 0;
         g1->nodes[id1].layer_zero = 0;
+        g1->nodes[id1].has_negation = g0->nodes[id0].has_negation;
         g0->total_boundary_crossings++;
         /* Valence growth moved to resolve phase: collision-only (n_incoming >= 2) */
 
@@ -820,8 +865,10 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
                 }
             }
             for (int k = 0; k < n_top1; k++) {
-                graph_wire(g1, id1, top_j1[k], id1, (uint8_t)(top_c1[k] * 255 / 100), 0);
-                graph_wire(g1, top_j1[k], id1, top_j1[k], (uint8_t)(top_c1[k] * 255 / 100), 0);
+                int s1eid1 = graph_wire(g1, id1, top_j1[k], id1, (uint8_t)(top_c1[k] * 255 / 100), 0);
+                int s1eid2 = graph_wire(g1, top_j1[k], id1, top_j1[k], (uint8_t)(top_c1[k] * 255 / 100), 0);
+                edge_set_negation_invert(g1, s1eid1);
+                edge_set_negation_invert(g1, s1eid2);
                 g1->total_grown += 2;
             }
         }
@@ -831,10 +878,41 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
     return id0;
 }
 
+/* Whole-word negation scan: returns 1 if text contains a negation marker as
+ * a complete word (not a substring of a longer word like "nothing", "note"). */
+static int text_has_negation(const char *text) {
+    static const char *markers[] = {
+        "never", "not", "no", "doesn't", "don't", "won't", "isn't",
+        "aren't", "without", "neither", "nor", "cannot", "can't", NULL
+    };
+    int tlen = (int)strlen(text);
+    for (int m = 0; markers[m]; m++) {
+        int mlen = (int)strlen(markers[m]);
+        const char *p = text;
+        while ((p = strstr(p, markers[m])) != NULL) {
+            int pos = (int)(p - text);
+            /* Check left boundary: start of string or non-alpha */
+            int left_ok = (pos == 0) || !isalpha((unsigned char)p[-1]);
+            /* Check right boundary: end of string or non-alpha */
+            int right_ok = (pos + mlen >= tlen) || !isalpha((unsigned char)p[mlen]);
+            if (left_ok && right_ok) return 1;
+            p += mlen;
+        }
+    }
+    return 0;
+}
+
 int engine_ingest_text(Engine *eng, const char *name, const char *text) {
+    int negated = text_has_negation(text);
     BitStream bs;
     onetwo_parse((const uint8_t *)text, strlen(text), &bs);
-    return engine_ingest(eng, name, &bs);
+    /* Pre-create the node so has_negation is set BEFORE engine_ingest auto-wires.
+     * engine_ingest's graph_add will find the existing node and skip creation. */
+    int pre_id = graph_add(&eng->shells[0].g, name, 0, &eng->T);
+    if (pre_id >= 0)
+        eng->shells[0].g.nodes[pre_id].has_negation = (uint8_t)negated;
+    int id = engine_ingest(eng, name, &bs);
+    return id;
 }
 
 int engine_ingest_raw(Engine *eng, const char *name, const char *text) {
@@ -1048,8 +1126,9 @@ void engine_tick(Engine *eng) {
                     int32_t val_energy = abs(n->val);
                     n->I_energy = (n->I_energy > val_energy) ?
                         n->I_energy - val_energy : 0;
-                    /* Collision-only valence: mass forms at interaction vertices */
-                    if (n->valence < 255) n->valence++;
+                    /* Collision-only valence: mass forms at interaction vertices.
+                     * Skip contradicted nodes — disputed nodes don't harden. */
+                    if (n->valence < 255 && !n->contradicted) n->valence++;
                 } else {
                     n->I_energy = 0;
                 }
@@ -1119,8 +1198,10 @@ void engine_tick(Engine *eng) {
                 for (int k = 0; k < n_top; k++) {
                     if (graph_find_edge(g, i, top_j[k], i) >= 0) continue;
                     /* Edge weight from raw corr (identity overlap), not opportunity score */
-                    graph_wire(g, i, top_j[k], i, (uint8_t)(top_raw[k] * 255 / 100), 0);
-                    graph_wire(g, top_j[k], i, top_j[k], (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    int geid1 = graph_wire(g, i, top_j[k], i, (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    int geid2 = graph_wire(g, top_j[k], i, top_j[k], (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    edge_set_negation_invert(g, geid1);
+                    edge_set_negation_invert(g, geid2);
                     g->total_grown += 2; total_grown += 2;
                 }
             }
@@ -1338,7 +1419,7 @@ void engine_tick(Engine *eng) {
                 Graph *g = &eng->shells[s].g;
                 for (int i = 0; i < g->n_nodes; i++) {
                     Node *n = &g->nodes[i];
-                    if (!n->alive || n->layer_zero) continue;
+                    if (!n->alive || n->layer_zero || n->contradicted) continue;
                     uint32_t age = (uint32_t)T_now(&eng->T) - n->last_active;
                     if (age < SUBSTRATE_INT) {
                         int nv = (int)n->valence + 1;
@@ -1482,6 +1563,7 @@ void engine_tick(Engine *eng) {
                 Node *n = &g0->nodes[i];
                 if (!n->alive || n->layer_zero) continue;
                 if (n->coherent <= 0) continue;  /* must be actively coherent */
+                if (n->contradicted) continue;   /* disputed nodes don't harden */
                 uint32_t age = T_now(&eng->T) - n->last_active;
                 if (n->val != 0 && age < SUBSTRATE_INT) {
                     if (n->valence < 255) n->valence++;

@@ -274,6 +274,8 @@ typedef struct {
     int32_t   I_energy;       /* magnetic/current energy at node (for XOR detection) */
     int8_t    coherent;       /* +1 coherent, -1 incoherent, 0 unknown */
     int8_t    child_id;
+    uint8_t   has_negation;   /* 1 if source text contained negation markers */
+    uint8_t   contradicted;  /* 1 if node has inverted incoming edges (disputed) */
 } Node;
 
 typedef struct {
@@ -442,5 +444,8 @@ int engine_wire_export(const Engine *eng, const char *path);
 
 /* .xyzt text assembly interpreter */
 int engine_exec(Engine *eng, const char *path);
+
+/* Negation-aware edge inversion */
+void edge_set_negation_invert(Graph *g, int edge_id);
 
 #endif /* XYZT_ENGINE_H */

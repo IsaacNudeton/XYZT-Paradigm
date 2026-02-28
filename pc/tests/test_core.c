@@ -390,4 +390,88 @@ void run_core_tests(void) {
         check("onetwo ticks ran", 1, eng.onetwo.tick_count > 0 ? 1 : 0);
         engine_destroy(&eng);
     }
+
+    /* T24 Contradiction detection: negation-aware invert flags */
+    printf("--- T24 Contradiction ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        /* Two nodes: high identity overlap, one negated */
+        int pos = engine_ingest_text(&eng, "fox_pos",
+            "the brown fox runs through the forest near the winding river");
+        int neg = engine_ingest_text(&eng, "fox_neg",
+            "the brown fox never runs through the forest near the winding river");
+
+        check("T24 positive not negated", 0, g0->nodes[pos].has_negation);
+        check("T24 negative has negation", 1, g0->nodes[neg].has_negation);
+
+        /* Wire them to a shared destination with invert on the negated side */
+        int dst = graph_add(g0, "contra_dst", 0, &eng.T);
+        g0->nodes[dst].layer_zero = 0;
+        g0->nodes[dst].identity.len = 64;
+        memset(g0->nodes[dst].identity.w, 0xFF, 8);
+
+        g0->nodes[pos].val = 100;
+        g0->nodes[neg].val = 100;
+
+        /* Two edges into dst so n_incoming >= 2 (required for I_energy preservation).
+         * Edge 1: pos → dst (pos as both src_a and src_b, pass-through).
+         * Edge 2: neg → dst (neg as both src_a and src_b, invert_a set). */
+        int eid1 = graph_wire(g0, pos, pos, dst, 255, 0);
+        int eid2 = graph_wire(g0, neg, neg, dst, 255, 0);
+        /* Set invert on the negated edge */
+        g0->edges[eid2].invert_a = 1;
+        check("T24 edge2 invert_a set", 1, g0->edges[eid2].invert_a);
+        check("T24 edge1 no invert", 0, g0->edges[eid1].invert_a);
+
+        /* Tick: pos contributes +100, neg contributes -100 (inverted).
+         * n_incoming = 2, so I_energy is preserved. Should cancel. */
+        engine_tick(&eng);
+        printf("  T24 debug: val=%d I_energy=%d n_incoming=%d\n",
+               g0->nodes[dst].val, g0->nodes[dst].I_energy, g0->nodes[dst].n_incoming);
+        check("T24 destructive interference", 1, abs(g0->nodes[dst].val) < 50 ? 1 : 0);
+        check("T24 I_energy present", 1, g0->nodes[dst].I_energy > 0 ? 1 : 0);
+        check("T24 XOR observer fires", 1, obs_xor(g0->nodes[dst].I_energy, g0->nodes[dst].val));
+
+        engine_destroy(&eng);
+    }
+
+    /* T25 Double negation = agreement (no invert) */
+    printf("--- T25 Double Negation ---\n");
+    {
+        Engine eng; engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        int neg1 = engine_ingest_text(&eng, "dn_a",
+            "the fox never goes near the river or the dog anymore");
+        int neg2 = engine_ingest_text(&eng, "dn_b",
+            "no fox has been seen near the river or the dog recently");
+
+        check("T25 both negated", 1,
+              g0->nodes[neg1].has_negation && g0->nodes[neg2].has_negation ? 1 : 0);
+
+        /* Wire: both negated → neither invert flag should be set */
+        int dst = graph_add(g0, "dn_dst", 0, &eng.T);
+        g0->nodes[dst].layer_zero = 0;
+        g0->nodes[dst].identity.len = 64;
+        memset(g0->nodes[dst].identity.w, 0xFF, 8);
+
+        g0->nodes[neg1].val = 100;
+        g0->nodes[neg2].val = 100;
+
+        /* Two edges, both negated → neither should invert (double negation = agreement) */
+        int eid1 = graph_wire(g0, neg1, neg1, dst, 255, 0);
+        int eid2 = graph_wire(g0, neg2, neg2, dst, 255, 0);
+        edge_set_negation_invert(g0, eid1);
+        edge_set_negation_invert(g0, eid2);
+        check("T25 no invert edge1", 0, g0->edges[eid1].invert_a);
+        check("T25 no invert edge2", 0, g0->edges[eid2].invert_a);
+
+        /* Should reinforce: 100 + 100 → positive val */
+        engine_tick(&eng);
+        check("T25 reinforcement", 1, g0->nodes[dst].val > 50 ? 1 : 0);
+
+        engine_destroy(&eng);
+    }
 }

@@ -80,16 +80,16 @@ static const char *ground_B[] = {
 static const char *contra_A[] = {
     "the fox never goes near the river or the dog anymore",
     "no brown fox has been seen in the forest or by any river",
-    "the dog left the oak tree and the river bank permanently",
+    "the dog no longer stays at the oak tree or the river bank",
     "fox and dog separated and never returned to the river bank",
-    "the river dried up and the oak died taking the fox den with it",
+    "the river does not flow anymore and the oak is no longer standing",
 };
 
 static const char *contra_B[] = {
-    "hydrogen bonds break completely in supercritical fluid phase",
+    "hydrogen bonds do not form between water molecules in supercritical phase",
     "carbon atoms form graphene sheets not diamond under new conditions",
     "oxygen no longer reacts with iron when chromium coating applied",
-    "nitrogen depleted from atmosphere by industrial capture process",
+    "nitrogen is no longer the majority of the atmosphere after capture",
     "helium atoms form exotic bonds under extreme magnetic confinement",
 };
 
@@ -161,6 +161,49 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
 
     /* ── Phase 2: Inject contradiction wave 1 (attacks cluster A) ── */
     ingest_corpus(&eng, contra_A, 5, ids.contra_a);
+
+    /* Diagnostic: check negation flags, wiring between ground and contra */
+    {
+        int n_negated_a = 0, n_negated_b = 0;
+        for (int i = 0; i < 5; i++) {
+            if (ids.contra_a[i] >= 0 && g0->nodes[ids.contra_a[i]].has_negation) n_negated_a++;
+            if (ids.ground_a[i] >= 0) printf("  [diag] gA[%d] id=%d neg=%d val=%d valence=%d\n",
+                i, ids.ground_a[i], g0->nodes[ids.ground_a[i]].has_negation,
+                g0->nodes[ids.ground_a[i]].val, g0->nodes[ids.ground_a[i]].valence);
+        }
+        for (int i = 0; i < 5; i++) {
+            if (ids.contra_a[i] >= 0) printf("  [diag] cA[%d] id=%d neg=%d val=%d valence=%d\n",
+                i, ids.contra_a[i], g0->nodes[ids.contra_a[i]].has_negation,
+                g0->nodes[ids.contra_a[i]].val, g0->nodes[ids.contra_a[i]].valence);
+        }
+        /* Count edges between ground_A and contra_A specifically */
+        int ga_ca_edges = 0, ga_ca_inverted = 0, total_inverted = 0;
+        for (int e = 0; e < g0->n_edges; e++) {
+            Edge *ed = &g0->edges[e];
+            if (ed->invert_a || ed->invert_b) total_inverted++;
+            /* Check if this edge connects a gA node to a cA node */
+            for (int gi = 0; gi < 5; gi++) {
+                for (int ci = 0; ci < 5; ci++) {
+                    if ((ed->src_a == ids.ground_a[gi] && ed->src_b == ids.contra_a[ci]) ||
+                        (ed->src_a == ids.contra_a[ci] && ed->src_b == ids.ground_a[gi]) ||
+                        (ed->src_a == ids.ground_a[gi] && ed->dst == ids.contra_a[ci]) ||
+                        (ed->src_a == ids.contra_a[ci] && ed->dst == ids.ground_a[gi])) {
+                        ga_ca_edges++;
+                        if (ed->invert_a || ed->invert_b) ga_ca_inverted++;
+                    }
+                }
+            }
+        }
+        /* Check mutual containment between gA[0] and cA[0] */
+        int mc01 = -1;
+        if (ids.ground_a[0] >= 0 && ids.contra_a[0] >= 0)
+            mc01 = bs_mutual_contain(&g0->nodes[ids.ground_a[0]].identity,
+                                     &g0->nodes[ids.contra_a[0]].identity);
+        printf("  [diag] contra_A: %d/5 negated, %d inverted edges, %d total edges\n",
+               n_negated_a, total_inverted, g0->n_edges);
+        printf("  [diag] gA↔cA: %d edges, %d inverted, mc(gA0,cA0)=%d\n",
+               ga_ca_edges, ga_ca_inverted, mc01);
+    }
 
     /* Let the engine process for n_adapt_cycles SUBSTRATE_INT intervals.
      * This is where N matters: how many observations does the engine get
