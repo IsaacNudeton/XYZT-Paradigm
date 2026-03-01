@@ -502,55 +502,46 @@ void edge_set_negation_invert(Graph *g, int edge_id) {
  * Returns 1 if predicted inverted, 0 otherwise.
  * ══════════════════════════════════════════════════════════ */
 
+/* Pure observer: reads graph state directly, never writes topology.
+ * Counts inverted edges touching THIS node — direct measurement of
+ * how much contradiction this specific node participates in. */
 int engine_predict_polarity(Engine *eng, int node_id, const char *label) {
     Graph *g = &eng->shells[0].g;
     if (node_id < 0 || node_id >= g->n_nodes || !g->nodes[node_id].alive)
         return 0;
 
-    int burst_weight = 0;
-    int total_sense_weight = 0;
-
+    /* Count inverted edges that involve this node (per-node, not global) */
+    int my_inverts = 0, my_total = 0;
     for (int e = 0; e < g->n_edges; e++) {
         Edge *ed = &g->edges[e];
         if (ed->weight == 0) continue;
-
-        /* Is node_id involved in this edge? (ternary: src_a, src_b → dst) */
         int sa = (int)ed->src_a, sb = (int)ed->src_b, d = (int)ed->dst;
         if (sa != node_id && sb != node_id && d != node_id) continue;
-
-        /* Check all OTHER positions for sense nodes */
-        int positions[3] = { sa, sb, d };
-        for (int k = 0; k < 3; k++) {
-            int other = positions[k];
-            if (other == node_id) continue;
-            if (other < 0 || other >= g->n_nodes || !g->nodes[other].alive) continue;
-
-            const char *nm = g->nodes[other].name;
-            if (nm[0] != 's' || nm[1] != ':') continue;
-
-            int w = (int)ed->weight;
-            total_sense_weight += w;
-
-            /* Burst feature on pass 4: s:B[0-7].4 */
-            if (nm[2] == 'B') {
-                int len = (int)strlen(nm);
-                if (len >= 2 && nm[len - 2] == '.' && nm[len - 1] == '4')
-                    burst_weight += w;
-            }
-            break;  /* count each edge once */
-        }
+        my_total++;
+        if (ed->invert_a || ed->invert_b)
+            my_inverts++;
     }
 
-    float ratio = (total_sense_weight > 0)
-        ? (float)burst_weight / (float)total_sense_weight
-        : 0.0f;
+    float ratio = (my_total > 0) ? (float)my_inverts / (float)my_total : 0.0f;
+    int predict = (my_inverts > 0 && ratio > 0.5f) ? 1 : 0;
 
-    printf("  [predict] node[%d] '%s': burst_wt=%d total_wt=%d ratio=%.3f%s\n",
+    printf("  [predict] node[%d] '%s': inv_edges=%d/%d ratio=%.3f%s\n",
            node_id, label ? label : "?",
-           burst_weight, total_sense_weight, ratio,
-           (ratio > 0.25f && total_sense_weight > 800) ? " → INVERT" : "");
+           my_inverts, my_total, ratio,
+           predict ? " → INVERT" : "");
 
-    return (ratio > 0.25f && total_sense_weight > 800) ? 1 : 0;
+    return predict;
+}
+
+void engine_polarity_summary(const Engine *eng) {
+    printf("[polarity summary] bridge: %d/%d invert  kw: %d/%d invert\n",
+           eng->pol_bridge_invert, eng->pol_bridge_total,
+           eng->pol_kw_invert, eng->pol_kw_total);
+}
+
+void engine_polarity_reset(Engine *eng) {
+    eng->pol_bridge_total = eng->pol_bridge_invert = 0;
+    eng->pol_kw_total = eng->pol_kw_invert = 0;
 }
 
 int graph_learn(Graph *g) {
@@ -935,6 +926,13 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
     }
 
     ot_sys_ingest(&eng->onetwo, (const uint8_t *)data->w, data->len / 8);
+
+    /* Bridge vote: topology-based polarity prediction (protocol-agnostic) */
+    int bridge_vote = engine_predict_polarity(eng, id0, name);
+    printf("[bridge] node[%d] vote=%d '%s'\n", id0, bridge_vote, name);
+    eng->pol_bridge_total++;
+    if (bridge_vote) eng->pol_bridge_invert++;
+
     return id0;
 }
 
@@ -963,15 +961,22 @@ static int text_has_negation(const char *text) {
 }
 
 int engine_ingest_text(Engine *eng, const char *name, const char *text) {
-    int negated = text_has_negation(text);
+    /* Keyword scanner vote (text-specific) */
+    int kw_vote = text_has_negation(text);
+
     BitStream bs;
     onetwo_parse((const uint8_t *)text, strlen(text), &bs);
     /* Pre-create the node so has_negation is set BEFORE engine_ingest auto-wires.
      * engine_ingest's graph_add will find the existing node and skip creation. */
     int pre_id = graph_add(&eng->shells[0].g, name, 0, &eng->T);
     if (pre_id >= 0)
-        eng->shells[0].g.nodes[pre_id].has_negation = (uint8_t)negated;
-    int id = engine_ingest(eng, name, &bs);
+        eng->shells[0].g.nodes[pre_id].has_negation = (uint8_t)kw_vote;
+    int id = engine_ingest(eng, name, &bs);  /* bridge fires inside */
+
+    printf("[kw] node[%d] vote=%d '%s'\n", id, kw_vote, name);
+    eng->pol_kw_total++;
+    if (kw_vote) eng->pol_kw_invert++;
+
     return id;
 }
 
@@ -1455,38 +1460,7 @@ void engine_tick(Engine *eng) {
         if (n_regions > 0)
             sense_pass_windowed(eng, state_buf, regions, n_regions, &eng->last_sense);
 
-        /* ── 4a: Delta bridge — text nodes ↔ NEW sense features ──
-         * Bridge recently ingested text nodes to sense features that
-         * are NEW this cycle (not in prev_sense). Persistent features
-         * get zero bridge weight — prevents normal nodes from picking
-         * up stray edges to burst features they didn't cause.
-         *
-         * Delta = features in last_sense but NOT in prev_sense.
-         * Weight 32 = weak seed. Hebbian strengthens if causal. */
-        if (eng->last_sense.n_features > 0 && eng->prev_sense.n_features > 0) {
-            uint64_t tick_now = eng->total_ticks;
-            for (int n = 0; n < g0_s10->n_nodes; n++) {
-                Node *np = &g0_s10->nodes[n];
-                if (!np->alive || np->layer_zero) continue;
-                if (tick_now - (uint64_t)np->created > SUBSTRATE_INT) continue;
-                /* This is a recently ingested text node */
-                for (int f = 0; f < eng->last_sense.n_features; f++) {
-                    int sid = eng->last_sense.node_ids[f];
-                    /* Was this feature in the previous sense result? */
-                    int was_prev = 0;
-                    for (int p = 0; p < eng->prev_sense.n_features; p++) {
-                        if (eng->prev_sense.node_ids[p] == sid) {
-                            was_prev = 1; break;
-                        }
-                    }
-                    if (was_prev) continue;  /* persistent — skip */
-                    /* New feature this cycle — bridge it */
-                    if (graph_find_edge(g0_s10, n, sid, n) < 0)
-                        graph_wire(g0_s10, n, sid, n, 32, 0);
-                }
-            }
-        }
-        /* Snapshot for next cycle's delta comparison */
+        /* Snapshot for next cycle's observer comparison */
         eng->prev_sense = eng->last_sense;
 
         /* Coherence: compare each node's val change to its neighbors' average.

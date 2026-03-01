@@ -332,7 +332,11 @@ typedef struct {
     int   low_error_run;
     SubstrateT T;
     sense_result_t last_sense;
-    sense_result_t prev_sense;   /* previous S10 cycle — for delta bridge */
+    sense_result_t prev_sense;   /* previous S10 cycle — for observer */
+    int pol_bridge_total;   /* bridge votes (all paths) */
+    int pol_bridge_invert;
+    int pol_kw_total;       /* keyword votes (text path only) */
+    int pol_kw_invert;
 } Engine;
 
 /* ══════════════════════════════════════════════════════════════
@@ -451,5 +455,7 @@ void edge_set_negation_invert(Graph *g, int edge_id);
 
 /* Predict polarity from sense neighborhood (step 4b) */
 int engine_predict_polarity(Engine *eng, int node_id, const char *label);
+void engine_polarity_summary(const Engine *eng);
+void engine_polarity_reset(Engine *eng);
 
 #endif /* XYZT_ENGINE_H */

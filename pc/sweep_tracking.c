@@ -593,6 +593,7 @@ void run_sense_diagnostic(void) {
         for (int i = 0; i < 5; i++)
             if (ids[i] >= 0)
                 engine_predict_polarity(&eng, ids[i], ground_A[i]);
+        engine_polarity_summary(&eng);
 
         engine_destroy(&eng);
     }
@@ -702,6 +703,7 @@ void run_sense_diagnostic(void) {
         for (int i = 0; i < 5; i++)
             if (ct_ids[i] >= 0)
                 engine_predict_polarity(&eng, ct_ids[i], contra_A[i]);
+        engine_polarity_summary(&eng);
 
         engine_destroy(&eng);
     }
@@ -799,6 +801,7 @@ void run_sense_diagnostic(void) {
         printf("  Separation: %s\n",
                (fp_normal == 0 && tp_contra == n_contra) ? "PERFECT" :
                (fp_normal <= 2 && tp_contra >= n_contra - 1) ? "GOOD" : "DEGRADED");
+        engine_polarity_summary(&eng);
 
         engine_destroy(&eng);
     }
