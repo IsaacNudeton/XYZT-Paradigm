@@ -55,6 +55,17 @@ static void feat_name(char *buf, int type, int ch_a, int ch_b) {
     buf[i] = '\0';
 }
 
+/* Region-aware naming: appends .N suffix for pass_id > 0 */
+static void feat_name_region(char *buf, int type, int ch_a, int ch_b, int pass_id) {
+    feat_name(buf, type, ch_a, ch_b);
+    if (pass_id > 0) {
+        int i = (int)strlen(buf);
+        buf[i++] = '.';
+        buf[i++] = '0' + pass_id;
+        buf[i] = '\0';
+    }
+}
+
 /* ── Add feature node to graph ───────────────────────── */
 static void add_feature(Engine *eng, sense_result_t *result, const char *name) {
     if (result->n_features >= SENSE_MAX_FEATS) return;
@@ -91,10 +102,15 @@ void sense_fill(sense_buf_t *buf, const uint8_t *data, int len) {
 
 /* ══════════════════════════════════════════════════════════
  * SENSE EXTRACT — 7 structural features from byte stream
+ *
+ * pass_id == 0: backward compatible (no suffix on names)
+ * pass_id > 0:  appends .N suffix for windowed extraction
+ * When pass_id > 0, does NOT reset n_features (accumulates).
  * ══════════════════════════════════════════════════════════ */
 
-void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
-    result->n_features = 0;
+static void sense_extract_inner(Engine *eng, sense_buf_t *buf,
+                                sense_result_t *result, int pass_id) {
+    if (pass_id == 0) result->n_features = 0;
     if (buf->count < 2) return;
 
     uint32_t n = buf->count;
@@ -119,6 +135,7 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
     char name[16];
     int active_ch[SENSE_CHANNELS];
     int n_active = 0;
+    int feat_start = result->n_features;  /* track region start for Hebbian */
 
     /* ACTIVE */
     for (int ch = 0; ch < SENSE_CHANNELS; ch++) {
@@ -126,7 +143,7 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
         if (trans[ch] >= ACTIVE_THRESH) {
             active_ch[ch] = 1;
             n_active++;
-            feat_name(name, FEAT_ACTIVE, ch, 0);
+            feat_name_region(name, FEAT_ACTIVE, ch, 0, pass_id);
             add_feature(eng, result, name);
         }
     }
@@ -137,7 +154,7 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
         if (!active_ch[ch]) continue;
         uint32_t h100 = high_samples[ch] * DUTY_DEN;
         if (h100 >= n * DUTY_LO_NUM && h100 <= n * DUTY_HI_NUM) {
-            feat_name(name, FEAT_DUTY, ch, 0);
+            feat_name_region(name, FEAT_DUTY, ch, 0, pass_id);
             add_feature(eng, result, name);
         }
     }
@@ -172,14 +189,14 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
             }
         }
         if (regular) {
-            feat_name(name, FEAT_REGULARITY, ch, 0);
+            feat_name_region(name, FEAT_REGULARITY, ch, 0, pass_id);
             add_feature(eng, result, name);
             int bucket;
             if (mean < 4)       bucket = PERIOD_FAST;
             else if (mean < 16) bucket = PERIOD_MED;
             else if (mean < 64) bucket = PERIOD_SLOW;
             else                bucket = PERIOD_VSLOW;
-            feat_name(name, FEAT_PERIOD, ch, bucket);
+            feat_name_region(name, FEAT_PERIOD, ch, bucket, pass_id);
             add_feature(eng, result, name);
         }
     }
@@ -203,7 +220,7 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
                 }
             }
             if (p_trans > 0 && corr_count * 2 > p_trans) {
-                feat_name(name, FEAT_CORRELATION, p, q);
+                feat_name_region(name, FEAT_CORRELATION, p, q, pass_id);
                 add_feature(eng, result, name);
             }
         }
@@ -215,7 +232,7 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
         if (trans[ch] > ACTIVE_THRESH * 2) continue;
         for (int q = 0; q < SENSE_CHANNELS; q++) {
             if (ch == q || !active_ch[q]) continue;
-            feat_name(name, FEAT_ASYMMETRY, ch, q);
+            feat_name_region(name, FEAT_ASYMMETRY, ch, q, pass_id);
             add_feature(eng, result, name);
         }
     }
@@ -244,21 +261,26 @@ void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
             uint64_t median = gaps[n_gaps / 2];
             uint64_t max_gap = gaps[n_gaps - 1];
             if (median > 0 && max_gap > median * 4) {
-                feat_name(name, FEAT_BURST, ch, 0);
+                feat_name_region(name, FEAT_BURST, ch, 0, pass_id);
                 add_feature(eng, result, name);
             }
         }
     }
 
-    /* ── HEBBIAN WIRING: co-occurring features ─────────── */
+    /* ── HEBBIAN WIRING: co-occurring features within this region ── */
     Graph *g = &eng->shells[0].g;
-    for (int i = 0; i < result->n_features; i++) {
+    for (int i = feat_start; i < result->n_features; i++) {
         for (int j = i + 1; j < result->n_features; j++) {
             int a = result->node_ids[i], b = result->node_ids[j];
             if (graph_find_edge(g, a, b, a) < 0)
                 graph_wire(g, a, b, a, 128, 0);
         }
     }
+}
+
+/* Public wrapper: backward compatible (no pass suffix) */
+void sense_extract(Engine *eng, sense_buf_t *buf, sense_result_t *result) {
+    sense_extract_inner(eng, buf, result, 0);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -316,5 +338,59 @@ void sense_pass(Engine *eng, const uint8_t *data, int len, sense_result_t *resul
     sense_buf_t buf;
     sense_fill(&buf, data, len);
     sense_extract(eng, &buf, result);
+    sense_decay(eng, result);
+}
+
+/* ══════════════════════════════════════════════════════════
+ * SENSE EXTRACT REGION — single region with pass_id suffix
+ * ══════════════════════════════════════════════════════════ */
+
+void sense_extract_region(Engine *eng, const uint8_t *data, int len,
+                          int pass_id, sense_result_t *result) {
+    sense_buf_t buf;
+    sense_fill(&buf, data, len);
+    sense_extract_inner(eng, &buf, result, pass_id);
+}
+
+/* ══════════════════════════════════════════════════════════
+ * SENSE PASS WINDOWED — per-region extraction + cross-wire
+ *
+ * 1. Init result
+ * 2. For each region: extract features (accumulates into result)
+ * 3. Cross-region Hebbian wiring (weight=64, half of within-region 128)
+ * 4. Single decay pass
+ * ══════════════════════════════════════════════════════════ */
+
+void sense_pass_windowed(Engine *eng, const uint8_t *data,
+                         const sense_region_t *regions, int n_regions,
+                         sense_result_t *result) {
+    result->n_features = 0;
+
+    /* Track where each region's features start/end */
+    int region_start[SENSE_MAX_REGIONS];
+    int region_end[SENSE_MAX_REGIONS];
+
+    for (int r = 0; r < n_regions && r < SENSE_MAX_REGIONS; r++) {
+        region_start[r] = result->n_features;
+        sense_extract_region(eng, data + regions[r].offset, regions[r].length,
+                             regions[r].pass_id, result);
+        region_end[r] = result->n_features;
+    }
+
+    /* Cross-region Hebbian wiring: weight=64 (half of within-region 128) */
+    Graph *g = &eng->shells[0].g;
+    for (int r1 = 0; r1 < n_regions && r1 < SENSE_MAX_REGIONS; r1++) {
+        for (int r2 = r1 + 1; r2 < n_regions && r2 < SENSE_MAX_REGIONS; r2++) {
+            for (int i = region_start[r1]; i < region_end[r1]; i++) {
+                for (int j = region_start[r2]; j < region_end[r2]; j++) {
+                    int a = result->node_ids[i], b = result->node_ids[j];
+                    if (graph_find_edge(g, a, b, a) < 0)
+                        graph_wire(g, a, b, a, 64, 0);
+                }
+            }
+        }
+    }
+
+    /* Single decay pass over all accumulated features */
     sense_decay(eng, result);
 }

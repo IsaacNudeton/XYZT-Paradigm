@@ -123,6 +123,7 @@ void run_observer_tests(void);
 void run_stress_tests(void);
 void run_sense_tests(void);
 void run_tracking_sweep(void);
+void run_sense_diagnostic(void);
 }
 
 static void cmd_sweep(void) {
@@ -942,6 +943,8 @@ int main(int argc, char *argv[]) {
         cmd_sweep();
     } else if (strcmp(argv[1], "tracking") == 0) {
         run_tracking_sweep();
+    } else if (strcmp(argv[1], "sense-diag") == 0) {
+        run_sense_diagnostic();
     } else if (strcmp(argv[1], "bench") == 0) {
         cmd_bench();
     } else if (strcmp(argv[1], "ingest") == 0 && argc >= 3) {

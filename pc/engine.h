@@ -308,7 +308,7 @@ typedef struct { Graph g; uint8_t id; char name[32]; } Shell;
 /* ══════════════════════════════════════════════════════════════
  * SENSE — temporal feature extraction result
  * ══════════════════════════════════════════════════════════════ */
-#define SENSE_MAX_FEATS 64
+#define SENSE_MAX_FEATS 128
 typedef struct {
     int node_ids[SENSE_MAX_FEATS];
     int n_features;

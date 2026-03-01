@@ -1291,19 +1291,32 @@ void engine_tick(Engine *eng) {
 
     /* ── S10: ONETWO + lysis ────────────── */
     if (eng->total_ticks % SUBSTRATE_INT == 0) {
-        uint8_t state_buf[512];
+        uint8_t state_buf[1024];
         int pos = 0;
 
-        /* Two-pass state observation: edges first (structure), then nodes (state).
+        /* Multi-pass state observation with region tracking for windowed sense.
          * All shells contribute — shell 2 (verifier) was invisible in single-pass
          * because shell 0 edges often filled the 400-byte budget alone. */
+        sense_region_t regions[SENSE_MAX_REGIONS];
+        int n_regions = 0;
+
         /* Pass 1: edge weights from ALL shells */
+        int pass1_start = pos;
         for (int s = 0; s < eng->n_shells; s++) {
             Graph *g = &eng->shells[s].g;
             for (int e = 0; e < g->n_edges && pos < 400; e++)
                 state_buf[pos++] = g->edges[e].weight;
         }
-        /* Pass 2: node state from ALL shells */
+        if (pos > pass1_start) {
+            regions[n_regions].offset = pass1_start;
+            regions[n_regions].length = pos - pass1_start;
+            regions[n_regions].pass_id = 1;
+            n_regions++;
+        }
+
+        /* Pass 2: node state from ALL shells.
+         * 4 bytes per node: valence, crystal_strength, val_sign, I_energy_sat. */
+        int pass2_start = pos;
         for (int s = 0; s < eng->n_shells; s++) {
             Graph *g = &eng->shells[s].g;
             for (int i = 0; i < g->n_nodes && pos < 500; i++) {
@@ -1311,8 +1324,21 @@ void engine_tick(Engine *eng) {
                     state_buf[pos++] = g->nodes[i].valence;
                     if (pos < 500)
                         state_buf[pos++] = (uint8_t)crystal_strength(&g->nodes[i]);
+                    if (pos < 500)
+                        state_buf[pos++] = g->nodes[i].val > 0 ? 255
+                                         : g->nodes[i].val < 0 ? 0 : 128;
+                    if (pos < 500) {
+                        int32_t ie = g->nodes[i].I_energy;
+                        state_buf[pos++] = (uint8_t)(ie < 0 ? 0 : (ie >> 23) > 255 ? 255 : (ie >> 23));
+                    }
                 }
             }
+        }
+        if (pos > pass2_start) {
+            regions[n_regions].offset = pass2_start;
+            regions[n_regions].length = pos - pass2_start;
+            regions[n_regions].pass_id = 2;
+            n_regions++;
         }
 
         /* Precompute incoming edge count for shell 0 (used by coherence + profile) */
@@ -1322,9 +1348,8 @@ void engine_tick(Engine *eng) {
         for (int e = 0; e < g0_s10->n_edges; e++)
             if (g0_s10->edges[e].weight > 0) s10_n_in[g0_s10->edges[e].dst]++;
 
-        /* Computational profile: 3 bytes summarizing topology's operation mix.
-         * ONETWO detects structural regression (losing collision points)
-         * as distinct from noise (edge weight shifts). */
+        /* Pass 3: Computational profile — 3 bytes summarizing topology.
+         * Too small for sense (below ACTIVE_THRESH), skipped for regions. */
         {
             int n_relay = 0, n_collision = 0, n_crystal = 0;
             for (int i = 0; i < g0_s10->n_nodes; i++) {
@@ -1340,11 +1365,35 @@ void engine_tick(Engine *eng) {
                 state_buf[pos++] = (uint8_t)(n_crystal > 255 ? 255 : n_crystal);
             }
         }
+        /* Pass 3 NOT added to regions — only 3 bytes, below ACTIVE_THRESH */
 
+        /* Pass 4: Edge inversion byte — ALL edges, one byte each.
+         * Encodes (weight >> 1) | (invert << 7).
+         * Normal edge: high bit 0, value = weight/2.
+         * Inverted edge: high bit 1, value = weight/2 + 128.
+         * Per-pass extraction makes channel 7 (inversion bit) visible. */
+        int pass4_start = pos;
+        for (int s = 0; s < eng->n_shells; s++) {
+            Graph *g = &eng->shells[s].g;
+            for (int e = 0; e < g->n_edges && pos < 800; e++) {
+                if (g->edges[e].weight == 0) continue;
+                int inv = (g->edges[e].invert_a || g->edges[e].invert_b) ? 1 : 0;
+                state_buf[pos++] = (uint8_t)((g->edges[e].weight >> 1) | (inv << 7));
+            }
+        }
+        if (pos > pass4_start) {
+            regions[n_regions].offset = pass4_start;
+            regions[n_regions].length = pos - pass4_start;
+            regions[n_regions].pass_id = 4;
+            n_regions++;
+        }
+
+        /* ONETWO still gets full buffer unchanged */
         if (pos > 0) ot_sys_ingest(&eng->onetwo, state_buf, pos);
 
-        /* Sense pass: extract temporal features from structural state */
-        if (pos > 0) sense_pass(eng, state_buf, pos, &eng->last_sense);
+        /* Windowed sense: per-region extraction + cross-wire + single decay */
+        if (n_regions > 0)
+            sense_pass_windowed(eng, state_buf, regions, n_regions, &eng->last_sense);
 
         /* Coherence: compare each node's val change to its neighbors' average.
          * Role-dependent threshold: crystals tight, relays loose. */
