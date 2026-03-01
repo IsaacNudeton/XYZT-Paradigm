@@ -332,6 +332,7 @@ typedef struct {
     int   low_error_run;
     SubstrateT T;
     sense_result_t last_sense;
+    sense_result_t prev_sense;   /* previous S10 cycle — for delta bridge */
 } Engine;
 
 /* ══════════════════════════════════════════════════════════════

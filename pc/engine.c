@@ -548,9 +548,9 @@ int engine_predict_polarity(Engine *eng, int node_id, const char *label) {
     printf("  [predict] node[%d] '%s': burst_wt=%d total_wt=%d ratio=%.3f%s\n",
            node_id, label ? label : "?",
            burst_weight, total_sense_weight, ratio,
-           (ratio > 0.25f && burst_weight > 50) ? " → INVERT" : "");
+           (ratio > 0.25f && total_sense_weight > 800) ? " → INVERT" : "");
 
-    return (ratio > 0.25f && burst_weight > 50) ? 1 : 0;
+    return (ratio > 0.25f && total_sense_weight > 800) ? 1 : 0;
 }
 
 int graph_learn(Graph *g) {
@@ -1455,18 +1455,15 @@ void engine_tick(Engine *eng) {
         if (n_regions > 0)
             sense_pass_windowed(eng, state_buf, regions, n_regions, &eng->last_sense);
 
-        /* ── 4a: Bridge text nodes ↔ sense features ──────────────
-         * Recently ingested text nodes caused the byte-stream patterns
-         * that sense just read. Wire them to the firing sense features
-         * so Hebbian dynamics can learn the association.
+        /* ── 4a: Delta bridge — text nodes ↔ NEW sense features ──
+         * Bridge recently ingested text nodes to sense features that
+         * are NEW this cycle (not in prev_sense). Persistent features
+         * get zero bridge weight — prevents normal nodes from picking
+         * up stray edges to burst features they didn't cause.
          *
-         * "recently" = created within last SUBSTRATE_INT ticks.
-         * Weight 32 = weak seed (sense↔sense is 128, cross-region 64).
-         * Hebbian strengthens if the co-occurrence persists; decay kills
-         * it if not. Over time: "never" → s:B7.4 strengthens because
-         * negation consistently co-occurs with pass-4 burst.
-         * "river" → s:B7.4 decays because it also appears without burst. */
-        if (eng->last_sense.n_features > 0) {
+         * Delta = features in last_sense but NOT in prev_sense.
+         * Weight 32 = weak seed. Hebbian strengthens if causal. */
+        if (eng->last_sense.n_features > 0 && eng->prev_sense.n_features > 0) {
             uint64_t tick_now = eng->total_ticks;
             for (int n = 0; n < g0_s10->n_nodes; n++) {
                 Node *np = &g0_s10->nodes[n];
@@ -1475,11 +1472,22 @@ void engine_tick(Engine *eng) {
                 /* This is a recently ingested text node */
                 for (int f = 0; f < eng->last_sense.n_features; f++) {
                     int sid = eng->last_sense.node_ids[f];
+                    /* Was this feature in the previous sense result? */
+                    int was_prev = 0;
+                    for (int p = 0; p < eng->prev_sense.n_features; p++) {
+                        if (eng->prev_sense.node_ids[p] == sid) {
+                            was_prev = 1; break;
+                        }
+                    }
+                    if (was_prev) continue;  /* persistent — skip */
+                    /* New feature this cycle — bridge it */
                     if (graph_find_edge(g0_s10, n, sid, n) < 0)
                         graph_wire(g0_s10, n, sid, n, 32, 0);
                 }
             }
         }
+        /* Snapshot for next cycle's delta comparison */
+        eng->prev_sense = eng->last_sense;
 
         /* Coherence: compare each node's val change to its neighbors' average.
          * Role-dependent threshold: crystals tight, relays loose. */

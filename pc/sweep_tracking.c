@@ -706,6 +706,103 @@ void run_sense_diagnostic(void) {
         engine_destroy(&eng);
     }
 
+    /* ── SCENARIO C: Mixed workload (interleaved normal + contradiction) ── */
+    printf("\n── SCENARIO C: Mixed workload stress test ──\n");
+    {
+        Engine eng;
+        engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        /* Phase 1: ingest 10 normal sentences from both corpora */
+        int normal_ids[10];
+        printf("  Phase 1: ingesting 10 normal sentences...\n");
+        for (int i = 0; i < 5; i++) {
+            normal_ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
+            normal_ids[5 + i] = engine_ingest_text(&eng, ground_B[i], ground_B[i]);
+        }
+
+        /* Stabilize: 5 SUBSTRATE_INT cycles */
+        for (int t = 0; t < (int)SUBSTRATE_INT * 5; t++)
+            engine_tick(&eng);
+
+        /* Phase 2: interleave — 2 normal, 1 contradiction, tick between each.
+         * This simulates realistic mixed input where contradiction is minority. */
+        int contra_ids[10];
+        int n_contra = 0, n_extra_normal = 0;
+
+        /* Extra normal sentences (no negation, different phrasing) */
+        static const char *extra_normal[] = {
+            "birds sing at dawn near the old stone bridge over the creek",
+            "the mountain trail winds through dense pine forests to the summit",
+            "rain falls gently on the tin roof of the small cabin",
+            "sunlight filters through the canopy onto the mossy forest floor",
+            "the cat sleeps on the warm windowsill watching snow fall outside",
+        };
+
+        printf("  Phase 2: interleaved ingestion (normal + contradiction)...\n");
+        for (int round = 0; round < 5; round++) {
+            /* 2 normal sentences */
+            int nid = engine_ingest_text(&eng, extra_normal[round], extra_normal[round]);
+            (void)nid;
+            n_extra_normal++;
+
+            /* Tick between ingestions */
+            for (int t = 0; t < (int)SUBSTRATE_INT; t++)
+                engine_tick(&eng);
+
+            /* 1 contradiction */
+            contra_ids[n_contra] = engine_ingest_text(&eng, contra_A[round], contra_A[round]);
+            n_contra++;
+
+            /* Tick between rounds */
+            for (int t = 0; t < (int)SUBSTRATE_INT; t++)
+                engine_tick(&eng);
+        }
+
+        /* Phase 3: longer adaptation — 10 SUBSTRATE_INT cycles */
+        printf("  Phase 3: adapting for %d ticks...\n", (int)SUBSTRATE_INT * 10);
+        for (int t = 0; t < (int)SUBSTRATE_INT * 10; t++)
+            engine_tick(&eng);
+
+        /* Predict on everything */
+        printf("\n  ── POLARITY PREDICTION (original normal — should be 0) ──\n");
+        int fp_normal = 0, tp_contra = 0;
+        for (int i = 0; i < 10; i++) {
+            if (normal_ids[i] >= 0 && g0->nodes[normal_ids[i]].alive) {
+                const char *lbl = (i < 5) ? ground_A[i] : ground_B[i - 5];
+                int pred = engine_predict_polarity(&eng, normal_ids[i], lbl);
+                if (pred) fp_normal++;
+            }
+        }
+
+        printf("  ── POLARITY PREDICTION (extra normal — should be 0) ──\n");
+        for (int i = 0; i < 5; i++) {
+            /* Find the node by name since we didn't save IDs carefully */
+            int nid = graph_find(g0, extra_normal[i]);
+            if (nid >= 0 && g0->nodes[nid].alive) {
+                int pred = engine_predict_polarity(&eng, nid, extra_normal[i]);
+                if (pred) fp_normal++;
+            }
+        }
+
+        printf("  ── POLARITY PREDICTION (contradictions — should be 1) ──\n");
+        for (int i = 0; i < n_contra; i++) {
+            if (contra_ids[i] >= 0 && g0->nodes[contra_ids[i]].alive) {
+                int pred = engine_predict_polarity(&eng, contra_ids[i], contra_A[i]);
+                if (pred) tp_contra++;
+            }
+        }
+
+        printf("\n  ── MIXED WORKLOAD SUMMARY ──\n");
+        printf("  Normal nodes with false positive (burst_wt > 0): %d/15\n", fp_normal);
+        printf("  Contradiction nodes detected (burst_wt > 0):     %d/%d\n", tp_contra, n_contra);
+        printf("  Separation: %s\n",
+               (fp_normal == 0 && tp_contra == n_contra) ? "PERFECT" :
+               (fp_normal <= 2 && tp_contra >= n_contra - 1) ? "GOOD" : "DEGRADED");
+
+        engine_destroy(&eng);
+    }
+
     /* ── COMPARISON ── */
     printf("\n── COMPARISON ──\n");
     printf("  Look for: different active channels, duty patterns, regularity,\n");
