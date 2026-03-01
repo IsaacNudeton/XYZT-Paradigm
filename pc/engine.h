@@ -448,4 +448,7 @@ int engine_exec(Engine *eng, const char *path);
 /* Negation-aware edge inversion */
 void edge_set_negation_invert(Graph *g, int edge_id);
 
+/* Predict polarity from sense neighborhood (step 4b) */
+int engine_predict_polarity(Engine *eng, int node_id, const char *label);
+
 #endif /* XYZT_ENGINE_H */

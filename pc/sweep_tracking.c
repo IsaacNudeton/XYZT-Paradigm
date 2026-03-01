@@ -588,6 +588,12 @@ void run_sense_diagnostic(void) {
         edge_topology(g0, ids, 5, "A-nodes");
         printf("  Dead/dissolved nodes: %d/5\n", dead_a);
 
+        /* Polarity prediction: control group (should all predict 0) */
+        printf("\n  ── POLARITY PREDICTION (control) ──\n");
+        for (int i = 0; i < 5; i++)
+            if (ids[i] >= 0)
+                engine_predict_polarity(&eng, ids[i], ground_A[i]);
+
         engine_destroy(&eng);
     }
 
@@ -684,6 +690,18 @@ void run_sense_diagnostic(void) {
         edge_topology(g0, gt_ids, 5, "B-ground");
         edge_topology(g0, ct_ids, 5, "B-contra");
         printf("  Dead/dissolved ground truth: %d/5\n", dead_b);
+
+        /* Polarity prediction: ground truth (should predict 0 — normal) */
+        printf("\n  ── POLARITY PREDICTION (ground truth) ──\n");
+        for (int i = 0; i < 5; i++)
+            if (gt_ids[i] >= 0)
+                engine_predict_polarity(&eng, gt_ids[i], ground_A[i]);
+
+        /* Polarity prediction: contradictions (should predict 1 — invert) */
+        printf("  ── POLARITY PREDICTION (contradictions) ──\n");
+        for (int i = 0; i < 5; i++)
+            if (ct_ids[i] >= 0)
+                engine_predict_polarity(&eng, ct_ids[i], contra_A[i]);
 
         engine_destroy(&eng);
     }

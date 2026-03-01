@@ -493,6 +493,66 @@ void edge_set_negation_invert(Graph *g, int edge_id) {
     }
 }
 
+/* ══════════════════════════════════════════════════════════
+ * PREDICT POLARITY — query cross-wiring bridge (step 4b)
+ *
+ * Walk edges of node_id, find connections to sense nodes.
+ * Sum weights to burst features on pass 4 (s:B*.4).
+ * High ratio → node is associated with contradiction/inversion.
+ * Returns 1 if predicted inverted, 0 otherwise.
+ * ══════════════════════════════════════════════════════════ */
+
+int engine_predict_polarity(Engine *eng, int node_id, const char *label) {
+    Graph *g = &eng->shells[0].g;
+    if (node_id < 0 || node_id >= g->n_nodes || !g->nodes[node_id].alive)
+        return 0;
+
+    int burst_weight = 0;
+    int total_sense_weight = 0;
+
+    for (int e = 0; e < g->n_edges; e++) {
+        Edge *ed = &g->edges[e];
+        if (ed->weight == 0) continue;
+
+        /* Is node_id involved in this edge? (ternary: src_a, src_b → dst) */
+        int sa = (int)ed->src_a, sb = (int)ed->src_b, d = (int)ed->dst;
+        if (sa != node_id && sb != node_id && d != node_id) continue;
+
+        /* Check all OTHER positions for sense nodes */
+        int positions[3] = { sa, sb, d };
+        for (int k = 0; k < 3; k++) {
+            int other = positions[k];
+            if (other == node_id) continue;
+            if (other < 0 || other >= g->n_nodes || !g->nodes[other].alive) continue;
+
+            const char *nm = g->nodes[other].name;
+            if (nm[0] != 's' || nm[1] != ':') continue;
+
+            int w = (int)ed->weight;
+            total_sense_weight += w;
+
+            /* Burst feature on pass 4: s:B[0-7].4 */
+            if (nm[2] == 'B') {
+                int len = (int)strlen(nm);
+                if (len >= 2 && nm[len - 2] == '.' && nm[len - 1] == '4')
+                    burst_weight += w;
+            }
+            break;  /* count each edge once */
+        }
+    }
+
+    float ratio = (total_sense_weight > 0)
+        ? (float)burst_weight / (float)total_sense_weight
+        : 0.0f;
+
+    printf("  [predict] node[%d] '%s': burst_wt=%d total_wt=%d ratio=%.3f%s\n",
+           node_id, label ? label : "?",
+           burst_weight, total_sense_weight, ratio,
+           (ratio > 0.25f && burst_weight > 50) ? " → INVERT" : "");
+
+    return (ratio > 0.25f && burst_weight > 50) ? 1 : 0;
+}
+
 int graph_learn(Graph *g) {
     int changed = 0;
     for (int i = 0; i < g->n_edges; i++) {
@@ -1394,6 +1454,32 @@ void engine_tick(Engine *eng) {
         /* Windowed sense: per-region extraction + cross-wire + single decay */
         if (n_regions > 0)
             sense_pass_windowed(eng, state_buf, regions, n_regions, &eng->last_sense);
+
+        /* ── 4a: Bridge text nodes ↔ sense features ──────────────
+         * Recently ingested text nodes caused the byte-stream patterns
+         * that sense just read. Wire them to the firing sense features
+         * so Hebbian dynamics can learn the association.
+         *
+         * "recently" = created within last SUBSTRATE_INT ticks.
+         * Weight 32 = weak seed (sense↔sense is 128, cross-region 64).
+         * Hebbian strengthens if the co-occurrence persists; decay kills
+         * it if not. Over time: "never" → s:B7.4 strengthens because
+         * negation consistently co-occurs with pass-4 burst.
+         * "river" → s:B7.4 decays because it also appears without burst. */
+        if (eng->last_sense.n_features > 0) {
+            uint64_t tick_now = eng->total_ticks;
+            for (int n = 0; n < g0_s10->n_nodes; n++) {
+                Node *np = &g0_s10->nodes[n];
+                if (!np->alive || np->layer_zero) continue;
+                if (tick_now - (uint64_t)np->created > SUBSTRATE_INT) continue;
+                /* This is a recently ingested text node */
+                for (int f = 0; f < eng->last_sense.n_features; f++) {
+                    int sid = eng->last_sense.node_ids[f];
+                    if (graph_find_edge(g0_s10, n, sid, n) < 0)
+                        graph_wire(g0_s10, n, sid, n, 32, 0);
+                }
+            }
+        }
 
         /* Coherence: compare each node's val change to its neighbors' average.
          * Role-dependent threshold: crystals tight, relays loose. */
