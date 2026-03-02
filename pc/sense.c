@@ -304,7 +304,7 @@ void sense_decay(Engine *eng, const sense_result_t *result) {
                 Edge *edge = &g->edges[e];
                 if ((int)edge->src_a == i || (int)edge->src_b == i || (int)edge->dst == i) {
                     int nw = (int)edge->weight - W_DECAY;
-                    edge->weight = (nw < 1) ? 1 : (uint8_t)nw;
+                    edge->weight = (nw < 0) ? 0 : (uint8_t)nw;
                 }
             }
         }

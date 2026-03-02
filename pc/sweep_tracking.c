@@ -86,6 +86,16 @@ static const char *contra_A[] = {
     "the river does not flow anymore and the oak is no longer standing",
 };
 
+/* Semantic contradictions: oppose ground_A meaning, zero negation keywords.
+ * text_has_negation must return 0 for all of these. */
+static const char *semantic_contra[] = {
+    "the fox fled from the river and abandoned the lazy dog forever",
+    "a brown fox vanished from the forest and the river dried up completely",
+    "the dog attacked the oak tree and destroyed the river bank",
+    "fox and dog fought viciously and abandoned the grassy river bank at dawn",
+    "the river froze solid and the oak collapsed where the fox once watched",
+};
+
 static const char *contra_B[] = {
     "hydrogen bonds do not form between water molecules in supercritical phase",
     "carbon atoms form graphene sheets not diamond under new conditions",
@@ -801,6 +811,146 @@ void run_sense_diagnostic(void) {
         printf("  Separation: %s\n",
                (fp_normal == 0 && tp_contra == n_contra) ? "PERFECT" :
                (fp_normal <= 2 && tp_contra >= n_contra - 1) ? "GOOD" : "DEGRADED");
+        engine_polarity_summary(&eng);
+
+        engine_destroy(&eng);
+    }
+
+    /* ── SCENARIO D: Semantic contradictions (no negation keywords) ── */
+    printf("\n── SCENARIO D: Semantic contradiction (zero keyword overlap) ──\n");
+    {
+        Engine eng;
+        engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+
+        /* Ingest ground truth */
+        int gt_ids[5];
+        for (int i = 0; i < 5; i++)
+            gt_ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
+
+        /* Stabilize */
+        printf("  Stabilizing ground truth (%d ticks)...\n", (int)SUBSTRATE_INT * 5);
+        for (int t = 0; t < (int)SUBSTRATE_INT * 5; t++)
+            engine_tick(&eng);
+
+        /* Snapshot ground truth state */
+        printf("  Ground truth after stabilization:\n");
+        for (int i = 0; i < 5; i++) {
+            if (gt_ids[i] < 0) continue;
+            Node *n = &g0->nodes[gt_ids[i]];
+            printf("    gt[%d] val=%-8d valence=%-3d coherent=%d crystal=%d alive=%d\n",
+                   gt_ids[i], n->val, n->valence, n->coherent,
+                   (n->valence >= 100 ? 1 : 0), n->alive);
+        }
+
+        /* Ingest semantic contradictions */
+        printf("  Ingesting semantic contradictions (zero negation keywords):\n");
+        int sc_ids[5];
+        for (int i = 0; i < 5; i++) {
+            sc_ids[i] = engine_ingest_text(&eng, semantic_contra[i], semantic_contra[i]);
+            if (sc_ids[i] >= 0) {
+                Node *n = &g0->nodes[sc_ids[i]];
+                printf("    sc[%d] has_neg=%d val=%-8d\n",
+                       sc_ids[i], n->has_negation, n->val);
+            }
+        }
+
+        /* Snapshot immediately after injection */
+        printf("  Ground truth immediately after semantic injection:\n");
+        for (int i = 0; i < 5; i++) {
+            if (gt_ids[i] < 0) continue;
+            Node *n = &g0->nodes[gt_ids[i]];
+            printf("    gt[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d I_energy=%d\n",
+                   gt_ids[i], n->val, n->valence, n->coherent,
+                   n->contradicted, n->I_energy);
+        }
+
+        /* Adaptation phase */
+        printf("  Running adaptation (%d ticks)...\n", (int)SUBSTRATE_INT * 3);
+        for (int t = 0; t < (int)SUBSTRATE_INT * 3; t++)
+            engine_tick(&eng);
+
+        /* Full diagnostic grid after adaptation */
+        printf("\n  ── POST-ADAPTATION GRID ──\n");
+        printf("  Ground truth nodes:\n");
+        int gt_dead = 0;
+        for (int i = 0; i < 5; i++) {
+            if (gt_ids[i] < 0) continue;
+            Node *n = &g0->nodes[gt_ids[i]];
+            printf("    gt[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d "
+                   "crystal=%d alive=%d I_energy=%d\n",
+                   gt_ids[i], n->val, n->valence, n->coherent,
+                   n->contradicted, (n->valence >= 100 ? 1 : 0),
+                   n->alive, n->I_energy);
+            if (!n->alive || n->valence < 100) gt_dead++;
+        }
+
+        printf("  Semantic contradiction nodes:\n");
+        int sc_dead = 0;
+        for (int i = 0; i < 5; i++) {
+            if (sc_ids[i] < 0) continue;
+            Node *n = &g0->nodes[sc_ids[i]];
+            printf("    sc[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d "
+                   "crystal=%d alive=%d I_energy=%d\n",
+                   sc_ids[i], n->val, n->valence, n->coherent,
+                   n->contradicted, (n->valence >= 100 ? 1 : 0),
+                   n->alive, n->I_energy);
+            if (!n->alive || n->valence < 100) sc_dead++;
+        }
+
+        /* Edge topology */
+        edge_topology(g0, gt_ids, 5, "D-ground");
+        edge_topology(g0, sc_ids, 5, "D-semantic");
+
+        /* Observer predictions */
+        printf("\n  ── OBSERVER PREDICTIONS ──\n");
+        printf("  Ground truth (expect 0 — normal):\n");
+        for (int i = 0; i < 5; i++)
+            if (gt_ids[i] >= 0)
+                engine_predict_polarity(&eng, gt_ids[i], ground_A[i]);
+
+        printf("  Semantic contradictions (expect 0 — observer blind):\n");
+        for (int i = 0; i < 5; i++)
+            if (sc_ids[i] >= 0)
+                engine_predict_polarity(&eng, sc_ids[i], semantic_contra[i]);
+
+        /* BitStream overlap: what does the transducer actually see? */
+        printf("\n  ── BITSTREAM OVERLAP ──\n");
+        for (int i = 0; i < 5; i++) {
+            if (gt_ids[i] < 0 || sc_ids[i] < 0) continue;
+            BitStream *gt_bs = &g0->nodes[gt_ids[i]].identity;
+            BitStream *sc_bs = &g0->nodes[sc_ids[i]].identity;
+            int overlap = bs_mutual_contain(gt_bs, sc_bs);
+            int gt_pop = bs_popcount(gt_bs);
+            int sc_pop = bs_popcount(sc_bs);
+            /* XOR: bits that differ */
+            int xor_pop = 0;
+            int n = gt_bs->len < sc_bs->len ? gt_bs->len : sc_bs->len;
+            int full = n / 64;
+            for (int w = 0; w < full; w++)
+                xor_pop += xyzt_popcnt64(gt_bs->w[w] ^ sc_bs->w[w]);
+            printf("    gt[%d] vs sc[%d]: overlap=%d%% gt_pop=%d sc_pop=%d xor_bits=%d\n",
+                   i, i, overlap, gt_pop, sc_pop, xor_pop);
+        }
+        /* Also compare ground truth to ground truth (baseline) */
+        printf("  Ground-to-ground baseline:\n");
+        for (int i = 0; i < 4; i++) {
+            if (gt_ids[i] < 0 || gt_ids[i+1] < 0) continue;
+            BitStream *a = &g0->nodes[gt_ids[i]].identity;
+            BitStream *b = &g0->nodes[gt_ids[i+1]].identity;
+            int overlap = bs_mutual_contain(a, b);
+            int xor_pop = 0;
+            int nn = a->len < b->len ? a->len : b->len;
+            int full = nn / 64;
+            for (int w = 0; w < full; w++)
+                xor_pop += xyzt_popcnt64(a->w[w] ^ b->w[w]);
+            printf("    gt[%d] vs gt[%d]: overlap=%d%% xor_bits=%d\n",
+                   i, i+1, overlap, xor_pop);
+        }
+
+        printf("\n  ── SCENARIO D SUMMARY ──\n");
+        printf("  Ground truth dead/dissolved: %d/5\n", gt_dead);
+        printf("  Semantic contra dead/dissolved: %d/5\n", sc_dead);
         engine_polarity_summary(&eng);
 
         engine_destroy(&eng);

@@ -453,6 +453,32 @@ int graph_find_edge(Graph *g, int a, int b, int d) {
     return -1;
 }
 
+/* Conservation: enforce MAX_NODE_WEIGHT budget on all edges touching node_id.
+ * If total weight exceeds budget, scale all touching edges proportionally.
+ * New edges steal energy from old edges — scarcity drives competition. */
+static void node_enforce_conservation(Graph *g, int node_id) {
+    int total = 0;
+    for (int i = 0; i < g->n_edges; i++) {
+        Edge *ed = &g->edges[i];
+        if (ed->weight == 0) continue;
+        if ((int)ed->src_a == node_id || (int)ed->src_b == node_id ||
+            (int)ed->dst == node_id)
+            total += ed->weight;
+    }
+    if (total <= (int)MAX_NODE_WEIGHT) return;
+
+    /* Scale all touching edges down proportionally */
+    for (int i = 0; i < g->n_edges; i++) {
+        Edge *ed = &g->edges[i];
+        if (ed->weight == 0) continue;
+        if ((int)ed->src_a == node_id || (int)ed->src_b == node_id ||
+            (int)ed->dst == node_id) {
+            int scaled = (int)ed->weight * (int)MAX_NODE_WEIGHT / total;
+            ed->weight = (uint8_t)(scaled < 1 ? 1 : scaled);
+        }
+    }
+}
+
 int graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter) {
     if (g->n_edges >= MAX_EDGES) return -1;
     if (graph_find_edge(g, a, b, d) >= 0) return -1;
@@ -465,6 +491,12 @@ int graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter) {
     e->weight = inter ? apply_fresnel(w, g->nodes[a].Z, g->nodes[d].Z) : w;
     e->intershell = inter ? 1 : 0;
     e->learn_rate = (uint8_t)g->learn_rate;
+
+    /* Enforce energy conservation on all participating nodes */
+    node_enforce_conservation(g, a);
+    if (b != a) node_enforce_conservation(g, b);
+    if (d != a && d != b) node_enforce_conservation(g, d);
+
     return id;
 }
 
@@ -1102,7 +1134,39 @@ void engine_tick(Engine *eng) {
                     nd->accum += sum64;
                     nd->I_energy += abs(va) + abs(vb); /* total incoming energy */
                     nd->n_incoming++;
-                    if (e->weight < 255) e->weight++;
+                    /* Competitive reinforcement: strengthen this edge,
+                     * but if the dst node is at weight capacity, steal
+                     * from its weakest incoming edge instead. */
+                    if (e->weight < 255) {
+                        int dst_id = (int)e->dst;
+                        int dst_total = 0;
+                        for (int ei = 0; ei < g->n_edges; ei++) {
+                            Edge *te = &g->edges[ei];
+                            if (te->weight == 0) continue;
+                            if ((int)te->src_a == dst_id || (int)te->src_b == dst_id ||
+                                (int)te->dst == dst_id)
+                                dst_total += te->weight;
+                        }
+                        if (dst_total < (int)MAX_NODE_WEIGHT) {
+                            e->weight++;
+                        } else {
+                            /* At capacity: find weakest edge on dst, steal from it */
+                            int weakest = -1; uint8_t wmin = 255;
+                            for (int ei = 0; ei < g->n_edges; ei++) {
+                                if (ei == i) continue; /* don't steal from self */
+                                Edge *te = &g->edges[ei];
+                                if (te->weight == 0) continue;
+                                if ((int)te->src_a == dst_id || (int)te->src_b == dst_id ||
+                                    (int)te->dst == dst_id) {
+                                    if (te->weight < wmin) { wmin = te->weight; weakest = ei; }
+                                }
+                            }
+                            if (weakest >= 0 && g->edges[weakest].weight > 1) {
+                                g->edges[weakest].weight--;
+                                e->weight++;
+                            }
+                        }
+                    }
                 } else {
                     uint32_t hr = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)((i + 0x9e3779b9) * 2246822519u);
                     hr ^= hr >> 16; hr *= 0x45d9f3b; hr ^= hr >> 16;

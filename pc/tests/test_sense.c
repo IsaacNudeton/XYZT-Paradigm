@@ -129,41 +129,35 @@ void run_sense_tests(void) {
     printf("--- Sense: Decay ---\n");
     {
         Engine eng; engine_init(&eng);
-        /* First pass: create features */
-        uint8_t data1[32];
-        for (int i = 0; i < 32; i++) data1[i] = (i % 2) ? 0xFF : 0x00;
+        /* First pass: small data → few features, stays under conservation budget */
+        uint8_t data1[8] = {0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00};
         sense_result_t result;
-        sense_pass(&eng, data1, 32, &result);
+        sense_pass(&eng, data1, 8, &result);
         int n_feats_1 = result.n_features;
 
         /* Record initial edge weight */
         Graph *g = &eng.shells[0].g;
         int init_weight = -1;
+        int init_edge_idx = -1;
         for (int e = 0; e < g->n_edges; e++) {
             int sa = g->edges[e].src_a;
-            if (sa < g->n_nodes && g->nodes[sa].name[0] == 's') {
+            if (sa < g->n_nodes && g->nodes[sa].name[0] == 's' && g->edges[e].weight > 0) {
                 init_weight = g->edges[e].weight;
+                init_edge_idx = e;
                 break;
             }
         }
 
-        /* Second pass: different data, old features absent → decay */
-        uint8_t data2[32];
-        memset(data2, 0x42, 32);  /* constant → no transitions → no features */
-        sense_pass(&eng, data2, 32, &result);
+        /* Second pass: constant data → no transitions → no features → decay */
+        uint8_t data2[8];
+        memset(data2, 0x42, 8);
+        sense_pass(&eng, data2, 8, &result);
 
-        /* Check edge weight decreased */
-        int final_weight = -1;
-        for (int e = 0; e < g->n_edges; e++) {
-            int sa = g->edges[e].src_a;
-            if (sa < g->n_nodes && g->nodes[sa].name[0] == 's') {
-                final_weight = g->edges[e].weight;
-                break;
-            }
-        }
+        /* Check same edge's weight decreased or was pruned (weight 0) */
+        int final_weight = (init_edge_idx >= 0) ? g->edges[init_edge_idx].weight : -1;
         check("SE7 had features", 1, n_feats_1 > 0 ? 1 : 0);
         check("SE7 edge decayed", 1,
-              (init_weight > 0 && final_weight >= 0 && final_weight < init_weight) ? 1 : 0);
+              (init_weight > 0 && final_weight < init_weight) ? 1 : 0);
         engine_destroy(&eng);
     }
 
