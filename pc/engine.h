@@ -271,6 +271,7 @@ typedef struct {
     uint8_t   crystal_n;
     int32_t   val;
     int32_t   prev_val;       /* val at last SUBSTRATE_INT boundary (for coherence) */
+    int32_t   prev_edge_sum;  /* total incoming edge weight at last boundary */
     int64_t   accum;
     int32_t   I_energy;       /* magnetic/current energy at node (for XOR detection) */
     int8_t    coherent;       /* +1 coherent, -1 incoherent, 0 unknown */
@@ -338,6 +339,7 @@ typedef struct {
     int pol_bridge_invert;
     int pol_kw_total;       /* keyword votes (text path only) */
     int pol_kw_invert;
+    int32_t graph_error;    /* direct: incoherent node count (updated at SUBSTRATE_INT) */
 } Engine;
 
 /* ══════════════════════════════════════════════════════════════

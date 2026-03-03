@@ -1527,43 +1527,80 @@ void engine_tick(Engine *eng) {
         /* Snapshot for next cycle's observer comparison */
         eng->prev_sense = eng->last_sense;
 
-        /* Coherence: compare each node's val change to its neighbors' average.
-         * Role-dependent threshold: crystals tight, relays loose. */
+        /* Coherence: two signals, either can trigger incoherence.
+         * 1. Val delta vs neighbors (original) — catches value disagreement.
+         * 2. Edge weight instability — catches competitive S3 pressure when
+         *    val is saturated at ceiling. If edge weights churning, the node
+         *    is under structural conflict even if val doesn't move. */
         for (int i = 0; i < g0_s10->n_nodes; i++) {
             Node *n = &g0_s10->nodes[i];
             if (!n->alive || n->layer_zero) continue;
             int32_t my_delta = abs(n->val - n->prev_val);
-            /* Compute neighbor average delta */
+
+            /* Compute current incoming edge weight sum + neighbor val delta */
             int64_t nbr_sum = 0; int nbr_count = 0;
+            int32_t edge_sum = 0;
             for (int e = 0; e < g0_s10->n_edges; e++) {
                 Edge *ed = &g0_s10->edges[e];
                 if (ed->weight == 0) continue;
                 int nbr = -1;
                 if (ed->src_a == (uint16_t)i) nbr = ed->dst;
-                else if (ed->dst == (uint16_t)i) nbr = ed->src_a;
+                else if (ed->dst == (uint16_t)i) { nbr = ed->src_a; edge_sum += ed->weight; }
                 if (nbr >= 0 && nbr < g0_s10->n_nodes && g0_s10->nodes[nbr].alive) {
                     nbr_sum += abs(g0_s10->nodes[nbr].val - g0_s10->nodes[nbr].prev_val);
                     nbr_count++;
                 }
             }
+
             int32_t scale = nbr_count > 0 ? (int32_t)(nbr_sum / nbr_count) : 0;
-            /* Role-dependent divisor */
             int divisor;
-            if (n->valence >= 200)     divisor = 4;  /* crystal: tight */
-            else if (s10_n_in[i] >= 2) divisor = 3;  /* collision: 1/e */
-            else                        divisor = 2;  /* relay: loose */
-            if (scale < 2)
+            if (n->valence >= 200)     divisor = 4;
+            else if (s10_n_in[i] >= 2) divisor = 3;
+            else                        divisor = 2;
+
+            /* Signal 1: val delta vs neighbors */
+            int val_incoherent = (scale >= 2 && my_delta > scale / divisor) ? 1 : 0;
+
+            /* Signal 2: edge weight instability.
+             * If incoming edge weight sum changed by >25% since last cycle,
+             * competitive S3 is reshuffling this node's connections. */
+            int32_t edge_delta = abs(edge_sum - n->prev_edge_sum);
+            int edge_incoherent = 0;
+            if (n->prev_edge_sum > 0 && edge_delta * 4 > n->prev_edge_sum)
+                edge_incoherent = 1;
+
+            if (val_incoherent || edge_incoherent)
+                n->coherent = -1;
+            else if (scale < 2 && !edge_incoherent)
                 n->coherent = 1;   /* nothing moved */
-            else if (my_delta > scale / divisor)
-                n->coherent = -1;  /* incoherent */
             else
                 n->coherent = 1;   /* coherent */
+
             n->prev_val = n->val;
+            n->prev_edge_sum = edge_sum;
+        }
+
+        /* Direct graph introspection: count incoherent nodes.
+         * This is the thermometer, not the barometer.
+         * feedback[7] measures fingerprint delta (rate of change of a proxy).
+         * graph_error measures structural conflict directly. */
+        {
+            int n_incoh = 0;
+            for (int i = 0; i < g0_s10->n_nodes; i++) {
+                Node *n = &g0_s10->nodes[i];
+                if (n->alive && !n->layer_zero && n->coherent < 0)
+                    n_incoh++;
+            }
+            eng->graph_error = (int32_t)n_incoh;
         }
 
         int32_t error = eng->onetwo.feedback[7];
         int32_t stability = eng->onetwo.feedback[4];
         int32_t energy = eng->onetwo.feedback[5];
+        /* The S10 error block uses error_mag vs energy/3.
+         * Keep this driven by fingerprint delta only — it's calibrated
+         * for that signal. graph_error drives the close-loop block
+         * which has its own threshold (SUBSTRATE_INT/4). */
         int error_mag = abs(error);
 
         if (error_mag > energy / 3 && energy > 0) {
@@ -1675,9 +1712,17 @@ void engine_tick(Engine *eng) {
      * the machinery it already has.
      */
     {
-        int32_t error = eng->onetwo.feedback[7];
-        int32_t abs_error = error < 0 ? -error : error;
+        int32_t fp_error = eng->onetwo.feedback[7];
+        int32_t abs_fp = fp_error < 0 ? -fp_error : fp_error;
         int32_t stability = eng->onetwo.feedback[4];
+
+        /* Direct introspection: graph_error = incoherent node count.
+         * Scale so significant incoherence (5+ nodes) breaches frustration.
+         * A few incoherent nodes during normal learning is curiosity.
+         * Widespread incoherence is structural conflict.
+         * feedback[7] is the barometer. graph_error is the thermometer. */
+        int32_t graph_err_scaled = eng->graph_error * 7;  /* 5 nodes * 7 = 35 > 34 */
+        int32_t abs_error = abs_fp > graph_err_scaled ? abs_fp : graph_err_scaled;
 
         int32_t frustration_thresh = (int32_t)(SUBSTRATE_INT / 4);
         int32_t silence_thresh    = (int32_t)(MISMATCH_TAX_NUM);

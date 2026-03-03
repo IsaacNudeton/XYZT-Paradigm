@@ -28,5 +28,6 @@ void run_lifecycle_tests(void);
 void run_observer_tests(void);
 void run_stress_tests(void);
 void run_sense_tests(void);
+void run_collision_tests(void);
 
 #endif /* XYZT_TEST_H */
