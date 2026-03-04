@@ -30,5 +30,7 @@ void run_stress_tests(void);
 void run_sense_tests(void);
 void run_collision_tests(void);
 void run_t3_stage1_tests(void);
+void run_t3_full_tests(void);
+void run_save_load_tests(void);
 
 #endif /* XYZT_TEST_H */

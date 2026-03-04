@@ -1933,34 +1933,111 @@ void engine_status(const Engine *eng) {
 }
 
 /* ══════════════════════════════════════════════════════════════
- * SAVE / LOAD (binary format, v9 compatible)
+ * SAVE / LOAD (binary format, v9/v10/v11)
  * ══════════════════════════════════════════════════════════════ */
+
+static void save_graph(FILE *f, const Graph *g) {
+    fwrite(&g->n_nodes, 4, 1, f);
+    fwrite(&g->n_edges, 4, 1, f);
+    fwrite(&g->total_ticks, 8, 1, f);
+    fwrite(&g->total_learns, 8, 1, f);
+    fwrite(&g->total_grown, 8, 1, f);
+    fwrite(&g->total_pruned, 8, 1, f);
+    fwrite(&g->total_boundary_crossings, 8, 1, f);
+    int32_t params[11] = {
+        g->grow_threshold, g->prune_threshold,
+        g->learn_strengthen, g->learn_weaken, g->learn_rate,
+        g->auto_grow, g->auto_prune, g->auto_learn,
+        g->grow_mean, g->grow_interval, g->prune_interval
+    };
+    fwrite(params, sizeof(params), 1, f);
+    for (int i = 0; i < g->n_nodes; i++)
+        fwrite(&g->nodes[i], sizeof(Node), 1, f);
+    for (int i = 0; i < g->n_edges; i++)
+        fwrite(&g->edges[i], sizeof(Edge), 1, f);
+}
+
+static int load_graph(FILE *f, Graph *g) {
+    /* g must already have nodes/edges allocated (graph_init or shell init) */
+    if (fread(&g->n_nodes, 4, 1, f) != 1) return -1;
+    if (fread(&g->n_edges, 4, 1, f) != 1) return -1;
+    if (g->n_nodes > MAX_NODES) g->n_nodes = MAX_NODES;
+    if (g->n_edges > MAX_EDGES) g->n_edges = MAX_EDGES;
+    fread(&g->total_ticks, 8, 1, f);
+    fread(&g->total_learns, 8, 1, f);
+    fread(&g->total_grown, 8, 1, f);
+    fread(&g->total_pruned, 8, 1, f);
+    fread(&g->total_boundary_crossings, 8, 1, f);
+    int32_t params[11];
+    fread(params, sizeof(params), 1, f);
+    g->grow_threshold = params[0];    g->prune_threshold = params[1];
+    g->learn_strengthen = params[2];  g->learn_weaken = params[3];
+    g->learn_rate = params[4];
+    g->auto_grow = params[5];         g->auto_prune = params[6];
+    g->auto_learn = params[7];
+    g->grow_mean = params[8];         g->grow_interval = params[9];
+    g->prune_interval = params[10];
+    for (int i = 0; i < g->n_nodes; i++)
+        if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) return -1;
+    for (int i = 0; i < g->n_edges; i++)
+        if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) return -1;
+    return 0;
+}
 
 int engine_save(const Engine *eng, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     uint32_t magic = 0x58595A54; /* XYZT */
-    uint32_t version = 10;       /* v10 = PC engine format */
+    uint32_t version = 11;
     fwrite(&magic, 4, 1, f);
     fwrite(&version, 4, 1, f);
-    /* v10 header: n_shells, n_boundary_edges, total_ticks (matches v9 field order) */
+
+    /* Engine scalars */
     uint32_t ns = (uint32_t)eng->n_shells;
     uint32_t nb = (uint32_t)eng->n_boundary_edges;
     fwrite(&ns, 4, 1, f);
     fwrite(&nb, 4, 1, f);
-    fwrite(&eng->total_ticks, sizeof(eng->total_ticks), 1, f);
-    for (int s = 0; s < eng->n_shells; s++) {
-        const Graph *g = &eng->shells[s].g;
-        fwrite(&g->n_nodes, sizeof(g->n_nodes), 1, f);
-        for (int i = 0; i < g->n_nodes; i++)
-            fwrite(&g->nodes[i], sizeof(Node), 1, f);
-        fwrite(&g->n_edges, sizeof(g->n_edges), 1, f);
-        for (int i = 0; i < g->n_edges; i++)
-            fwrite(&g->edges[i], sizeof(Edge), 1, f);
-        fwrite(&g->grow_mean, sizeof(g->grow_mean), 1, f);
-    }
+    fwrite(&eng->total_ticks, 8, 1, f);
+    int32_t li = eng->learn_interval;
+    int32_t bi = eng->boundary_interval;
+    int32_t ler = eng->low_error_run;
+    int32_t nc = eng->n_children;
+    fwrite(&li, 4, 1, f);
+    fwrite(&bi, 4, 1, f);
+    fwrite(&ler, 4, 1, f);
+    fwrite(&nc, 4, 1, f);
+
+    /* SubstrateT */
+    fwrite(&eng->T.count, 8, 1, f);
+    fwrite(&eng->T.birth_ms, sizeof(double), 1, f);
+
+    /* OneTwoSystem (feedback + counters — analysis is recomputed) */
+    for (int i = 0; i < 8; i++)
+        fwrite(&eng->onetwo.feedback[i], 4, 1, f);
+    int32_t tc = eng->onetwo.tick_count;
+    int32_t ti = eng->onetwo.total_inputs;
+    fwrite(&tc, 4, 1, f);
+    fwrite(&ti, 4, 1, f);
+    fwrite(&eng->onetwo.prev_match, 4, 1, f);
+
+    /* Shells */
+    for (int s = 0; s < eng->n_shells; s++)
+        save_graph(f, &eng->shells[s].g);
+
+    /* Boundary edges */
     for (int i = 0; i < eng->n_boundary_edges; i++)
         fwrite(&eng->boundary_edges[i], sizeof(Edge), 1, f);
+
+    /* Children */
+    for (int i = 0; i < MAX_CHILDREN; i++) {
+        if (eng->child_owner[i] < 0) continue;
+        int32_t slot = i;
+        int32_t owner = eng->child_owner[i];
+        fwrite(&slot, 4, 1, f);
+        fwrite(&owner, 4, 1, f);
+        save_graph(f, &eng->child_pool[i]);
+    }
+
     fclose(f);
     return 0;
 }
@@ -2060,6 +2137,61 @@ int engine_load(Engine *eng, const char *path) {
         }
         for (int i = 0; i < eng->n_boundary_edges; i++)
             fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
+    } else if (version == 11) {
+        /* v11: full persistence — engine params, OneTwoSystem, SubstrateT, children */
+        uint32_t ns, nb;
+        fread(&ns, 4, 1, f);
+        fread(&nb, 4, 1, f);
+        fread(&eng->total_ticks, 8, 1, f);
+        int32_t li, bi, ler, nc;
+        fread(&li, 4, 1, f);  eng->learn_interval = li;
+        fread(&bi, 4, 1, f);  eng->boundary_interval = bi;
+        fread(&ler, 4, 1, f); eng->low_error_run = ler;
+        fread(&nc, 4, 1, f);
+        eng->n_shells = (int)ns;
+        if (eng->n_shells > MAX_SHELLS) eng->n_shells = MAX_SHELLS;
+        eng->n_boundary_edges = (int)nb;
+        if (eng->n_boundary_edges > eng->max_boundary_edges)
+            eng->n_boundary_edges = eng->max_boundary_edges;
+
+        /* SubstrateT */
+        fread(&eng->T.count, 8, 1, f);
+        fread(&eng->T.birth_ms, sizeof(double), 1, f);
+
+        /* OneTwoSystem */
+        for (int i = 0; i < 8; i++)
+            fread(&eng->onetwo.feedback[i], 4, 1, f);
+        int32_t tc, ti;
+        fread(&tc, 4, 1, f); eng->onetwo.tick_count = tc;
+        fread(&ti, 4, 1, f); eng->onetwo.total_inputs = ti;
+        fread(&eng->onetwo.prev_match, 4, 1, f);
+
+        /* Shells */
+        for (int s = 0; s < eng->n_shells; s++) {
+            if (load_graph(f, &eng->shells[s].g) != 0) { fclose(f); return -3; }
+        }
+
+        /* Boundary edges */
+        for (int i = 0; i < eng->n_boundary_edges; i++)
+            if (fread(&eng->boundary_edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -6; }
+
+        /* Children */
+        eng->n_children = 0;
+        for (int i = 0; i < MAX_CHILDREN; i++) eng->child_owner[i] = -1;
+        for (int c = 0; c < nc; c++) {
+            int32_t slot, owner;
+            fread(&slot, 4, 1, f);
+            fread(&owner, 4, 1, f);
+            if (slot < 0 || slot >= MAX_CHILDREN) { fclose(f); return -7; }
+            graph_init(&eng->child_pool[slot]);
+            if (load_graph(f, &eng->child_pool[slot]) != 0) { fclose(f); return -8; }
+            eng->child_owner[slot] = owner;
+            eng->n_children++;
+            /* Reconnect parent node's child_id */
+            Graph *g0 = &eng->shells[0].g;
+            if (owner >= 0 && owner < g0->n_nodes && g0->nodes[owner].alive)
+                g0->nodes[owner].child_id = (int8_t)slot;
+        }
     } else {
         fprintf(stderr, "Unknown .xyzt version %u\n", version);
         fclose(f);
