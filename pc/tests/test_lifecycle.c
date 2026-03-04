@@ -158,12 +158,23 @@ void run_lifecycle_tests(void) {
         check("cycle: all 4 children spawned", MAX_CHILDREN, eng.n_children);
 
         eng.shells[0].g.nodes[ids[0]].valence = 50;
-        for (int i = 0; i < (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        /* Reinforce others every tick so frustration-driven decay can't lyse them */
+        for (int i = 0; i < (int)SUBSTRATE_INT; i++) {
+            for (int k = 1; k < 4; k++)
+                eng.shells[0].g.nodes[ids[k]].valence = 255;
+            engine_tick(&eng);
+        }
         check("cycle: one child removed by lysis", MAX_CHILDREN - 1, eng.n_children);
 
         int new_id = engine_ingest_text(&eng, "cyc_e", "epsilon new data spawning into freed slot eee");
         eng.shells[0].g.nodes[new_id].valence = 255;
-        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) engine_tick(&eng);
+        for (int i = 0; i <= (int)SUBSTRATE_INT; i++) {
+            /* Keep survivors reinforced during spawn cycle */
+            for (int k = 1; k < 4; k++)
+                if (eng.shells[0].g.nodes[ids[k]].alive)
+                    eng.shells[0].g.nodes[ids[k]].valence = 255;
+            engine_tick(&eng);
+        }
         check("cycle: new child spawned into freed slot", MAX_CHILDREN, eng.n_children);
         check("cycle: new node has child", 1, eng.shells[0].g.nodes[new_id].child_id >= 0 ? 1 : 0);
         engine_destroy(&eng);

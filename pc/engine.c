@@ -1585,13 +1585,21 @@ void engine_tick(Engine *eng) {
          * feedback[7] measures fingerprint delta (rate of change of a proxy).
          * graph_error measures structural conflict directly. */
         {
-            int n_incoh = 0;
+            int n_incoh = 0, n_alive = 0;
             for (int i = 0; i < g0_s10->n_nodes; i++) {
                 Node *n = &g0_s10->nodes[i];
-                if (n->alive && !n->layer_zero && n->coherent < 0)
-                    n_incoh++;
+                if (n->alive && !n->layer_zero) {
+                    n_alive++;
+                    if (n->coherent < 0) n_incoh++;
+                }
             }
-            eng->graph_error = (int32_t)n_incoh;
+            /* Ratio, not count. 0-100 percentage. Scales with graph size.
+             * Below 20 nodes, learning noise dominates — percentage is
+             * meaningless. Fingerprint delta is the primary signal there. */
+            if (n_alive >= 30)
+                eng->graph_error = (int32_t)(n_incoh * 100 / n_alive);
+            else
+                eng->graph_error = 0;
         }
 
         int32_t error = eng->onetwo.feedback[7];
@@ -1716,23 +1724,21 @@ void engine_tick(Engine *eng) {
         int32_t abs_fp = fp_error < 0 ? -fp_error : fp_error;
         int32_t stability = eng->onetwo.feedback[4];
 
-        /* Direct introspection: graph_error = incoherent node count.
-         * Scale so significant incoherence (5+ nodes) breaches frustration.
-         * A few incoherent nodes during normal learning is curiosity.
-         * Widespread incoherence is structural conflict.
-         * feedback[7] is the barometer. graph_error is the thermometer. */
-        int32_t graph_err_scaled = eng->graph_error * 7;  /* 5 nodes * 7 = 35 > 34 */
-        int32_t abs_error = abs_fp > graph_err_scaled ? abs_fp : graph_err_scaled;
-
-        int32_t frustration_thresh = (int32_t)(SUBSTRATE_INT / 4);
+        /* Two signals, two thresholds. Either can trigger frustration.
+         * feedback[7] (fingerprint delta): absolute, scale 0-100+, thresh SUBSTRATE_INT/4
+         * graph_error (incoherence %): ratio 0-100, thresh from mismatch tax rate */
+        int32_t fp_thresh = (int32_t)(SUBSTRATE_INT / 4);                           /* = 34 */
+        int32_t ge_thresh = (int32_t)(MISMATCH_TAX_NUM * 400 / MISMATCH_TAX_DEN);  /* = 14 */
+        int frustrated = (abs_fp > fp_thresh) || (eng->graph_error > ge_thresh);
+        int32_t abs_error = abs_fp > eng->graph_error ? abs_fp : eng->graph_error;
         int32_t silence_thresh    = (int32_t)(MISMATCH_TAX_NUM);
 
-        /* ── FRUSTRATION: error above threshold ──
+        /* ── FRUSTRATION: either signal above its threshold ──
          * Seek connections. Grow faster. Find and erode the worst
          * incoherent node — not the most deviant, but the most WRONG.
          * A coherent node far from the mean is learning (moved WITH neighbors).
          * An incoherent node far from the mean is broken. */
-        if (abs_error > frustration_thresh) {
+        if (frustrated) {
             Graph *g0 = &eng->shells[0].g;
 
             /* Accelerate growth: shrink interval toward minimum */

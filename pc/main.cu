@@ -123,6 +123,7 @@ void run_observer_tests(void);
 void run_stress_tests(void);
 void run_sense_tests(void);
 void run_collision_tests(void);
+void run_t3_stage1_tests(void);
 void run_tracking_sweep(void);
 void run_sense_diagnostic(void);
 }
@@ -239,6 +240,7 @@ static void cmd_test(void) {
     run_stress_tests();
     run_sense_tests();
     run_collision_tests();
+    run_t3_stage1_tests();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
