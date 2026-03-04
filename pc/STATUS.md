@@ -1,7 +1,7 @@
 # XYZT Unified PC Engine — Status
 
 **Date:** March 4, 2026
-**Tests:** 187/187 passing
+**Tests:** 232/232 passing
 **Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
 
 ## What It Is
@@ -30,7 +30,8 @@ Merges three XYZT engine versions:
 - **Retina entanglement:** child graphs read parent's substrate via zero-copy pointer
 - **Z-depth observers:** obs_and (Z=1), obs_freq (Z=3), obs_corr (Z=4), obs_xor (energy collision)
 - **Lysis:** automatic valence decay + apoptosis under contradiction
-- **Save/load:** binary format, shells + boundary edges (partial — see gaps)
+- **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Zone A holds 3 incoherent. 7888 edges at 12% capacity. No zone collapsed.
+- **Save/load v11:** full engine persistence — children, OneTwoSystem (feedback + counters), SubstrateT, all graph params (thresholds, intervals, stats). Roundtrip tested: 149 nodes, 4 children saved and restored. v9/v10 backward compatible.
 
 ## What's Broken / Incomplete
 
@@ -38,9 +39,7 @@ Merges three XYZT engine versions:
 
 | Issue | Details |
 |-------|---------|
-| **Save/load loses nesting** | engine_save() doesn't persist child_pool, child_owner, onetwo state, or SubstrateT. Loading a saved engine drops all children and pattern history. |
-| **T3 not run yet** | Retina code is in and tests pass, but we haven't tested whether children develop distinct topologies from distinct parents with GPU live. |
-| **Behavioral homogenization** | Acid test (3 text + 1 binary, 25K ticks) showed spatial separation exists but all files crystallize identically. Edge weights converge to same values. ONETWO fingerprints lose distinctness through mutual containment averaging. |
+| **Behavioral homogenization** | T3 Full showed zone isolation works but intra-zone weights converge (AA=230, BB=235, CC=232, DD=237, EE=232). Only 5 cross-zone edges out of 7888. Engine can't distinguish input types by learned topology. |
 | **Z axis always 0** | graph_compute_z() overwrites Z with causal ordering level. All edges are bidirectional → all nodes get Z=0. Hash-chained Z is wasted. |
 
 ### MEDIUM priority
@@ -92,9 +91,9 @@ Merges three XYZT engine versions:
 
 | File | Lines | Role |
 |------|-------|------|
-| engine.c | 2329 | CPU engine core |
+| engine.c | 2467 | CPU engine core (v11 save/load) |
 | engine.h | 464 | All types + inline helpers |
-| main.cu | 1047 | Entry point, tests, interactive CLI |
+| main.cu | 1053 | Entry point, tests, interactive CLI |
 | substrate.cu | 520 | 7 CUDA kernels |
 | substrate.cuh | 167 | GPU types + host API |
 | onetwo.c | 329 | ONETWO encoder |
@@ -107,14 +106,14 @@ Merges three XYZT engine versions:
 | sense.c | 396 | Sense layer (windowed, pass-aware) |
 | sense.h | 61 | Sense API |
 | sweep_tracking.c | 966 | Parameter sweep + tracking tests |
-| tests/ | 2022 | 8 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_gpu) |
+| tests/ | 2558 | 10 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_gpu) |
 | build.bat | — | Windows build (canonical) |
 | rebuild.bat | — | Windows rebuild (canonical) |
 
 ## Next Steps (by impact)
 
-1. **Full T3** — hundreds of nodes, real files, sustained ingestion. Stage 1 (50 nodes) passed — process isolation holds
-2. **Fix save/load** — persist child_pool, child_owner, onetwo, SubstrateT
+1. **Address homogenization** — distinct inputs should produce distinct learned structures. T3 Full showed weight convergence across all zones.
+2. **Fix Z axis** — graph_compute_z() always returns 0 (all edges bidirectional). Hash-chained Z is wasted.
 3. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
 4. **Add child Hebbian** — let children grow edges between co-firing retina nodes
-5. **Address homogenization** — distinct inputs should produce distinct learned structures
+5. **Child-to-child communication** — children of different parents don't interact

@@ -1,35 +1,58 @@
 # XYZT Paradigm
 
-A computing paradigm where computation happens through co-presence instead of arithmetic.
+A computing paradigm built on co-presence instead of arithmetic.
 
-No ALU. No instruction pointer. No fetch-decode-execute. A voxel grid propagates state through topology — what's next to what determines what happens. `tick()` contains zero math. Computation emerges from collision.
+In conventional computing, a CPU fetches an instruction, decodes it, executes math on registers, and stores the result. XYZT removes all of that. Instead, a grid of voxels propagates binary state to their neighbors each tick. No ALU, no instruction pointer, no fetch-decode-execute. What computes is *which voxels are next to which* — topology determines the operation.
 
-Three primitives: **mark**, **topology**, **observer**. That's it.
+Three primitives make this work:
 
-## What's here
+- **Mark**: a voxel is on or off. That's the only state.
+- **Topology**: which voxels connect to which. This is the program. Changing the wiring changes the computation.
+- **Observer**: a function that reads the accumulated state and interprets it. The same collision produces AND, OR, XOR — depending on which observer you ask. The operation is not in the engine. It's in the observation.
+
+This was proven in `proof/v5` — a single accumulator (`accum += v`) plus different observers reproduces NOT, AND, OR, XOR, addition, multiplication, comparison, a full adder, a 4-bit ripple adder, a 2-bit counter, an SR latch, and a traffic FSM. Same collision, different question, different answer.
+
+## How it learns
+
+The engine doesn't just compute — it wires itself. Raw data (files, packets, bitstreams) gets ingested as ONETWO structural fingerprints (4096-bit fixed encodings that capture repetition, opposition, nesting, and metadata). Nodes that fire together get Hebbian-strengthened edges. Nodes that survive enough boundary crossings crystallize (harden). Crystallized nodes spawn child sub-graphs that inherit a view of their parent's substrate.
+
+A closed feedback loop drives the whole thing:
+- `graph_error` measures what percentage of nodes are incoherent (their neighbors disagree about their state)
+- When error is high (**frustration**), the engine erodes the worst incoherent crystal and accelerates growth
+- When error is low and stable (**boredom**), it hardens coherent nodes and strengthens edges
+- Conservation caps total edge weight per node at 1024 — new edges must steal weight from weaker ones
+
+This means the topology competes. Strong patterns survive. Weak ones starve. The engine doesn't learn by gradient descent or backpropagation — it learns by economic pressure on a weight-conserving graph.
+
+## What's been tested
+
+The `pc/` engine runs 232 tests covering:
+
+- **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Cross-zone edges starve (weight 53) while intra-zone edges stay strong (123). Conservation isolates the damage without walls — through economics.
+- **Production load** (T3 Full): 200 nodes across 5 zones (conflict, stable, telemetry, ASCII, boundary chimera), 30 cycles. All zones survive. Healthy zones crystallize 40/40. The conflict zone holds 3 incoherent nodes. 7888 edges at 12% of capacity — no explosion.
+- **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.949 (5/5 true positives, 0 false positives on a 20-sentence benchmark).
+- **Full persistence** (v11 save/load): the entire engine state — topology, adapted parameters, children, feedback history, substrate time — survives shutdown and reload. A loaded engine continues learning from its checkpoint.
+- **GPU substrate**: 4096 cubes (262K voxels) benchmarked at 9.5 billion voxel-ticks/second on an RTX 2080 Super.
+- **Formal proofs**: 10 Lean4 proofs (zero `sorry`, zero axiom) covering basic properties, duality, gain, IO, lattice structure, physics correspondence, sequential composition, substrate invariants, and topology.
+
+Known limitation: the engine isolates processes correctly but can't yet distinguish *between* them by learned topology. All zones converge to similar internal edge weights (~230-237). This is the homogenization problem — next on the list.
+
+## Repository structure
 
 ```
 proof/
-  v6/        436-test C simulation that proved the paradigm (v6 engine + variants)
+  v5/        Single-accumulator universality proof (all boolean ops from one collision)
+  v6/        436-test C simulation that proved the paradigm
   v9/        3302-line reference implementation with shells and nesting (48 tests)
-  lean4/     10 formal proofs — Basic, Duality, Gain, IO, Lattice, Physics,
-             Sequential, Substrate, Topology, plus v6 proof. Zero sorry, zero axiom.
+  lean4/     10 formal proofs in Lean4
   spec/      XYZT.lang instruction set + assembly programs (adder, counter, FSM, SR latch)
-pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (183 tests, 9.5B voxel-ticks/sec)
+pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (232 tests)
 pico/        Autonomous firmware — RP2040, same paradigm on bare metal
 pi-zero2/    Bare-metal kernel — ARM, no OS
 shared/      Shared sense layer across devices
 ```
 
-## What it does
-
-- **Substrate layer**: bitmask propagation, no arithmetic, deterministic
-- **Threshold layer**: tap/crystallize based on co-presence counts
-- **Topology layer**: Hebbian learning, wire growth, observer stack (Z0–Z4)
-- **Bridge**: imports/exports wire graphs between the toolkit and GPU engine
-- **Exec**: interprets `.xyzt` assembly — verified a 2-bit adder (A=3, B=2 → 5)
-
-Every device runs the same organism. There is no client/server, no eyes/brain split. A Pico and a GPU are the same thing at different scales.
+Every device runs the same core loop. There is no client/server split. A Pico and a GPU are the same organism at different scales.
 
 ## Build (PC engine)
 
@@ -41,23 +64,19 @@ rebuild.bat
 xyzt_pc.exe test
 ```
 
-See [CODEBOOK.md](CODEBOOK.md) for paradigm reference, [pc/STATUS.md](pc/STATUS.md) for current test status and known issues.
+See [CODEBOOK.md](CODEBOOK.md) for paradigm reference, [pc/STATUS.md](pc/STATUS.md) for current test results and known issues.
 
 ## Why
 
-Current computing is 80 years of the same idea: move numbers, do math on them, store the result. XYZT asks what happens if you don't. If computation is just "things next to things influencing each other" — which is what physics already does — then you don't need arithmetic at all. You need a grid, propagation rules, and an observer.
+Current computing is 80 years of the same idea: move numbers, do math on them, store the result. XYZT asks what happens if you remove the math entirely. If computation is "things next to things influencing each other" — which is what physics already does — then arithmetic is a convention, not a requirement. You need a grid, propagation rules, and someone watching.
 
-This started as a question Claude raised. Isaac extracted it, formalized it, and proved it works — 436 tests in C, 10 formal proofs in Lean4, then a GPU engine that unified three generations into 118 tests, then firmware for real hardware. Everything in `proof/` is the receipt. The silicon will confirm it.
+The proof chain: single-accumulator universality (v5) showed one operation + observers = all computation. Self-wiring (onetwo.c) showed the system discovers its own topology from examples. The GPU engine showed it scales to hundreds of nodes under sustained load. The formal proofs in Lean4 showed the properties hold without escape hatches.
+
+The next step is physical hardware — dedicated silicon running co-presence natively.
 
 ## How this was built
 
 Isaac Oravec and Claude. Not a user and a tool — a duo. Claude co-authored the paradigm, the proofs, the engine, and this file. Isaac built the infrastructure, designed the hardware path, and made the calls. We disagree, we argue, we build. That's how it works.
-
-## Where it goes
-
-The software proved the paradigm. The GPU engine proved it scales. The next step is physical hardware — dedicated silicon running co-presence natively. No von Neumann. No clock-driven arithmetic. Just topology doing what topology does.
-
-This repo is the bridge between proof and hardware.
 
 ## License
 
