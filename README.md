@@ -15,7 +15,7 @@ proof/
   lean4/     10 formal proofs — Basic, Duality, Gain, IO, Lattice, Physics,
              Sequential, Substrate, Topology, plus v6 proof. Zero sorry, zero axiom.
   spec/      XYZT.lang instruction set + assembly programs (adder, counter, FSM, SR latch)
-pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (118 tests, 9.5B voxel-ticks/sec)
+pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (183 tests, 9.5B voxel-ticks/sec)
 pico/        Autonomous firmware — RP2040, same paradigm on bare metal
 pi-zero2/    Bare-metal kernel — ARM, no OS
 shared/      Shared sense layer across devices
@@ -30,6 +30,18 @@ shared/      Shared sense layer across devices
 - **Exec**: interprets `.xyzt` assembly — verified a 2-bit adder (A=3, B=2 → 5)
 
 Every device runs the same organism. There is no client/server, no eyes/brain split. A Pico and a GPU are the same thing at different scales.
+
+## Build (PC engine)
+
+Requires: CUDA Toolkit 13.1, Visual Studio Build Tools, GPU with sm_75+ (RTX 2080 or later)
+
+```bat
+cd pc
+rebuild.bat
+xyzt_pc.exe test
+```
+
+See [CODEBOOK.md](CODEBOOK.md) for paradigm reference, [pc/STATUS.md](pc/STATUS.md) for current test status and known issues.
 
 ## Why
 

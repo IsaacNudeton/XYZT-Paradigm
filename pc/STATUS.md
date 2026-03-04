@@ -1,8 +1,8 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** February 28, 2026
-**Tests:** 175/175 passing
-**Tracking:** 0.949 (contradiction detection via destructive interference)
+**Date:** March 3, 2026
+**Tests:** 183/183 passing
+**Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
 
 ## What It Is
 
@@ -17,7 +17,11 @@ Merges three XYZT engine versions:
 ## What Works (Proven)
 
 - **Full cascade:** ingest → ONETWO fingerprint → GPU co-presence → Hebbian → stabilize → crystallize → nest
+- **Closed feedback loop:** `graph_error` counts incoherent nodes directly. Close-loop block uses `max(fingerprint_error, graph_error*7)`. Frustration erodes worst incoherent crystal, boredom hardens coherent nodes. No proxy, no fingerprint — direct graph introspection.
+- **Bus collision test:** 15 raw packets, 3 groups, continuous re-injection — 2604 frustration ticks from pure bitstream collision. Protocol-agnostic structural conflict resolution.
+- **Conservation:** `MAX_NODE_WEIGHT=1024` budget per node. Competitive S3: at capacity, active edges steal from weakest. Sense decay to zero — silence = understanding.
 - **Contradiction detection:** negation-aware edge inversion + destructive interference. Score 0.949 (recall=1.0, specificity=0.9)
+- **Pure observer:** per-node invert ratio predicts contradictions. 0 FP, 5/5 TP.
 - **Pass-aware sense:** windowed feature extraction per state_buf region. Pass 4 inversion byte now visible (21 burst features in contradiction vs 15 normal)
 - **GPU substrate:** 4096 cubes (262K voxels), 9.5B voxel-ticks/sec benchmark
 - **3 shells:** carbon (Z=1.0), silicon (Z=1.5), verifier (Z=2.25) with Fresnel boundary propagation
@@ -45,7 +49,7 @@ Merges three XYZT engine versions:
 | **Gateway seeding** | GPU inter-cube routing (kernel_route_3d) exists but gateway lanes are never seeded with real values from engine. Cubes are isolated islands. |
 | **Child Hebbian** | child_tick_once() just propagates — no learning phase. Children can't grow edges between co-firing retina nodes. Internal topology is static. |
 | **No child-to-child communication** | Children of different parents don't interact. No substrate-level connection between child graphs. |
-| **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. do_build.bat works but isn't tracked. |
+| **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. Canonical scripts: build.bat, rebuild.bat. |
 
 ### LOW priority (dead code / API bloat)
 
@@ -55,7 +59,6 @@ Merges three XYZT engine versions:
 | wire_gateways() | Implemented in wire.c, never called. GPU routing subsumes it. |
 | transducer_ingest(), transducer_stdin() | Declared, never called. Future interactive modes. |
 | onetwo_generate() | Inverse parse (bitstream → bytes). Declared, not used. |
-| test_hash.c | Standalone utility, not linked into main build. |
 
 ## Architecture
 
@@ -66,12 +69,17 @@ Merges three XYZT engine versions:
 │          CPU ENGINE (engine.c/h)            │  v9 shells + ONETWO + nesting
 │  ingest → wire → tick → learn → crystallize │  retina entanglement for children
 │  ONETWO feedback: delta error → stability   │
+│  Close-loop: frustration / boredom drives   │
+│  graph_error: direct incoherent node count  │
 ├──────────────┬──────────────────────────────┤
 │   WIRE BRIDGE│     GPU SUBSTRATE (3D)       │  v6 cubes + v3 spatial coords
 │  (wire.c/h)  │  substrate.cu/cuh            │  262K voxels, shift registers
 │  Hebbian CPU │  CUDA kernels: tick, route   │  threshold tap, co-presence
 │  ↔GPU sync   │  observe, auto-wire, inject  │  RTX 2080 Super
 ├──────────────┴──────────────────────────────┤
+│           SENSE (sense.c/h)                 │  windowed feature extraction
+│  per-pass analysis, decay, Hebbian wiring   │  7 feature types (ARDCSBP)
+├─────────────────────────────────────────────┤
 │         TRANSDUCER (transducer.c/h)         │  file/text → bitstream
 │     ONETWO ENCODER (onetwo.c/h)             │  4096-bit structural fingerprint
 ├─────────────────────────────────────────────┤
@@ -83,26 +91,29 @@ Merges three XYZT engine versions:
 
 | File | Lines | Role |
 |------|-------|------|
-| engine.c | 1350 | CPU engine core |
-| engine.h | 396 | All types + inline helpers |
-| main.cu | 564 | Entry point, tests, interactive CLI |
-| substrate.cu | 500 | 7 CUDA kernels |
+| engine.c | 2329 | CPU engine core |
+| engine.h | 464 | All types + inline helpers |
+| main.cu | 1047 | Entry point, tests, interactive CLI |
+| substrate.cu | 520 | 7 CUDA kernels |
 | substrate.cuh | 167 | GPU types + host API |
 | onetwo.c | 329 | ONETWO encoder |
 | onetwo.h | 61 | ONETWO API |
-| wire.c | 217 | CPU↔GPU bridge |
+| wire.c | 245 | CPU↔GPU bridge |
 | wire.h | 37 | Wire API |
 | transducer.c | 149 | Input abstraction |
 | transducer.h | 53 | Transducer API |
 | reporter.c | 139 | Status output |
-| Makefile | 29 | Linux build (unused) |
-| build.bat | — | Windows build |
+| sense.c | 396 | Sense layer (windowed, pass-aware) |
+| sense.h | 61 | Sense API |
+| sweep_tracking.c | 966 | Parameter sweep + tracking tests |
+| tests/ | 2022 | 7 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_gpu) |
+| build.bat | — | Windows build (canonical) |
+| rebuild.bat | — | Windows rebuild (canonical) |
 
 ## Next Steps (by impact)
 
-1. **Sense → engine feedback** — windowed sense detects contradiction (burst diff in pass 4). Feed this back to accelerate lysis.
-2. **Run T3** — ingest 3+ files with GPU live, tick 25K, check if children develop distinct topologies
-3. **Fix save/load** — persist child_pool, child_owner, onetwo, SubstrateT
-4. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
-5. **Add child Hebbian** — let children grow edges between co-firing retina nodes
-6. **Address homogenization** — distinct inputs should produce distinct learned structures
+1. **Run T3** — ingest 3+ files with GPU live, tick 25K, check if children develop distinct topologies
+2. **Fix save/load** — persist child_pool, child_owner, onetwo, SubstrateT
+3. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
+4. **Add child Hebbian** — let children grow edges between co-firing retina nodes
+5. **Address homogenization** — distinct inputs should produce distinct learned structures

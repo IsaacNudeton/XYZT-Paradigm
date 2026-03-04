@@ -7,3 +7,21 @@
 *.dis
 *.map
 build/
+
+# Tool/session state
+.xyzt/
+.claude/
+
+# Temp build logs and test outputs
+build_*.txt
+t3_*.txt
+*.log
+
+# Generated data
+sweep_results.tsv
+
+# Temp build script variants (canonical: build.bat, rebuild.bat)
+pc/build_now.bat
+pc/build_tmp.bat
+pc/do_build.bat
+pc/do_build2.bat

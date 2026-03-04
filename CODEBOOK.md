@@ -113,16 +113,18 @@ Observer = where they collide = where computation happens
 - Agent memory: self-reinforcing nodes hold state without registers (tested Feb 26)
 - Local topology mirrors global (independently discovered by Tesla patent US20260050706A1)
 
-## The Gap
+## The Loop (Closed)
 
-ONETWO feedback (feedback[0..7]) computes every tick but doesn't drive topology changes yet. The loop is open. Closing it:
+ONETWO feedback drives topology changes. The loop is closed:
 
-- feedback[7] (error) high → grow edges toward mismatch source
-- feedback[4] (stability) holds → crystallize those edges
-- Shell 1 confirms or rejects shell 0's changes (intershell)
-- Error stays low for SUBSTRATE_INT ticks → prune weak edges
+- `graph_error` counts incoherent nodes directly (no proxy, no fingerprint)
+- Close-loop block: `max(fingerprint_error, graph_error * 7)` sets drive state
+- **Frustration** (error > threshold): erode worst incoherent crystal, accelerate growth
+- **Boredom** (low error, sustained): harden coherent nodes, strengthen edges
+- Conservation: `MAX_NODE_WEIGHT=1024`, competitive S3 steals from weakest edge
+- Sense decays to zero — silence = understanding
 
-One `if` block in `engine_tick`. Feedback drives rewiring. Rewiring changes what feedback sees. Loop closed.
+Bus collision test: 15 raw packets, 3 groups, continuous re-injection — 2604 frustration ticks from pure bitstream collision. No English, no keywords. The engine reads its own immune response.
 
 ## Constants (imposed vs emerged — open question)
 
