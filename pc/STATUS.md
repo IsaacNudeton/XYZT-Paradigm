@@ -1,7 +1,7 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 3, 2026
-**Tests:** 183/183 passing
+**Date:** March 4, 2026
+**Tests:** 187/187 passing
 **Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
 
 ## What It Is
@@ -17,8 +17,9 @@ Merges three XYZT engine versions:
 ## What Works (Proven)
 
 - **Full cascade:** ingest → ONETWO fingerprint → GPU co-presence → Hebbian → stabilize → crystallize → nest
-- **Closed feedback loop:** `graph_error` counts incoherent nodes directly. Close-loop block uses `max(fingerprint_error, graph_error*7)`. Frustration erodes worst incoherent crystal, boredom hardens coherent nodes. No proxy, no fingerprint — direct graph introspection.
-- **Bus collision test:** 15 raw packets, 3 groups, continuous re-injection — 2604 frustration ticks from pure bitstream collision. Protocol-agnostic structural conflict resolution.
+- **Closed feedback loop:** `graph_error` = incoherence percentage (0-100). Dual thresholds: fp_thresh=34 (fingerprint delta), ge_thresh=14% (graph_error, derived from mismatch tax). Floor at 30 nodes — below that, fingerprint-only. Frustration erodes worst incoherent crystal, boredom hardens coherent nodes.
+- **T3 Stage 1 (process isolation):** 50 nodes, 3 zones (conflict/stable/boundary), 30 cycles continuous re-injection. Zone B recovers in 5 cycles, holds 15/15 crystallized. AC edges starved to weight 53, BB stays at 123. Conservation isolates the sick process.
+- **Bus collision test:** 15 raw packets, 3 groups, continuous re-injection. Structural differentiation via topology. Protocol-agnostic.
 - **Conservation:** `MAX_NODE_WEIGHT=1024` budget per node. Competitive S3: at capacity, active edges steal from weakest. Sense decay to zero — silence = understanding.
 - **Contradiction detection:** negation-aware edge inversion + destructive interference. Score 0.949 (recall=1.0, specificity=0.9)
 - **Pure observer:** per-node invert ratio predicts contradictions. 0 FP, 5/5 TP.
@@ -106,13 +107,13 @@ Merges three XYZT engine versions:
 | sense.c | 396 | Sense layer (windowed, pass-aware) |
 | sense.h | 61 | Sense API |
 | sweep_tracking.c | 966 | Parameter sweep + tracking tests |
-| tests/ | 2022 | 7 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_gpu) |
+| tests/ | 2022 | 8 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_gpu) |
 | build.bat | — | Windows build (canonical) |
 | rebuild.bat | — | Windows rebuild (canonical) |
 
 ## Next Steps (by impact)
 
-1. **Run T3** — ingest 3+ files with GPU live, tick 25K, check if children develop distinct topologies
+1. **Full T3** — hundreds of nodes, real files, sustained ingestion. Stage 1 (50 nodes) passed — process isolation holds
 2. **Fix save/load** — persist child_pool, child_owner, onetwo, SubstrateT
 3. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
 4. **Add child Hebbian** — let children grow edges between co-firing retina nodes

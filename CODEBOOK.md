@@ -117,8 +117,8 @@ Observer = where they collide = where computation happens
 
 ONETWO feedback drives topology changes. The loop is closed:
 
-- `graph_error` counts incoherent nodes directly (no proxy, no fingerprint)
-- Close-loop block: `max(fingerprint_error, graph_error * 7)` sets drive state
+- `graph_error` = incoherence percentage (0-100), floor at 30 nodes
+- Dual thresholds: fp_thresh=34 (fingerprint), ge_thresh=14% (graph_error)
 - **Frustration** (error > threshold): erode worst incoherent crystal, accelerate growth
 - **Boredom** (low error, sustained): harden coherent nodes, strengthen edges
 - Conservation: `MAX_NODE_WEIGHT=1024`, competitive S3 steals from weakest edge
