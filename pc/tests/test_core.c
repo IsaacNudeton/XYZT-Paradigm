@@ -397,6 +397,12 @@ void run_core_tests(void) {
         Engine eng; engine_init(&eng);
         Graph *g0 = &eng.shells[0].g;
 
+        /* Disable auto-grow so only manual edges exist — prevents
+         * z-ordering interactions from auto-wired edges modifying
+         * source vals before the test edges fire. */
+        g0->auto_grow = 0;
+        eng.shells[1].g.auto_grow = 0;
+
         /* Two nodes: high identity overlap, one negated */
         int pos = engine_ingest_text(&eng, "fox_pos",
             "the brown fox runs through the forest near the winding river");
@@ -417,15 +423,19 @@ void run_core_tests(void) {
 
         /* Two edges into dst so n_incoming >= 2 (required for I_energy preservation).
          * Edge 1: pos → dst (pos as both src_a and src_b, pass-through).
-         * Edge 2: neg → dst (neg as both src_a and src_b, invert_a set). */
+         * Edge 2: neg → dst (neg as both src_a and src_b, both inverted).
+         * With src_a=src_b=same node, both invert flags must be set so the
+         * full contribution is negated: -(neg.val) + -(neg.val) = -200.
+         * Edge 1 contributes +200. Total: 0. Destructive interference. */
         int eid1 = graph_wire(g0, pos, pos, dst, 255, 0);
         int eid2 = graph_wire(g0, neg, neg, dst, 255, 0);
-        /* Set invert on the negated edge */
         g0->edges[eid2].invert_a = 1;
+        g0->edges[eid2].invert_b = 1;
         check("T24 edge2 invert_a set", 1, g0->edges[eid2].invert_a);
+        check("T24 edge2 invert_b set", 1, g0->edges[eid2].invert_b);
         check("T24 edge1 no invert", 0, g0->edges[eid1].invert_a);
 
-        /* Tick: pos contributes +100, neg contributes -100 (inverted).
+        /* Tick: pos contributes +200, neg contributes -200 (both slots inverted).
          * n_incoming = 2, so I_energy is preserved. Should cancel. */
         engine_tick(&eng);
         printf("  T24 debug: val=%d I_energy=%d n_incoming=%d\n",

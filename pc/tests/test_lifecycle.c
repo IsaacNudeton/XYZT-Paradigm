@@ -158,10 +158,14 @@ void run_lifecycle_tests(void) {
         check("cycle: all 4 children spawned", MAX_CHILDREN, eng.n_children);
 
         eng.shells[0].g.nodes[ids[0]].valence = 50;
-        /* Reinforce others every tick so frustration-driven decay can't lyse them */
+        /* Hold node 0 at low valence while reinforcing others.
+         * With directed edges + child tick fix, boredom feedback increments
+         * valence for active nodes each tick. Hold it explicitly so lysis
+         * can fire at the SUBSTRATE_INT boundary. */
         for (int i = 0; i < (int)SUBSTRATE_INT; i++) {
             for (int k = 1; k < 4; k++)
                 eng.shells[0].g.nodes[ids[k]].valence = 255;
+            eng.shells[0].g.nodes[ids[0]].valence = 50;
             engine_tick(&eng);
         }
         check("cycle: one child removed by lysis", MAX_CHILDREN - 1, eng.n_children);

@@ -583,7 +583,7 @@ int graph_learn(Graph *g) {
         int n = g->nodes[e->src_a].identity.len < g->nodes[e->src_b].identity.len
               ? g->nodes[e->src_a].identity.len : g->nodes[e->src_b].identity.len;
         if (n < 20) continue;
-        int corr = bs_corr(&g->nodes[e->src_a].identity, &g->nodes[e->src_b].identity);
+        int corr = bs_contain(&g->nodes[e->src_a].identity, &g->nodes[e->src_b].identity);
         int target = corr * 255 / 100;
         int error = target - (int)e->weight;
         int delta = error * (int)MISMATCH_TAX_NUM / (int)MISMATCH_TAX_DEN;
@@ -873,7 +873,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         int top_j[GROW_K], top_c[GROW_K], n_top = 0;
         for (int i = 0; i < g0->n_nodes; i++) {
             if (i == id0 || !g0->nodes[i].alive || g0->nodes[i].identity.len < 16) continue;
-            int corr = bs_mutual_contain(data, &g0->nodes[i].identity);
+            int corr = bs_contain(data, &g0->nodes[i].identity);
             if (corr <= thresh) continue;
             if (n_top < GROW_K) {
                 top_j[n_top] = i; top_c[n_top] = corr; n_top++;
@@ -889,15 +889,15 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         int target_val_count = 0;
         for (int k = 0; k < n_top; k++) {
             int eid1 = graph_wire(g0, id0, top_j[k], id0, (uint8_t)(top_c[k] * 255 / 100), 0);
-            int eid2 = graph_wire(g0, top_j[k], id0, top_j[k], (uint8_t)(top_c[k] * 255 / 100), 0);
+            /* No reverse wire. Reverse forms when existing node evaluates
+             * bs_contain(existing, new) in its own grow cycle. */
             edge_set_negation_invert(g0, eid1);
-            edge_set_negation_invert(g0, eid2);
             if (eid1 >= 0 && (g0->edges[eid1].invert_a || g0->edges[eid1].invert_b)) {
                 has_invert = 1;
                 target_val_sum += (int64_t)abs(g0->nodes[top_j[k]].val);
                 target_val_count++;
             }
-            g0->total_grown += 2;
+            g0->total_grown += 1;
         }
         /* Contradiction bootstrap: if this node wired with invert flags,
          * its val must be competitive with its targets' val or the inverted
@@ -936,7 +936,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
             int top_j1[GROW_K], top_c1[GROW_K], n_top1 = 0;
             for (int i = 0; i < g1->n_nodes; i++) {
                 if (i == id1 || !g1->nodes[i].alive || g1->nodes[i].identity.len < 16) continue;
-                int corr = bs_mutual_contain(data, &g1->nodes[i].identity);
+                int corr = bs_contain(data, &g1->nodes[i].identity);
                 if (corr <= g1->grow_mean) continue;
                 if (n_top1 < GROW_K) {
                     top_j1[n_top1] = i; top_c1[n_top1] = corr; n_top1++;
@@ -949,10 +949,9 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
             }
             for (int k = 0; k < n_top1; k++) {
                 int s1eid1 = graph_wire(g1, id1, top_j1[k], id1, (uint8_t)(top_c1[k] * 255 / 100), 0);
-                int s1eid2 = graph_wire(g1, top_j1[k], id1, top_j1[k], (uint8_t)(top_c1[k] * 255 / 100), 0);
+                /* No reverse wire. */
                 edge_set_negation_invert(g1, s1eid1);
-                edge_set_negation_invert(g1, s1eid2);
-                g1->total_grown += 2;
+                g1->total_grown += 1;
             }
         }
     }
@@ -1183,7 +1182,11 @@ void engine_tick(Engine *eng) {
                 Node *n = &g->nodes[i];
                 if (coord_z(n->coord) != zl) continue;
                 if (!n->alive || n->layer_zero) continue;
-                if (n->n_incoming == 0 && n->accum == 0) continue;
+                /* Nodes with children must always enter resolve so child ticks.
+                 * With directed edges, a node may have only outgoing edges. */
+                int has_child = (n->child_id >= 0 && n->child_id < MAX_CHILDREN
+                                 && eng->child_owner[n->child_id] == i);
+                if (n->n_incoming == 0 && n->accum == 0 && !has_child) continue;
 
                 /* Nesting delegation — retina reads parent's substrate */
                 if (n->child_id >= 0 && n->child_id < MAX_CHILDREN
@@ -1301,7 +1304,7 @@ void engine_tick(Engine *eng) {
                     int mn = id_pop[i] < id_pop[j] ? id_pop[i] : id_pop[j];
                     int mx = id_pop[i] > id_pop[j] ? id_pop[i] : id_pop[j];
                     if (mx > 0 && mn * 100 / mx < g->grow_mean) continue;
-                    int corr = bs_mutual_contain(&g->nodes[i].identity, &g->nodes[j].identity);
+                    int corr = bs_contain(&g->nodes[i].identity, &g->nodes[j].identity);
                     mc_sum += corr; mc_count++;
                     /* Opportunity scoring: prefer creating collision points.
                      * relay→collision is highest leverage edge. */
@@ -1328,10 +1331,9 @@ void engine_tick(Engine *eng) {
                     if (graph_find_edge(g, i, top_j[k], i) >= 0) continue;
                     /* Edge weight from raw corr (identity overlap), not opportunity score */
                     int geid1 = graph_wire(g, i, top_j[k], i, (uint8_t)(top_raw[k] * 255 / 100), 0);
-                    int geid2 = graph_wire(g, top_j[k], i, top_j[k], (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    /* No reverse wire. j→i evaluated when j is outer loop variable. */
                     edge_set_negation_invert(g, geid1);
-                    edge_set_negation_invert(g, geid2);
-                    g->total_grown += 2; total_grown += 2;
+                    g->total_grown += 1; total_grown += 1;
                 }
             }
             if (mc_count > 0) g->grow_mean = (int)(mc_sum / mc_count);
@@ -1397,7 +1399,7 @@ void engine_tick(Engine *eng) {
                     }
                 }
                 if (exists) continue;
-                int corr = bs_mutual_contain(&g0->nodes[i].identity, &g1->nodes[j].identity);
+                int corr = bs_contain(&g0->nodes[i].identity, &g1->nodes[j].identity);
                 if (corr > g0->grow_mean && eng->n_boundary_edges < eng->max_boundary_edges) {
                     Edge *be = &eng->boundary_edges[eng->n_boundary_edges++];
                     memset(be, 0, sizeof(*be));

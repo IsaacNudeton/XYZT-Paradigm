@@ -249,6 +249,178 @@ static void cmd_test(void) {
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
     if (g_fail == 0) printf("ALL PASS.\n");
+
+    /* Z-axis diagnostic: does the thermodynamic arrow exist?
+     * Uses T3-style diverse zones to create genuine asymmetry.
+     * Zone E (chimera) contains Zone A's header — contain(A,E) should be
+     * high but contain(E,A) should be low, creating unidirectional edges. */
+    {
+        /* Zone constants (from test_t3_full.c) */
+        static const uint8_t zd_header[128] = {
+            0x55, 0xAA, 0xA0, 0x01, 0x00, 0x80, 0x30, 0x20,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+            0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+            0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+            0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+            0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+            0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+            0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+            0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+            0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+            0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F,
+            0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87
+        };
+        static const uint8_t zd_sync[16] = {
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+        };
+
+        #define ZD_PER_ZONE 10
+        #define ZD_TOTAL (ZD_PER_ZONE * 5)
+        Engine eng;
+        engine_init(&eng);
+        Graph *g0 = &eng.shells[0].g;
+        uint8_t buf[512]; BitStream bs;
+        int zone_ids[ZD_TOTAL];
+        char name[16];
+        const char *zone_names[] = {"crash", "prime", "telem", "ascii", "chimera"};
+
+        /* Zone A: crashing process — shared header + opposing payloads */
+        for (int i = 0; i < ZD_PER_ZONE; i++) {
+            memcpy(buf, zd_header, 128);
+            for (int b = 128; b < 512; b++)
+                buf[b] = (uint8_t)(i < ZD_PER_ZONE/2
+                    ? (0x40 + i + ((b - 128) & 0x3F))
+                    : (0xF0 - i - ((b - 128) & 0x3F)));
+            onetwo_parse(buf, 512, &bs);
+            snprintf(name, sizeof(name), "zA_%d", i);
+            zone_ids[i] = engine_ingest(&eng, name, &bs);
+        }
+        /* Zone B: stable daemon — prime-modular patterns */
+        {
+            int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+            for (int i = 0; i < ZD_PER_ZONE; i++) {
+                int p = primes[i];
+                for (int b = 0; b < 512; b++)
+                    buf[b] = (uint8_t)((b % p) * (256 / p));
+                onetwo_parse(buf, 512, &bs);
+                snprintf(name, sizeof(name), "zB_%d", i);
+                zone_ids[ZD_PER_ZONE + i] = engine_ingest(&eng, name, &bs);
+            }
+        }
+        /* Zone C: telemetry — protocol frames with sync header */
+        for (int i = 0; i < ZD_PER_ZONE; i++) {
+            memcpy(buf, zd_sync, 16);
+            buf[16] = (uint8_t)i;
+            buf[17] = (uint8_t)(i / 8);
+            for (int b = 18; b < 504; b++)
+                buf[b] = (uint8_t)(0x40 + ((i * 7 + b * 3) % 33));
+            for (int b = 504; b < 508; b++)
+                buf[b] = (uint8_t)(buf[b - 486] ^ buf[b - 243]);
+            buf[508] = 0xFE; buf[509] = 0xED;
+            buf[510] = 0xFA; buf[511] = 0xCE;
+            onetwo_parse(buf, 512, &bs);
+            snprintf(name, sizeof(name), "zC_%d", i);
+            zone_ids[ZD_PER_ZONE*2 + i] = engine_ingest(&eng, name, &bs);
+        }
+        /* Zone D: ASCII log — text-like byte distribution */
+        for (int i = 0; i < ZD_PER_ZONE; i++) {
+            uint32_t seed = (uint32_t)(i * 31337 + 42);
+            for (int b = 0; b < 512; b++) {
+                seed = seed * 1103515245 + 12345;
+                uint8_t val = (uint8_t)(0x20 + ((seed >> 16) % 95));
+                if ((b % 7) == (int)(i % 7)) val = 0x20;
+                if ((b % 60) == 0 && b > 0) val = 0x0A;
+                buf[b] = val;
+            }
+            onetwo_parse(buf, 512, &bs);
+            snprintf(name, sizeof(name), "zD_%d", i);
+            zone_ids[ZD_PER_ZONE*3 + i] = engine_ingest(&eng, name, &bs);
+        }
+        /* Zone E: chimera — contains Zone A header + bits of B, C, D */
+        for (int i = 0; i < ZD_PER_ZONE; i++) {
+            memcpy(buf, zd_header, 128);
+            int p = 2 + (i % 20);
+            for (int b = 128; b < 256; b++)
+                buf[b] = (uint8_t)((b % p) * (256 / p));
+            memcpy(buf + 256, zd_sync, 16);
+            for (int b = 272; b < 384; b++)
+                buf[b] = (uint8_t)(0x40 + ((i * 5 + b * 3) % 33));
+            uint32_t seed = (uint32_t)(i * 31337 + 42);
+            for (int b = 384; b < 512; b++) {
+                seed = seed * 1103515245 + 12345;
+                buf[b] = (uint8_t)(0x20 + ((seed >> 16) % 95));
+                if ((b % 7) == (int)(i % 7)) buf[b] = 0x20;
+            }
+            onetwo_parse(buf, 512, &bs);
+            snprintf(name, sizeof(name), "zE_%d", i);
+            zone_ids[ZD_PER_ZONE*4 + i] = engine_ingest(&eng, name, &bs);
+        }
+
+        /* Let graph grow — need enough ticks for edges + Z computation */
+        for (int t = 0; t < (int)SUBSTRATE_INT * 10; t++) engine_tick(&eng);
+        graph_compute_z(g0);
+
+        /* max_z */
+        int max_z = 0;
+        for (int i = 0; i < g0->n_nodes; i++) {
+            int z = coord_z(g0->nodes[i].coord);
+            if (z > max_z) max_z = z;
+        }
+
+        /* bidir vs unidir edge counts */
+        int bidir_count = 0, unidir_count = 0;
+        for (int e = 0; e < g0->n_edges; e++) {
+            if (g0->edges[e].weight == 0) continue;
+            int d = g0->edges[e].dst, sa = g0->edges[e].src_a;
+            int has_reverse = 0;
+            for (int j = 0; j < g0->n_edges; j++) {
+                if (j == e || g0->edges[j].weight == 0) continue;
+                if (g0->edges[j].src_a == d && g0->edges[j].dst == sa) { has_reverse = 1; break; }
+            }
+            if (has_reverse) bidir_count++; else unidir_count++;
+        }
+
+        /* Per-zone average Z */
+        int zone_z_sum[5] = {0}, zone_z_cnt[5] = {0};
+        for (int z = 0; z < 5; z++) {
+            for (int i = 0; i < ZD_PER_ZONE; i++) {
+                int id = zone_ids[z * ZD_PER_ZONE + i];
+                if (id >= 0 && id < g0->n_nodes && g0->nodes[id].alive) {
+                    zone_z_sum[z] += coord_z(g0->nodes[id].coord);
+                    zone_z_cnt[z]++;
+                }
+            }
+        }
+
+        /* Containment asymmetry: A[0] vs E[0] */
+        int contain_ae = 0, contain_ea = 0;
+        if (zone_ids[0] >= 0 && zone_ids[0] < g0->n_nodes &&
+            zone_ids[ZD_PER_ZONE*4] >= 0 && zone_ids[ZD_PER_ZONE*4] < g0->n_nodes) {
+            contain_ae = bs_contain(&g0->nodes[zone_ids[0]].identity,
+                                    &g0->nodes[zone_ids[ZD_PER_ZONE*4]].identity);
+            contain_ea = bs_contain(&g0->nodes[zone_ids[ZD_PER_ZONE*4]].identity,
+                                    &g0->nodes[zone_ids[0]].identity);
+        }
+
+        printf("\n=== Z-AXIS DIAGNOSTIC ===\n");
+        printf("  max_z = %d\n", max_z);
+        printf("  bidir edges: %d, unidir edges: %d\n", bidir_count, unidir_count);
+        for (int z = 0; z < 5; z++) {
+            float avg = zone_z_cnt[z] > 0 ? (float)zone_z_sum[z] / zone_z_cnt[z] : 0.0f;
+            printf("  Zone %c(%s): avg_z = %.2f\n",
+                   'A' + z, zone_names[z], avg);
+        }
+        printf("  contain(A0,E0) = %d, contain(E0,A0) = %d  (delta=%d)\n",
+               contain_ae, contain_ea,
+               contain_ae > contain_ea ? contain_ae - contain_ea : contain_ea - contain_ae);
+        printf("  Z alive: %s\n", max_z > 0 ? "YES" : "NO -- directed edges not producing Z separation");
+        engine_destroy(&eng);
+    }
 }
 
 
