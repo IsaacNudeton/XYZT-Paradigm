@@ -421,6 +421,37 @@ static void cmd_test(void) {
         printf("  Z alive: %s\n", max_z > 0 ? "YES" : "NO -- directed edges not producing Z separation");
         engine_destroy(&eng);
     }
+
+    /* Child learning diagnostic */
+    {
+        Engine eng;
+        engine_init(&eng);
+        uint8_t buf[512]; BitStream bs;
+        for (int i = 0; i < 8; i++) {
+            for (int b = 0; b < 512; b++) buf[b] = (uint8_t)(i * 31 + b * 7);
+            onetwo_parse(buf, 512, &bs);
+            char name[16]; snprintf(name, sizeof(name), "cl_%d", i);
+            engine_ingest(&eng, name, &bs);
+        }
+        for (int t = 0; t < (int)SUBSTRATE_INT * 15; t++) engine_tick(&eng);
+        printf("\n=== CHILD LEARNING DIAGNOSTIC ===\n");
+        printf("  n_children = %d\n", eng.n_children);
+        for (int i = 0; i < MAX_CHILDREN; i++) {
+            if (eng.child_owner[i] < 0) continue;
+            Graph *c = &eng.child_pool[i];
+            printf("  child[%d]: owner=%d ticks=%llu learns=%llu edges=%d "
+                   "grown=%llu err_accum=%d drive=%d hb=%d\n",
+                   i, eng.child_owner[i],
+                   (unsigned long long)c->total_ticks,
+                   (unsigned long long)c->total_learns,
+                   c->n_edges, (unsigned long long)c->total_grown,
+                   c->error_accum, c->drive, c->local_heartbeat);
+        }
+        printf("  Children alive: %s\n",
+               (eng.n_children > 0 && eng.child_pool[0].total_learns > 0)
+               ? "YES" : "NO");
+        engine_destroy(&eng);
+    }
 }
 
 

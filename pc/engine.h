@@ -298,6 +298,12 @@ typedef struct {
     int grow_interval, prune_interval;
     const uint8_t *retina;    /* zero-copy view into parent's substrate cube */
     int retina_len;            /* positions visible (64 for 4^3 cube) */
+
+    /* Inner T: local clock and error state for child graphs */
+    int32_t  error_accum;       /* cumulative error signal (SPRT-style) */
+    int32_t  prev_output;       /* output value at last heartbeat */
+    int      local_heartbeat;   /* how many local heartbeats this child has lived */
+    uint8_t  drive;             /* 0=curiosity, 1=frustration, 2=boredom */
 } Graph;
 
 /* Shell — graph with identity */

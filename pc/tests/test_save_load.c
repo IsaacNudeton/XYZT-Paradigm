@@ -1,5 +1,5 @@
 /*
- * test_save_load.c — v11 Save/Load Roundtrip
+ * test_save_load.c — v12 Save/Load Roundtrip
  *
  * Verifies full engine persistence: topology, params, stats,
  * OneTwoSystem, SubstrateT, children. Loaded engine must
@@ -11,7 +11,7 @@
 #include "test.h"
 
 void run_save_load_tests(void) {
-    printf("\n=== Save/Load v11 Roundtrip ===\n");
+    printf("\n=== Save/Load v12 Roundtrip ===\n");
 
     /* ── Phase 1: Build a trained engine with known state ── */
     Engine eng_a;
@@ -104,6 +104,12 @@ void run_save_load_tests(void) {
         break;  /* spot-check one node */
     }
 
+    /* Inner T fields */
+    check("sl: error_accum", g0_a->error_accum, g0_b->error_accum);
+    check("sl: prev_output", g0_a->prev_output, g0_b->prev_output);
+    check("sl: local_heartbeat", g0_a->local_heartbeat, g0_b->local_heartbeat);
+    check("sl: drive", g0_a->drive, g0_b->drive);
+
     /* Children */
     check("sl: n_children", pre_n_children, eng_b.n_children);
     for (int i = 0; i < MAX_CHILDREN; i++) {
@@ -114,6 +120,8 @@ void run_save_load_tests(void) {
             Graph *cb = &eng_b.child_pool[i];
             check("sl: child n_nodes", ca->n_nodes, cb->n_nodes);
             check("sl: child n_edges", ca->n_edges, cb->n_edges);
+            check("sl: child error_accum", ca->error_accum, cb->error_accum);
+            check("sl: child drive", (int)ca->drive, (int)cb->drive);
         }
     }
 

@@ -706,6 +706,77 @@ static int child_tick_once(Graph *g) {
         n->n_incoming = 0;
         n->accum = 0;
     }
+
+    /* ── Hebbian: co-active retina nodes strengthen, inactive weaken ── */
+    for (int i = 0; i < g->n_edges; i++) {
+        Edge *e = &g->edges[i];
+        if (e->weight == 0) continue;
+        Node *na = &g->nodes[e->src_a];
+        Node *nb = &g->nodes[e->src_b];
+        if (!na->alive || !nb->alive) continue;
+        /* Both sources active (nonzero val) → strengthen */
+        if (na->val != 0 && nb->val != 0) {
+            if (e->weight < 254) e->weight++;
+            g->total_learns++;
+        }
+        /* One active, one silent → weaken */
+        else if ((na->val != 0) != (nb->val != 0)) {
+            if (e->weight > 1) e->weight--;
+        }
+    }
+
+    /* ── Grow: wire co-active pairs that lack edges ── */
+    if (g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
+        int out = g->n_nodes - 1;  /* output node is always last */
+        for (int i = 0; i < g->n_nodes; i++) {
+            if (!g->nodes[i].alive || g->nodes[i].val == 0) continue;
+            for (int j = i + 1; j < g->n_nodes; j++) {
+                if (!g->nodes[j].alive || g->nodes[j].val == 0) continue;
+                if (graph_find_edge(g, i, j, out) < 0) {
+                    graph_wire(g, i, j, out, 32, 0);
+                    g->total_grown++;
+                }
+            }
+        }
+    }
+
+    /* ── Inner T: local heartbeat at SUBSTRATE_INT/4 interval ── */
+    if (g->total_ticks > 0 && g->total_ticks % (SUBSTRATE_INT / 4) == 0) {
+        int out_idx = g->n_nodes - 1;
+        if (out_idx >= 0 && g->nodes[out_idx].alive) {
+            int32_t output_val = g->nodes[out_idx].val;
+            int32_t delta = output_val - g->prev_output;
+            int32_t abs_delta = delta < 0 ? -delta : delta;
+            g->prev_output = output_val;
+
+            /* SPRT-style accumulation — not single-tick threshold */
+            g->error_accum += abs_delta;
+            /* Decay: old evidence fades. Half-life ~5 heartbeats. */
+            g->error_accum = g->error_accum * 7 / 8;
+
+            /* Classify drive state */
+            int32_t frust_thresh = (int32_t)(SUBSTRATE_INT / 8);
+            int32_t bore_thresh  = (int32_t)(MISMATCH_TAX_NUM / 2);
+
+            if (g->error_accum > frust_thresh) {
+                g->drive = 1;  /* frustration — grow faster */
+                g->grow_interval = g->grow_interval * 2 / 3;
+                if (g->grow_interval < 2) g->grow_interval = 2;
+            } else if (g->error_accum < bore_thresh) {
+                g->drive = 2;  /* boredom — crystallize */
+                for (int e = 0; e < g->n_edges; e++) {
+                    if (g->edges[e].weight > 0 && g->edges[e].weight < 254)
+                        g->edges[e].weight++;
+                }
+                g->grow_interval = g->grow_interval * 3 / 2;
+                if (g->grow_interval > 50) g->grow_interval = 50;
+            } else {
+                g->drive = 0;  /* curiosity — do nothing */
+            }
+            g->local_heartbeat++;
+        }
+    }
+
     return changed;
 }
 
@@ -1946,11 +2017,12 @@ static void save_graph(FILE *f, const Graph *g) {
     fwrite(&g->total_grown, 8, 1, f);
     fwrite(&g->total_pruned, 8, 1, f);
     fwrite(&g->total_boundary_crossings, 8, 1, f);
-    int32_t params[11] = {
+    int32_t params[15] = {
         g->grow_threshold, g->prune_threshold,
         g->learn_strengthen, g->learn_weaken, g->learn_rate,
         g->auto_grow, g->auto_prune, g->auto_learn,
-        g->grow_mean, g->grow_interval, g->prune_interval
+        g->grow_mean, g->grow_interval, g->prune_interval,
+        g->error_accum, g->prev_output, g->local_heartbeat, (int32_t)g->drive
     };
     fwrite(params, sizeof(params), 1, f);
     for (int i = 0; i < g->n_nodes; i++)
@@ -1959,7 +2031,7 @@ static void save_graph(FILE *f, const Graph *g) {
         fwrite(&g->edges[i], sizeof(Edge), 1, f);
 }
 
-static int load_graph(FILE *f, Graph *g) {
+static int load_graph(FILE *f, Graph *g, int ver) {
     /* g must already have nodes/edges allocated (graph_init or shell init) */
     if (fread(&g->n_nodes, 4, 1, f) != 1) return -1;
     if (fread(&g->n_edges, 4, 1, f) != 1) return -1;
@@ -1970,15 +2042,31 @@ static int load_graph(FILE *f, Graph *g) {
     fread(&g->total_grown, 8, 1, f);
     fread(&g->total_pruned, 8, 1, f);
     fread(&g->total_boundary_crossings, 8, 1, f);
-    int32_t params[11];
-    fread(params, sizeof(params), 1, f);
-    g->grow_threshold = params[0];    g->prune_threshold = params[1];
-    g->learn_strengthen = params[2];  g->learn_weaken = params[3];
-    g->learn_rate = params[4];
-    g->auto_grow = params[5];         g->auto_prune = params[6];
-    g->auto_learn = params[7];
-    g->grow_mean = params[8];         g->grow_interval = params[9];
-    g->prune_interval = params[10];
+    if (ver >= 12) {
+        int32_t params[15];
+        fread(params, sizeof(params), 1, f);
+        g->grow_threshold = params[0];    g->prune_threshold = params[1];
+        g->learn_strengthen = params[2];  g->learn_weaken = params[3];
+        g->learn_rate = params[4];
+        g->auto_grow = params[5];         g->auto_prune = params[6];
+        g->auto_learn = params[7];
+        g->grow_mean = params[8];         g->grow_interval = params[9];
+        g->prune_interval = params[10];
+        g->error_accum = params[11];      g->prev_output = params[12];
+        g->local_heartbeat = params[13];  g->drive = (uint8_t)params[14];
+    } else {
+        int32_t params[11];
+        fread(params, sizeof(params), 1, f);
+        g->grow_threshold = params[0];    g->prune_threshold = params[1];
+        g->learn_strengthen = params[2];  g->learn_weaken = params[3];
+        g->learn_rate = params[4];
+        g->auto_grow = params[5];         g->auto_prune = params[6];
+        g->auto_learn = params[7];
+        g->grow_mean = params[8];         g->grow_interval = params[9];
+        g->prune_interval = params[10];
+        g->error_accum = 0; g->prev_output = 0;
+        g->local_heartbeat = 0; g->drive = 0;
+    }
     for (int i = 0; i < g->n_nodes; i++)
         if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) return -1;
     for (int i = 0; i < g->n_edges; i++)
@@ -1990,7 +2078,7 @@ int engine_save(const Engine *eng, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     uint32_t magic = 0x58595A54; /* XYZT */
-    uint32_t version = 11;
+    uint32_t version = 12;
     fwrite(&magic, 4, 1, f);
     fwrite(&version, 4, 1, f);
 
@@ -2139,8 +2227,8 @@ int engine_load(Engine *eng, const char *path) {
         }
         for (int i = 0; i < eng->n_boundary_edges; i++)
             fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
-    } else if (version == 11) {
-        /* v11: full persistence — engine params, OneTwoSystem, SubstrateT, children */
+    } else if (version == 11 || version == 12) {
+        /* v11/v12: full persistence — engine params, OneTwoSystem, SubstrateT, children */
         uint32_t ns, nb;
         fread(&ns, 4, 1, f);
         fread(&nb, 4, 1, f);
@@ -2170,7 +2258,7 @@ int engine_load(Engine *eng, const char *path) {
 
         /* Shells */
         for (int s = 0; s < eng->n_shells; s++) {
-            if (load_graph(f, &eng->shells[s].g) != 0) { fclose(f); return -3; }
+            if (load_graph(f, &eng->shells[s].g, (int)version) != 0) { fclose(f); return -3; }
         }
 
         /* Boundary edges */
@@ -2186,7 +2274,7 @@ int engine_load(Engine *eng, const char *path) {
             fread(&owner, 4, 1, f);
             if (slot < 0 || slot >= MAX_CHILDREN) { fclose(f); return -7; }
             graph_init(&eng->child_pool[slot]);
-            if (load_graph(f, &eng->child_pool[slot]) != 0) { fclose(f); return -8; }
+            if (load_graph(f, &eng->child_pool[slot], (int)version) != 0) { fclose(f); return -8; }
             eng->child_owner[slot] = owner;
             eng->n_children++;
             /* Reconnect parent node's child_id */
