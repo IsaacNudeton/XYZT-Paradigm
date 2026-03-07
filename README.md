@@ -14,7 +14,9 @@ This was proven in `proof/v5` — a single accumulator (`accum += v`) plus diffe
 
 ## How it learns
 
-The engine doesn't just compute — it wires itself. Raw data (files, packets, bitstreams) gets ingested as ONETWO structural fingerprints (4096-bit fixed encodings that capture repetition, opposition, nesting, and metadata). Nodes that fire together get Hebbian-strengthened edges. Nodes that survive enough boundary crossings crystallize (harden). Crystallized nodes spawn child sub-graphs that inherit a view of their parent's substrate.
+The engine doesn't just compute — it wires itself. Raw data (files, packets, bitstreams) gets ingested as ONETWO structural fingerprints (4096-bit fixed encodings that capture repetition, opposition, nesting, and metadata). Edges are **directed** — `bs_contain(A, B)` measures how much of A's structure appears in B, and the reverse is evaluated separately. A node only wires outward at ingest; the reverse edge forms when the other node runs its own grow cycle. This asymmetry creates a causal arrow (the Z-axis).
+
+Nodes that survive enough boundary crossings crystallize (harden). Crystallized nodes spawn child sub-graphs that inherit a view of their parent's substrate.
 
 A closed feedback loop drives the whole thing:
 - `graph_error` measures what percentage of nodes are incoherent (their neighbors disagree about their state)
@@ -26,16 +28,16 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 232 tests covering:
+The `pc/` engine runs 233 tests covering:
 
 - **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Cross-zone edges starve (weight 53) while intra-zone edges stay strong (123). Conservation isolates the damage without walls — through economics.
 - **Production load** (T3 Full): 200 nodes across 5 zones (conflict, stable, telemetry, ASCII, boundary chimera), 30 cycles. All zones survive. Healthy zones crystallize 40/40. The conflict zone holds 3 incoherent nodes. 7888 edges at 12% of capacity — no explosion.
-- **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.949 (5/5 true positives, 0 false positives on a 20-sentence benchmark).
+- **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.900 (5/5 true positives, 0 false positives on a 20-sentence benchmark). Score dropped from 0.949 after switching to directed containment (asymmetric denominator).
 - **Full persistence** (v11 save/load): the entire engine state — topology, adapted parameters, children, feedback history, substrate time — survives shutdown and reload. A loaded engine continues learning from its checkpoint.
 - **GPU substrate**: 4096 cubes (262K voxels) benchmarked at 9.5 billion voxel-ticks/second on an RTX 2080 Super.
 - **Formal proofs**: 10 Lean4 proofs (zero `sorry`, zero axiom) covering basic properties, duality, gain, IO, lattice structure, physics correspondence, sequential composition, substrate invariants, and topology.
 
-Known limitation: the engine isolates processes correctly but can't yet distinguish *between* them by learned topology. All zones converge to similar internal edge weights (~230-237). This is the homogenization problem — next on the list.
+Known limitations: edges are now directed (`bs_contain` replaces `bs_mutual_contain`) but the Z-axis still shows 0 — containment asymmetry exists (A→E=85, E→A=80) but the delta is too small to produce unidirectional edges at scale. The `grow_mean` threshold homogenizes the asymmetry. Inner T (local error accumulators per child) and per-zone grow thresholds are needed to make Z operational.
 
 ## Repository structure
 
@@ -46,7 +48,7 @@ proof/
   v9/        3302-line reference implementation with shells and nesting (48 tests)
   lean4/     10 formal proofs in Lean4
   spec/      XYZT.lang instruction set + assembly programs (adder, counter, FSM, SR latch)
-pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (232 tests)
+pc/          CPU + GPU engine — unified v3/v6/v9, CUDA sm_75 (233 tests)
 pico/        Autonomous firmware — RP2040, same paradigm on bare metal
 pi-zero2/    Bare-metal kernel — ARM, no OS
 shared/      Shared sense layer across devices

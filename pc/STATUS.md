@@ -1,8 +1,8 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 4, 2026
-**Tests:** 232/232 passing
-**Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
+**Date:** March 6, 2026
+**Tests:** 233/233 passing
+**Tracking:** 0.900 (contradiction detection via destructive interference, 5/5 TP, 0 FP — down from 0.949 after directed edges changed the containment denominator)
 
 ## What It Is
 
@@ -21,7 +21,8 @@ Merges three XYZT engine versions:
 - **T3 Stage 1 (process isolation):** 50 nodes, 3 zones (conflict/stable/boundary), 30 cycles continuous re-injection. Zone B recovers in 5 cycles, holds 15/15 crystallized. AC edges starved to weight 53, BB stays at 123. Conservation isolates the sick process.
 - **Bus collision test:** 15 raw packets, 3 groups, continuous re-injection. Structural differentiation via topology. Protocol-agnostic.
 - **Conservation:** `MAX_NODE_WEIGHT=1024` budget per node. Competitive S3: at capacity, active edges steal from weakest. Sense decay to zero — silence = understanding.
-- **Contradiction detection:** negation-aware edge inversion + destructive interference. Score 0.949 (recall=1.0, specificity=0.9)
+- **Directed edges:** `bs_contain` replaces `bs_mutual_contain` at all 6 grow/learn/boundary sites. Single-wire grow (reverse forms naturally in peer's grow cycle). Child tick fix ensures crystallized parents with only outgoing edges still resolve.
+- **Contradiction detection:** negation-aware edge inversion + destructive interference. Score 0.900 (recall=1.0, specificity=0.9). Down from 0.949 — asymmetric containment changes the denominator.
 - **Pure observer:** per-node invert ratio predicts contradictions. 0 FP, 5/5 TP.
 - **Pass-aware sense:** windowed feature extraction per state_buf region. Pass 4 inversion byte now visible (21 burst features in contradiction vs 15 normal)
 - **GPU substrate:** 4096 cubes (262K voxels), 9.5B voxel-ticks/sec benchmark
@@ -39,8 +40,8 @@ Merges three XYZT engine versions:
 
 | Issue | Details |
 |-------|---------|
-| **Behavioral homogenization** | T3 Full showed zone isolation works but intra-zone weights converge (AA=230, BB=235, CC=232, DD=237, EE=232). Only 5 cross-zone edges out of 7888. Engine can't distinguish input types by learned topology. |
-| **Z axis always 0** | graph_compute_z() overwrites Z with causal ordering level. All edges are bidirectional → all nodes get Z=0. Hash-chained Z is wasted. |
+| **Z axis still 0** | Directed edges are in, but containment asymmetry is too small (A→E=85, E→A=80, delta=5). 4514 bidir vs 4 unidir edges. `grow_mean` homogenizes the asymmetry. Needs inner T (local error accumulators) and per-zone grow thresholds to create real separation. |
+| **Behavioral homogenization** | T3 Full showed zone isolation works but intra-zone weights converge (AA=230, BB=235, CC=232, DD=237, EE=232). `grow_mean` is global — all zones use the same threshold. Per-zone MDL splitting criterion is the fix. |
 
 ### MEDIUM priority
 
@@ -112,8 +113,9 @@ Merges three XYZT engine versions:
 
 ## Next Steps (by impact)
 
-1. **Address homogenization** — distinct inputs should produce distinct learned structures. T3 Full showed weight convergence across all zones.
-2. **Fix Z axis** — graph_compute_z() always returns 0 (all edges bidirectional). Hash-chained Z is wasted.
-3. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
-4. **Add child Hebbian** — let children grow edges between co-firing retina nodes
-5. **Child-to-child communication** — children of different parents don't interact
+1. **Inner T** — local error accumulators per child graph (SPRT-style), local drive states. This is what makes Z operational and makes the sweep non-flat. Without it, the measurement apparatus is off.
+2. **Child Hebbian** — `child_tick_once()` propagates but doesn't learn. Children need grow/learn/prune on their retina nodes.
+3. **Per-zone grow_mean** — MDL splitting criterion instead of global average. The global threshold is what homogenizes zone topology.
+4. **Re-sweep at T3 scale** — 200 nodes, Z > 0, children with inner T. This is where the resonant frequency either shows up or doesn't.
+5. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
+6. **Child-to-child communication** — children of different parents don't interact
