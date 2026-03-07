@@ -1,7 +1,7 @@
 # XYZT Unified PC Engine — Status
 
 **Date:** March 6, 2026
-**Tests:** 233/233 passing
+**Tests:** 243/243 passing
 **Tracking:** 0.900 (contradiction detection via destructive interference, 5/5 TP, 0 FP — down from 0.949 after directed edges changed the containment denominator)
 
 ## What It Is
@@ -32,7 +32,8 @@ Merges three XYZT engine versions:
 - **Z-depth observers:** obs_and (Z=1), obs_freq (Z=3), obs_corr (Z=4), obs_xor (energy collision)
 - **Lysis:** automatic valence decay + apoptosis under contradiction
 - **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Zone A holds 3 incoherent. 7888 edges at 12% capacity. No zone collapsed.
-- **Save/load v11:** full engine persistence — children, OneTwoSystem (feedback + counters), SubstrateT, all graph params (thresholds, intervals, stats). Roundtrip tested: 149 nodes, 4 children saved and restored. v9/v10 backward compatible.
+- **Inner T (child learning):** `child_tick_once` has Hebbian (co-active strengthen, inactive weaken), edge growth (co-active pairs → output node), and local heartbeat at `SUBSTRATE_INT/4` with SPRT error accumulator. Independent drive state: frustration accelerates growth, boredom crystallizes edges. Diagnostic: 73K learns, 36 edges (from 4), 61 heartbeats, drive=1.
+- **Save/load v12:** full engine persistence — children, inner T state (error_accum, prev_output, local_heartbeat, drive), OneTwoSystem, SubstrateT, all graph params (15 params, was 11). v11/v10/v9 backward compatible.
 
 ## What's Broken / Incomplete
 
@@ -40,15 +41,15 @@ Merges three XYZT engine versions:
 
 | Issue | Details |
 |-------|---------|
-| **Z axis still 0** | Directed edges are in, but containment asymmetry is too small (A→E=85, E→A=80, delta=5). 4514 bidir vs 4 unidir edges. `grow_mean` homogenizes the asymmetry. Needs inner T (local error accumulators) and per-zone grow thresholds to create real separation. |
-| **Behavioral homogenization** | T3 Full showed zone isolation works but intra-zone weights converge (AA=230, BB=235, CC=232, DD=237, EE=232). `grow_mean` is global — all zones use the same threshold. Per-zone MDL splitting criterion is the fix. |
+| **Z axis still 0** | Directed edges + inner T are in, but containment asymmetry is too small (A→E=85, E→A=80, delta=5). 4514 bidir vs 4 unidir edges. `grow_mean` homogenizes the asymmetry. Per-zone grow thresholds needed. |
+| **Behavioral homogenization** | `grow_mean` is global — all zones use the same threshold. Per-zone MDL splitting criterion is the fix. Inner T changed weight dynamics: frustrated children attract weight toward sick zones (T3 weight-flow direction reversed). Isolation still holds. |
 
 ### MEDIUM priority
 
 | Issue | Details |
 |-------|---------|
 | **Gateway seeding** | GPU inter-cube routing (kernel_route_3d) exists but gateway lanes are never seeded with real values from engine. Cubes are isolated islands. |
-| **Child Hebbian** | child_tick_once() just propagates — no learning phase. Children can't grow edges between co-firing retina nodes. Internal topology is static. |
+| **Child pruning** | Children grow edges (4→36) but never prune. At 36 edges on 9 nodes, children saturate. Need weight-based pruning or edge capacity limit. |
 | **No child-to-child communication** | Children of different parents don't interact. No substrate-level connection between child graphs. |
 | **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. Canonical scripts: build.bat, rebuild.bat. |
 
@@ -92,9 +93,9 @@ Merges three XYZT engine versions:
 
 | File | Lines | Role |
 |------|-------|------|
-| engine.c | 2467 | CPU engine core (v11 save/load) |
-| engine.h | 464 | All types + inline helpers |
-| main.cu | 1053 | Entry point, tests, interactive CLI |
+| engine.c | 2557 | CPU engine core (v12 save/load, inner T) |
+| engine.h | 470 | All types + inline helpers |
+| main.cu | 1256 | Entry point, tests, diagnostics, interactive CLI |
 | substrate.cu | 520 | 7 CUDA kernels |
 | substrate.cuh | 167 | GPU types + host API |
 | onetwo.c | 329 | ONETWO encoder |
@@ -107,15 +108,22 @@ Merges three XYZT engine versions:
 | sense.c | 396 | Sense layer (windowed, pass-aware) |
 | sense.h | 61 | Sense API |
 | sweep_tracking.c | 966 | Parameter sweep + tracking tests |
-| tests/ | 2558 | 10 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_gpu) |
+| tests/ | 2918 | 10 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_gpu) |
 | build.bat | — | Windows build (canonical) |
 | rebuild.bat | — | Windows rebuild (canonical) |
 
 ## Next Steps (by impact)
 
-1. **Inner T** — local error accumulators per child graph (SPRT-style), local drive states. This is what makes Z operational and makes the sweep non-flat. Without it, the measurement apparatus is off.
-2. **Child Hebbian** — `child_tick_once()` propagates but doesn't learn. Children need grow/learn/prune on their retina nodes.
-3. **Per-zone grow_mean** — MDL splitting criterion instead of global average. The global threshold is what homogenizes zone topology.
-4. **Re-sweep at T3 scale** — 200 nodes, Z > 0, children with inner T. This is where the resonant frequency either shows up or doesn't.
-5. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
-6. **Child-to-child communication** — children of different parents don't interact
+1. **Per-zone grow_mean** — MDL splitting criterion instead of global average. The global threshold homogenizes zone topology and flattens containment asymmetry. This is the remaining blocker for Z emergence.
+2. **Re-sweep at T3 scale** — 200 nodes, children with inner T, per-zone thresholds. The N-sweep was flat (0.949 at every N, grow_interval pegged to 200). With inner T operational, the sweep may find a resonant frequency.
+3. **Child pruning** — children grow 4→36 edges but never prune. Need weight-based pruning or conservation to prevent saturation.
+4. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
+5. **Child-to-child communication** — children of different parents don't interact
+
+## What's Done (completed this session)
+
+- ✓ **Inner T** (1c81194) — children learn, grow, accumulate error, drive independently. 73K learns, 36 edges, 61 heartbeats.
+- ✓ **Child Hebbian** — co-active retina nodes strengthen, inactive weaken. Part of inner T.
+- ✓ **Directed edges** (2249226) — `bs_contain` at all 6 sites, single-wire grow, child tick fix.
+- ✓ **v12 save/load** — 15 graph params (inner T fields), v11 backward compatible.
+- ✓ **Z-axis diagnostic** — T3-style 5-zone diverse data, per-zone Z reporting, containment asymmetry readout.
