@@ -1368,13 +1368,27 @@ void engine_tick(Engine *eng) {
                 if (g->edges[e].weight > 0) n_in[g->edges[e].dst]++;
             for (int i = 0; i < g->n_nodes; i++) {
                 if (id_pop[i] < 0) continue;
+                /* Per-node local grow threshold (MDL-style):
+                 * Dense coherent nodes → higher threshold (already well-wired).
+                 * Sparse or incoherent nodes → lower threshold (need connections).
+                 * Base: grow_mean. Scale by local edge density. */
+                int local_thresh = g->grow_mean;
+                if (n_in[i] >= 4) {
+                    /* Dense: scale up by density ratio. 4 edges → 4/3x, 8 → 8/3x */
+                    local_thresh = g->grow_mean * (3 + n_in[i]) / 3;
+                    if (local_thresh > 95) local_thresh = 95;
+                }
+                if (g->nodes[i].coherent < 0) {
+                    /* Incoherent/frustrated: lower threshold, easier to wire */
+                    local_thresh = local_thresh * 2 / 3;
+                }
                 int top_j[GROW_K], top_c[GROW_K], top_raw[GROW_K], n_top = 0;
                 for (int j = 0; j < g->n_nodes; j++) {
                     if (i == j || id_pop[j] < 0) continue;
                     /* Popcount ratio filter: mutual_contain bounded by min/max */
                     int mn = id_pop[i] < id_pop[j] ? id_pop[i] : id_pop[j];
                     int mx = id_pop[i] > id_pop[j] ? id_pop[i] : id_pop[j];
-                    if (mx > 0 && mn * 100 / mx < g->grow_mean) continue;
+                    if (mx > 0 && mn * 100 / mx < local_thresh) continue;
                     int corr = bs_contain(&g->nodes[i].identity, &g->nodes[j].identity);
                     mc_sum += corr; mc_count++;
                     /* Opportunity scoring: prefer creating collision points.
@@ -1384,7 +1398,7 @@ void engine_tick(Engine *eng) {
                     else if (n_in[j] <= 3) opp = 2;  /* active vertex */
                     else opp = 1;                      /* saturated */
                     int eff_corr = corr * opp / 3;
-                    if (eff_corr <= g->grow_mean) continue;
+                    if (eff_corr <= local_thresh) continue;
                     if (n_top < GROW_K) {
                         top_j[n_top] = j; top_c[n_top] = eff_corr;
                         top_raw[n_top] = corr; n_top++;
