@@ -27,8 +27,8 @@ void tline_init(TLine *tl, int n_cells, double z0) {
     tl->n_cells = n_cells;
     tl->C0 = 1.0;
     tl->L_base = z0 * z0 * tl->C0;  /* Z0 = sqrt(L/C), so L = Z0^2 * C */
-    tl->R = 0.02;   /* default series loss */
-    tl->G = 0.005;  /* default shunt loss */
+    tl->R = 0.15;   /* series loss: calibrated so tline_weight ≈ 128 */
+    tl->G = 0.02;   /* shunt loss: frequency-dependent degradation */
     for (int i = 0; i < TLINE_MAX_CELLS; i++)
         tl->Lc[i] = tl->L_base;
 }
@@ -132,4 +132,37 @@ void tline_backreaction(TLine *tl, double collision_energy) {
         if (tl->Lc[tl->n_cells - 1 - d] > 50.0)
             tl->Lc[tl->n_cells - 1 - d] = 50.0;
     }
+}
+
+void tline_strengthen(TLine *tl, double rate) {
+    for (int i = 0; i < tl->n_cells; i++) {
+        tl->Lc[i] *= (1.0 - rate);
+        if (tl->Lc[i] < 0.1) tl->Lc[i] = 0.1;
+    }
+}
+
+void tline_weaken(TLine *tl, double rate) {
+    for (int i = 0; i < tl->n_cells; i++) {
+        tl->Lc[i] *= (1.0 + rate);
+        if (tl->Lc[i] > 50.0) tl->Lc[i] = 50.0;
+    }
+}
+
+void tline_init_from_weight(TLine *tl, uint8_t weight) {
+    tline_init(tl, 8, 1.0);
+    /* Scale R,G to produce the target weight.
+     * Default: gain = exp(-0.5*(R+G)*n) with Lc=C=1.
+     * Want: gain = weight/255.
+     * Scale factor k: exp(-0.5*k*(R+G)*n) = weight/255
+     *   k = -log(weight/255) / (0.5*(R+G)*n) */
+    if (weight < 1) weight = 1;
+    if (weight > 254) weight = 254;
+    double target = (double)weight / 255.0;
+    double base_alpha = 0.5 * (tl->R + tl->G) * tl->n_cells;
+    if (base_alpha < 0.001) base_alpha = 0.001;
+    double k = -log(target) / base_alpha;
+    if (k < 0.0) k = 0.0;
+    if (k > 20.0) k = 20.0;
+    tl->R *= k;
+    tl->G *= k;
 }

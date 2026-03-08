@@ -57,4 +57,14 @@ uint8_t tline_weight(const TLine *tl);
  * Call when 2+ edges deliver energy to same node simultaneously. */
 void tline_backreaction(TLine *tl, double collision_energy);
 
+/* Strengthen: decrease Lc by rate (faster propagation, stronger coupling) */
+void tline_strengthen(TLine *tl, double rate);
+
+/* Weaken: increase Lc by rate (slower propagation, weaker coupling) */
+void tline_weaken(TLine *tl, double rate);
+
+/* Initialize TLine from an old-format weight value (v12 backward compat).
+ * Tunes Lc so tline_weight() returns approximately the given weight. */
+void tline_init_from_weight(TLine *tl, uint8_t weight);
+
 #endif /* TLINE_H */

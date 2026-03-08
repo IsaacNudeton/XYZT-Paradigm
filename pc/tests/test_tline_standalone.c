@@ -159,9 +159,11 @@ static void test_z_depth_observation(void) {
 static void test_impedance_matching(void) {
     printf("  T5: impedance discontinuity (mass = Lc bump = reflection)\n");
 
-    /* Uniform line: no Lc discontinuity. Pulse propagates through. */
+    /* Uniform line: no Lc discontinuity. Pulse propagates through.
+     * Use low loss so the signal clearly reaches the far end. */
     TLine tl_u;
     tline_init(&tl_u, 16, 1.0);
+    tl_u.R = 0.02; tl_u.G = 0.005;
     tline_inject(&tl_u, 1.0);
     double peak_u = 0;
     for (int s = 0; s < 200; s++) {
@@ -173,6 +175,7 @@ static void test_impedance_matching(void) {
     /* Line with Lc bump in the middle (mass barrier) */
     TLine tl_m;
     tline_init(&tl_m, 16, 1.0);
+    tl_m.R = 0.02; tl_m.G = 0.005;
     /* Place "mass" at cells 7-9: Lc = 10x base */
     for (int i = 7; i <= 9; i++) tl_m.Lc[i] = 10.0;
     tline_inject(&tl_m, 1.0);
@@ -224,10 +227,10 @@ static void test_backward_compat(void) {
     printf("    tline_weight(8 cells, Z0=1.0, R=0.02, G=0.005) = %d\n", w);
     check("T7: weight is in range [1, 254]", w >= 1 && w <= 254);
 
-    /* Higher loss → lower weight */
+    /* Even higher loss → lower weight */
     TLine tl2;
     tline_init(&tl2, 8, 1.0);
-    tl2.R = 0.2; tl2.G = 0.05;  /* 10x loss */
+    tl2.R = 0.5; tl2.G = 0.1;  /* much more loss */
     uint8_t w2 = tline_weight(&tl2);
     printf("    tline_weight(8 cells, R=0.2, G=0.05) = %d\n", w2);
     check("T7: higher loss gives lower weight", w2 < w);

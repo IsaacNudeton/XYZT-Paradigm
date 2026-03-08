@@ -177,7 +177,7 @@ void run_t3_stage1_tests(void) {
     ingest_all(&eng, ids);
 
     /* Let the graph settle — 5 SUBSTRATE_INT cycles */
-    for (int t = 0; t < (int)SUBSTRATE_INT * 5; t++)
+    for (int t = 0; t < (int)SUBSTRATE_INT * 100; t++)
         engine_tick(&eng);
 
     /* ── Phase 2: Record baseline ── */
@@ -222,7 +222,7 @@ void run_t3_stage1_tests(void) {
         ingest_all(&eng, ids);
 
         /* Tick one SUBSTRATE_INT cycle */
-        for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+        for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++) {
             engine_tick(&eng);
             int32_t fb7 = eng.onetwo.feedback[7];
             int32_t ae = fb7 < 0 ? -fb7 : fb7;

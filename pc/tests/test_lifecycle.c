@@ -72,7 +72,7 @@ void run_lifecycle_tests(void) {
         g0->nodes[sa].val = 50; g0->nodes[sc].val = -50;
         graph_wire(g0, sa, sa, sd, 255, 0);
         graph_wire(g0, sc, sc, sd, 255, 0);
-        engine_tick(&eng);
+        for (int t = 0; t < 25; t++) engine_tick(&eng);
         check("destructive: I_energy > 0", 1, g0->nodes[sd].I_energy > 0 ? 1 : 0);
         check("destructive: val cancelled", 1, abs(g0->nodes[sd].val) < 50 ? 1 : 0);
         engine_destroy(&eng);
@@ -114,12 +114,20 @@ void run_lifecycle_tests(void) {
         { uint8_t poison[400]; memset(poison, 0xFF, 400);
           ot_sys_ingest(&eng.onetwo, poison, 400); }
 
-        for (int e = 0; e < g0->n_edges; e++)
-            g0->edges[e].weight = 0;
+        /* Crush edges to max impedance — leaves a trickle of I_energy
+         * so nodes maintain coherence flag, but too weak to drive signal. */
+        for (int e = 0; e < g0->n_edges; e++) {
+            for (int c = 0; c < g0->edges[e].tl.n_cells; c++)
+                g0->edges[e].tl.Lc[c] = 50.0;
+            g0->edges[e].weight = tline_weight(&g0->edges[e].tl);
+        }
         if (eng.n_shells >= 2) {
             Graph *g1 = &eng.shells[1].g;
-            for (int e = 0; e < g1->n_edges; e++)
-                g1->edges[e].weight = 0;
+            for (int e = 0; e < g1->n_edges; e++) {
+                for (int c = 0; c < g1->edges[e].tl.n_cells; c++)
+                    g1->edges[e].tl.Lc[c] = 50.0;
+                g1->edges[e].weight = tline_weight(&g1->edges[e].tl);
+            }
         }
 
         while (eng.total_ticks % SUBSTRATE_INT != (SUBSTRATE_INT - 1))

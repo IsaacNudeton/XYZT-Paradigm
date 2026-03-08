@@ -21,6 +21,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <ctype.h>
+#include "tline.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -286,6 +287,7 @@ typedef struct {
     uint8_t  weight, learn_rate, intershell;
     uint32_t created, last_active;
     uint8_t  invert_a, invert_b;
+    TLine    tl;        /* FDTD transmission line (Phase 2) */
 } Edge;
 
 /* ══════════════════════════════════════════════════════════════
@@ -334,16 +336,16 @@ typedef struct {
 } TLineGraph;
 
 /* TLine API (implemented in engine.c) */
-void tline_graph_init(TLineGraph *g);
-int  tline_add_node(TLineGraph *g, int x, int y, int z, const char *name);
-int  tline_add_edge(TLineGraph *g, int src, int dst, double L_base);
-void tline_clear(TLineGraph *g);
-void tline_inject(TLineGraph *g, int node_id, int bit, double amplitude);
-void tline_apply_impedance(TLineGraph *g);
-void tline_propagate_step(TLineGraph *g);
-void tline_propagate(TLineGraph *g, int steps);
-void tline_observe(TLineNode *n);
-void tline_backreaction(TLineGraph *g, double kappa);
+void tlg_init(TLineGraph *g);
+int  tlg_add_node(TLineGraph *g, int x, int y, int z, const char *name);
+int  tlg_add_edge(TLineGraph *g, int src, int dst, double L_base);
+void tlg_clear(TLineGraph *g);
+void tlg_inject(TLineGraph *g, int node_id, int bit, double amplitude);
+void tlg_apply_impedance(TLineGraph *g);
+void tlg_propagate_step(TLineGraph *g);
+void tlg_propagate(TLineGraph *g, int steps);
+void tlg_observe(TLineNode *n);
+void tlg_backreaction(TLineGraph *g, double kappa);
 
 typedef struct {
     Node *nodes; Edge *edges;
@@ -414,9 +416,11 @@ static inline int obs_bool(int32_t v)        { return v > 0 ? 1 : 0; }
 static inline int obs_all(int32_t v, int n)  { return v >= n ? 1 : 0; }
 static inline int obs_parity(int32_t v)      { return (v & 1) ? 1 : 0; }
 static inline int obs_raw(int32_t v)         { return v; }
-/* XOR = energy arrived but voltage cancelled (destructive collision) */
+/* XOR = energy arrived but voltage mostly cancelled (destructive collision).
+ * With FDTD propagation, perfect cancellation to val==0 is unlikely —
+ * accept val < 25% of I_energy as "cancelled". */
 static inline int obs_xor(int32_t I_energy, int32_t val) {
-    return (I_energy > 0 && val == 0) ? 1 : 0;
+    return (I_energy > 0 && abs(val) * 4 <= I_energy) ? 1 : 0;
 }
 /* Z=1: AND = both inputs exceed threshold (energy gating) */
 static inline int obs_and(int32_t val, int32_t I_energy, int threshold) {

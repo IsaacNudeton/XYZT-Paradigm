@@ -64,7 +64,7 @@ void run_collision_tests(void) {
         int id_a = -1;
         for (int rep = 0; rep < 5; rep++) {
             id_a = engine_ingest(&eng, "sig_a", &bs_a);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) engine_tick(&eng);
         }
 
         int32_t error_settled = eng.onetwo.feedback[7];
@@ -75,7 +75,7 @@ void run_collision_tests(void) {
         int32_t max_error = abs_settled;
         for (int rep = 0; rep < 5; rep++) {
             id_b = engine_ingest(&eng, "sig_b", &bs_b);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) {
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) {
                 engine_tick(&eng);
                 int32_t e = eng.onetwo.feedback[7];
                 int32_t ae = e < 0 ? -e : e;
@@ -124,14 +124,14 @@ void run_collision_tests(void) {
         int id1 = -1;
         for (int rep = 0; rep < 5; rep++) {
             id1 = engine_ingest(&eng, "rep_a", &bs1);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) engine_tick(&eng);
         }
 
         /* Ingest identical pattern under a different name */
         int id2 = -1;
         for (int rep = 0; rep < 5; rep++) {
             id2 = engine_ingest(&eng, "rep_a2", &bs2);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) engine_tick(&eng);
         }
 
         if (id1 >= 0 && id1 < g0->n_nodes)
@@ -168,7 +168,7 @@ void run_collision_tests(void) {
         for (int rep = 0; rep < 5; rep++) {
             engine_ingest(&eng, "stream_a", &bs_a);
             engine_ingest(&eng, "stream_i", &bs_i);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) engine_tick(&eng);
         }
 
         if (id_a >= 0 && id_a < g0->n_nodes)
@@ -199,7 +199,7 @@ void run_collision_tests(void) {
         /* Establish stable baseline with pattern A */
         for (int rep = 0; rep < 10; rep++) {
             engine_ingest(&eng, "base", &bs_a);
-            for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 40; t++) engine_tick(&eng);
         }
 
         int32_t error_baseline = eng.onetwo.feedback[7];
@@ -230,9 +230,9 @@ void run_collision_tests(void) {
 
         for (int cycle = 0; cycle < 10; cycle++) {
             engine_ingest(&eng, "base", &bs_a);
-            for (int t = 0; t < (int)SUBSTRATE_INT; t++) engine_tick(&eng);
+            for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++) engine_tick(&eng);
             engine_ingest(&eng, "contra", &bs_b);
-            for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+            for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++) {
                 engine_tick(&eng);
                 int32_t e = eng.onetwo.feedback[7];
                 int32_t ae = e < 0 ? -e : e;
@@ -328,7 +328,7 @@ void run_collision_tests(void) {
         }
 
         /* Let the graph settle — 5 SUBSTRATE_INT cycles */
-        for (int t = 0; t < (int)SUBSTRATE_INT * 5; t++) engine_tick(&eng);
+        for (int t = 0; t < (int)SUBSTRATE_INT * 100; t++) engine_tick(&eng);
 
         /* Record baseline */
         int32_t baseline_error = eng.onetwo.feedback[7];
@@ -382,7 +382,7 @@ void run_collision_tests(void) {
                 onetwo_parse(packets[i], 64, &bs);
                 engine_ingest(&eng, pnames[i], &bs);
             }
-            for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+            for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++) {
                 engine_tick(&eng);
                 int32_t e = eng.onetwo.feedback[7];
                 int32_t ae = e < 0 ? -e : e;

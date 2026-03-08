@@ -11,6 +11,7 @@
 #include "onetwo.h"
 #include "transducer.h"
 #include "sense.h"
+#include <math.h>
 
 /* ══════════════════════════════════════════════════════════════
  * ENCODERS
@@ -474,7 +475,9 @@ static void node_enforce_conservation(Graph *g, int node_id) {
         if ((int)ed->src_a == node_id || (int)ed->src_b == node_id ||
             (int)ed->dst == node_id) {
             int scaled = (int)ed->weight * (int)MAX_NODE_WEIGHT / total;
-            ed->weight = (uint8_t)(scaled < 1 ? 1 : scaled);
+            uint8_t new_w = (uint8_t)(scaled < 1 ? 1 : scaled);
+            tline_init_from_weight(&ed->tl, new_w);
+            ed->weight = tline_weight(&ed->tl);
         }
     }
 }
@@ -488,9 +491,13 @@ int graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter) {
     e->src_a = (uint16_t)a;
     e->src_b = (uint16_t)b;
     e->dst = (uint16_t)d;
-    e->weight = inter ? apply_fresnel(w, g->nodes[a].Z, g->nodes[d].Z) : w;
     e->intershell = inter ? 1 : 0;
     e->learn_rate = (uint8_t)g->learn_rate;
+    tline_init_from_weight(&e->tl, w);
+    if (inter) {
+        tline_set_impedance(&e->tl, g->nodes[a].Z, g->nodes[d].Z);
+    }
+    e->weight = tline_weight(&e->tl);
 
     /* Enforce energy conservation on all participating nodes */
     node_enforce_conservation(g, a);
@@ -580,22 +587,23 @@ int graph_learn(Graph *g) {
     int changed = 0;
     for (int i = 0; i < g->n_edges; i++) {
         Edge *e = &g->edges[i];
+        if (e->tl.n_cells == 0) continue;
         int n = g->nodes[e->src_a].identity.len < g->nodes[e->src_b].identity.len
               ? g->nodes[e->src_a].identity.len : g->nodes[e->src_b].identity.len;
         if (n < 20) continue;
         int corr = bs_contain(&g->nodes[e->src_a].identity, &g->nodes[e->src_b].identity);
-        int target = corr * 255 / 100;
-        int error = target - (int)e->weight;
-        int delta = error * (int)MISMATCH_TAX_NUM / (int)MISMATCH_TAX_DEN;
-        if (delta > 0 && e->weight < 255) {
-            int nw = (int)e->weight + delta;
-            e->weight = nw > 255 ? 255 : (uint8_t)nw;
-            changed++;
-        } else if (delta < 0 && e->weight > 1) {
-            int nw = (int)e->weight + delta;
-            e->weight = nw < 1 ? 1 : (uint8_t)nw;
-            changed++;
+        /* Target Lc: high correlation → low Lc (fast). Low correlation → high Lc (slow). */
+        double target_lc = e->tl.L_base * (200.0 - (double)corr) / 100.0;
+        if (target_lc < 0.1) target_lc = 0.1;
+        if (target_lc > 10.0) target_lc = 10.0;
+        /* Move Lc toward target at mismatch tax rate */
+        double rate = (double)MISMATCH_TAX_NUM / (double)MISMATCH_TAX_DEN;
+        for (int c = 0; c < e->tl.n_cells; c++) {
+            double error = target_lc - e->tl.Lc[c];
+            e->tl.Lc[c] += error * rate;
         }
+        e->weight = tline_weight(&e->tl);
+        changed++;
     }
     for (int i = 0; i < g->n_nodes; i++)
         if (g->nodes[i].alive) crystal_update(&g->nodes[i], g->edges, g->n_edges, i);
@@ -656,18 +664,24 @@ static int child_tick_once(Graph *g) {
     g->total_ticks++;
     for (int i = 0; i < g->n_edges; i++) {
         Edge *e = &g->edges[i];
-        if (e->weight == 0) continue;
+        if (e->tl.n_cells == 0 || e->weight == 0) continue;
         Node *na = &g->nodes[e->src_a], *nb = &g->nodes[e->src_b], *nd = &g->nodes[e->dst];
         if (!na->alive || na->layer_zero || na->identity.len < 1) continue;
         if (!nb->alive || nb->layer_zero || nb->identity.len < 1) continue;
         int32_t va = e->invert_a ? -na->val : na->val;
         int32_t vb = e->invert_b ? -nb->val : nb->val;
-        int64_t sum64 = (int64_t)va + (int64_t)vb;
-        if (sum64 > INT32_MAX/2) sum64 = INT32_MAX/2;
-        if (sum64 < INT32_MIN/2) sum64 = INT32_MIN/2;
-        nd->accum += sum64;
-        nd->I_energy += abs(va) + abs(vb);
-        nd->n_incoming++;
+        double input = (double)(va + vb) / (double)VAL_CEILING;
+        tline_inject(&e->tl, input);
+        tline_step(&e->tl);
+        double output = tline_read(&e->tl);
+        if (fabs(output) > 1e-10) {
+            int64_t out_scaled = (int64_t)(output * VAL_CEILING);
+            if (out_scaled > INT32_MAX/2) out_scaled = INT32_MAX/2;
+            if (out_scaled < INT32_MIN/2) out_scaled = INT32_MIN/2;
+            nd->accum += out_scaled;
+            nd->I_energy += (int32_t)(fabs(output) * VAL_CEILING);
+            nd->n_incoming++;
+        }
     }
     for (int i = 0; i < g->n_nodes; i++) {
         Node *n = &g->nodes[i];
@@ -716,12 +730,14 @@ static int child_tick_once(Graph *g) {
         if (!na->alive || !nb->alive) continue;
         /* Both sources active (nonzero val) → strengthen */
         if (na->val != 0 && nb->val != 0) {
-            if (e->weight < 254) e->weight++;
+            tline_strengthen(&e->tl, 0.01);
+            e->weight = tline_weight(&e->tl);
             g->total_learns++;
         }
         /* One active, one silent → weaken */
         else if ((na->val != 0) != (nb->val != 0)) {
-            if (e->weight > 1) e->weight--;
+            tline_weaken(&e->tl, 0.01);
+            e->weight = tline_weight(&e->tl);
         }
     }
 
@@ -765,8 +781,10 @@ static int child_tick_once(Graph *g) {
             } else if (g->error_accum < bore_thresh) {
                 g->drive = 2;  /* boredom — crystallize */
                 for (int e = 0; e < g->n_edges; e++) {
-                    if (g->edges[e].weight > 0 && g->edges[e].weight < 254)
-                        g->edges[e].weight++;
+                    if (g->edges[e].weight > 0) {
+                        tline_strengthen(&g->edges[e].tl, 0.01);
+                        g->edges[e].weight = tline_weight(&g->edges[e].tl);
+                    }
                 }
                 g->grow_interval = g->grow_interval * 3 / 2;
                 if (g->grow_interval > 50) g->grow_interval = 50;
@@ -993,8 +1011,10 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
             be->src_a = (uint16_t)id0;
             be->src_b = (uint16_t)id0;
             be->dst = (uint16_t)id1;
-            be->weight = apply_fresnel(255, g0->nodes[id0].Z, g1->nodes[id1].Z);
             be->intershell = 1;
+            tline_init_from_weight(&be->tl, 255);
+            tline_set_impedance(&be->tl, g0->nodes[id0].Z, g1->nodes[id1].Z);
+            be->weight = tline_weight(&be->tl);
         }
         g0->nodes[id0].layer_zero = 0;
         g1->nodes[id1].layer_zero = 0;
@@ -1131,35 +1151,25 @@ void engine_tick(Engine *eng) {
     if (eng->total_ticks % SUBSTRATE_INT == 0)
         nest_check(eng);
 
-    /* ── S2: Boundary propagation ────────────── */
+    /* ── S2: Boundary propagation (FDTD) ────── */
     for (int i = 0; i < eng->n_boundary_edges; i++) {
         Edge *be = &eng->boundary_edges[i];
-        if (be->weight == 0) continue;
+        if (be->tl.n_cells == 0 || be->weight == 0) continue;
         Graph *g0 = &eng->shells[0].g, *g1 = &eng->shells[1].g;
         if (be->src_a >= (uint16_t)g0->n_nodes || be->dst >= (uint16_t)g1->n_nodes) continue;
         Node *src = &g0->nodes[be->src_a], *dst = &g1->nodes[be->dst];
         if (src->layer_zero || src->identity.len < 1) continue;
 
-        int raw_prob = be->weight;
-        double K = dst->Z / (src->Z > 0 ? src->Z : 1.0);
-        int prob = (int)(raw_prob * fresnel_T(K) + 0.5);
-        int rprob = raw_prob - prob;  /* T + R = raw (energy conservation) */
-        { uint32_t h = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)(i * 2246822519u);
-          h ^= h >> 16; h *= 0x45d9f3b; h ^= h >> 16;
-        if (prob >= 255 || (h & 0xFF) < (unsigned)prob) {
-            dst->accum += src->val;
+        double input = (double)src->val / (double)VAL_CEILING;
+        tline_inject(&be->tl, input);
+        tline_step(&be->tl);
+        double output = tline_read(&be->tl);
+        if (fabs(output) > 1e-10) {
+            dst->accum += (int64_t)(output * VAL_CEILING);
             dst->n_incoming++;
             dst->layer_zero = 0;
             dst->last_active = (uint32_t)T_now(&eng->T);
             g0->total_boundary_crossings++;
-        } else {
-            uint32_t hr = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)((i + 0x9e3779b9) * 2246822519u);
-            hr ^= hr >> 16; hr *= 0x45d9f3b; hr ^= hr >> 16;
-            if (rprob > 0 && (hr & 0xFF) < (unsigned)rprob) {
-                src->accum += dst->val;
-                src->n_incoming++;
-            }
-        }
         }
     }
 
@@ -1177,74 +1187,33 @@ void engine_tick(Engine *eng) {
             }
 
         for (int zl = 0; zl <= max_z; zl++) {
-            /* Propagate */
+            /* Propagate: FDTD through transmission line edges */
             for (int i = 0; i < g->n_edges; i++) {
                 Edge *e = &g->edges[i];
-                if (e->weight == 0) continue;
+                if (e->tl.n_cells == 0 || e->weight == 0) continue;
                 Node *na = &g->nodes[e->src_a], *nb = &g->nodes[e->src_b], *nd = &g->nodes[e->dst];
                 if (coord_z(nd->coord) != zl) continue;
                 if (na->layer_zero || nb->layer_zero) continue;
                 if (na->identity.len < 1 || nb->identity.len < 1) continue;
 
-                int raw_prob = e->weight;
-                int prob = raw_prob;
-                if (e->intershell) {
-                    double K = nd->Z / (na->Z > 0 ? na->Z : 1.0);
-                    prob = (int)(raw_prob * fresnel_T(K) + 0.5);
-                }
-                int rprob = raw_prob - prob;  /* T + R = raw (energy conservation) */
-                { uint32_t h = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)(i * 2246822519u);
-                  h ^= h >> 16; h *= 0x45d9f3b; h ^= h >> 16;
-                if (prob >= 255 || (h & 0xFF) < (unsigned)prob) {
-                    int32_t va = e->invert_a ? -na->val : na->val;
-                    int32_t vb = e->invert_b ? -nb->val : nb->val;
-                    int64_t sum64 = (int64_t)va + (int64_t)vb;
-                    if (sum64 > INT32_MAX/2) sum64 = INT32_MAX/2;
-                    if (sum64 < INT32_MIN/2) sum64 = INT32_MIN/2;
-                    nd->accum += sum64;
-                    nd->I_energy += abs(va) + abs(vb); /* total incoming energy */
+                /* Inject source values into TLine cell 0 */
+                int32_t va = e->invert_a ? -na->val : na->val;
+                int32_t vb = e->invert_b ? -nb->val : nb->val;
+                double input = (double)(va + vb) / (double)VAL_CEILING;
+                tline_inject(&e->tl, input);
+
+                /* Step FDTD (one step per tick — real-time propagation) */
+                tline_step(&e->tl);
+
+                /* Read output from far end */
+                double output = tline_read(&e->tl);
+                if (fabs(output) > 1e-10) {
+                    int64_t out_scaled = (int64_t)(output * VAL_CEILING);
+                    if (out_scaled > INT32_MAX/2) out_scaled = INT32_MAX/2;
+                    if (out_scaled < INT32_MIN/2) out_scaled = INT32_MIN/2;
+                    nd->accum += out_scaled;
+                    nd->I_energy += (int32_t)(fabs(output) * VAL_CEILING);
                     nd->n_incoming++;
-                    /* Competitive reinforcement: strengthen this edge,
-                     * but if the dst node is at weight capacity, steal
-                     * from its weakest incoming edge instead. */
-                    if (e->weight < 255) {
-                        int dst_id = (int)e->dst;
-                        int dst_total = 0;
-                        for (int ei = 0; ei < g->n_edges; ei++) {
-                            Edge *te = &g->edges[ei];
-                            if (te->weight == 0) continue;
-                            if ((int)te->src_a == dst_id || (int)te->src_b == dst_id ||
-                                (int)te->dst == dst_id)
-                                dst_total += te->weight;
-                        }
-                        if (dst_total < (int)MAX_NODE_WEIGHT) {
-                            e->weight++;
-                        } else {
-                            /* At capacity: find weakest edge on dst, steal from it */
-                            int weakest = -1; uint8_t wmin = 255;
-                            for (int ei = 0; ei < g->n_edges; ei++) {
-                                if (ei == i) continue; /* don't steal from self */
-                                Edge *te = &g->edges[ei];
-                                if (te->weight == 0) continue;
-                                if ((int)te->src_a == dst_id || (int)te->src_b == dst_id ||
-                                    (int)te->dst == dst_id) {
-                                    if (te->weight < wmin) { wmin = te->weight; weakest = ei; }
-                                }
-                            }
-                            if (weakest >= 0 && g->edges[weakest].weight > 1) {
-                                g->edges[weakest].weight--;
-                                e->weight++;
-                            }
-                        }
-                    }
-                } else {
-                    uint32_t hr = (uint32_t)(eng->total_ticks * 2654435761u) ^ (uint32_t)((i + 0x9e3779b9) * 2246822519u);
-                    hr ^= hr >> 16; hr *= 0x45d9f3b; hr ^= hr >> 16;
-                    if (rprob > 0 && (hr & 0xFF) < (unsigned)rprob) {
-                        na->accum += nd->val;
-                        na->n_incoming++;
-                    }
-                }
                 }
             }
 
@@ -1447,8 +1416,8 @@ void engine_tick(Engine *eng) {
                 if (n->valence > 0) n->valence--;
                 for (int e = 0; e < g->n_edges; e++)
                     if (g->edges[e].src_a == i || g->edges[e].src_b == i) {
-                        int nw = (int)g->edges[e].weight - 1;
-                        g->edges[e].weight = nw < 1 ? 1 : (uint8_t)nw;
+                        tline_weaken(&g->edges[e].tl, 0.01);
+                        g->edges[e].weight = tline_weight(&g->edges[e].tl);
                     }
             }
         }
@@ -1489,8 +1458,10 @@ void engine_tick(Engine *eng) {
                     Edge *be = &eng->boundary_edges[eng->n_boundary_edges++];
                     memset(be, 0, sizeof(*be));
                     be->src_a = (uint16_t)i; be->src_b = (uint16_t)i; be->dst = (uint16_t)j;
-                    be->weight = apply_fresnel((uint8_t)(corr * 255 / 100), g0->nodes[i].Z, g1->nodes[j].Z);
                     be->intershell = 1;
+                    tline_init_from_weight(&be->tl, (uint8_t)(corr * 255 / 100));
+                    tline_set_impedance(&be->tl, g0->nodes[i].Z, g1->nodes[j].Z);
+                    be->weight = tline_weight(&be->tl);
                 }
             }
         }
@@ -1754,11 +1725,11 @@ void engine_tick(Engine *eng) {
                 Edge *be = &eng->boundary_edges[b];
                 if (be->weight == 0) continue;
                 if (agree) {
-                    int nw = (int)be->weight + 1;
-                    be->weight = nw > 255 ? 255 : (uint8_t)nw;
+                    tline_strengthen(&be->tl, 0.01);
+                    be->weight = tline_weight(&be->tl);
                 } else {
-                    int nw = (int)be->weight - 1;
-                    be->weight = nw < 1 ? 1 : (uint8_t)nw;
+                    tline_weaken(&be->tl, 0.01);
+                    be->weight = tline_weight(&be->tl);
                 }
             }
         }
@@ -1855,8 +1826,10 @@ void engine_tick(Engine *eng) {
                         score += 20000;                            /* incoherent crystal */
                     if (score > max_score) { max_score = score; target = i; }
                 }
-                /* Erode the target's crystallization at mismatch tax rate */
-                if (target >= 0 && g0->nodes[target].valence > 0) {
+                /* Erode the target's crystallization at mismatch tax rate.
+                 * Only incoherent nodes: a coherent node far from mean is learning. */
+                if (target >= 0 && g0->nodes[target].coherent < 0
+                    && g0->nodes[target].valence > 0) {
                     int erosion = (int)g0->nodes[target].valence
                                 * (int)MISMATCH_TAX_NUM / (int)MISMATCH_TAX_DEN;
                     if (erosion < 1) erosion = 1;
@@ -1888,8 +1861,10 @@ void engine_tick(Engine *eng) {
                     if (n->valence < 255) n->valence++;
                     /* Strengthen incoming edges: they carried signal that worked */
                     for (int e = 0; e < g0->n_edges; e++) {
-                        if (g0->edges[e].dst == (uint16_t)i && g0->edges[e].weight < 254)
-                            g0->edges[e].weight++;
+                        if (g0->edges[e].dst == (uint16_t)i && g0->edges[e].weight > 0) {
+                            tline_strengthen(&g0->edges[e].tl, 0.01);
+                            g0->edges[e].weight = tline_weight(&g0->edges[e].tl);
+                        }
                     }
                 }
             }
@@ -2027,9 +2002,9 @@ void engine_status(const Engine *eng) {
  * This is Step 1 of the incremental integration.
  * ══════════════════════════════════════════════════════════════ */
 
-void tline_graph_init(TLineGraph *g) { memset(g, 0, sizeof(TLineGraph)); }
+void tlg_init(TLineGraph *g) { memset(g, 0, sizeof(TLineGraph)); }
 
-int tline_add_node(TLineGraph *g, int x, int y, int z, const char *name) {
+int tlg_add_node(TLineGraph *g, int x, int y, int z, const char *name) {
     int id = g->n_nodes++;
     TLineNode *n = &g->nodes[id];
     memset(n, 0, sizeof(TLineNode));
@@ -2039,7 +2014,7 @@ int tline_add_node(TLineGraph *g, int x, int y, int z, const char *name) {
     return id;
 }
 
-int tline_add_edge(TLineGraph *g, int src, int dst, double L_base) {
+int  tlg_add_edge(TLineGraph *g, int src, int dst, double L_base) {
     int id = g->n_edges++;
     TLineEdge *e = &g->edges[id];
     memset(e, 0, sizeof(TLineEdge));
@@ -2061,7 +2036,7 @@ int tline_add_edge(TLineGraph *g, int src, int dst, double L_base) {
     return id;
 }
 
-void tline_clear(TLineGraph *g) {
+void tlg_clear(TLineGraph *g) {
     for (int ei = 0; ei < g->n_edges; ei++) {
         TLineEdge *e = &g->edges[ei];
         memset(e->V, 0, sizeof(double) * TLINE_EC);
@@ -2074,7 +2049,7 @@ void tline_clear(TLineGraph *g) {
     }
 }
 
-void tline_inject(TLineGraph *g, int nid, int bit, double amp) {
+void tlg_inject(TLineGraph *g, int nid, int bit, double amp) {
     TLineNode *n = &g->nodes[nid];
     double a = bit ? +amp : -amp;
     double sigma = 2.0;
@@ -2097,7 +2072,7 @@ void tline_inject(TLineGraph *g, int nid, int bit, double amp) {
  * High impedance = mass on the transmission line = voltage amplification.
  * T = 2*Z_high / (Z_low + Z_high) > 1 when Z_high > Z_low.
  * Same physics as Schwarzschild in universe_tline_v2.c. */
-void tline_apply_impedance(TLineGraph *g) {
+void tlg_apply_impedance(TLineGraph *g) {
     /* Reset all cells to base */
     for (int ei = 0; ei < g->n_edges; ei++) {
         TLineEdge *e = &g->edges[ei];
@@ -2125,7 +2100,7 @@ void tline_apply_impedance(TLineGraph *g) {
 
 /* Single FDTD step: telegrapher's equations on every edge,
  * then junction coupling at every non-input node. */
-void tline_propagate_step(TLineGraph *g) {
+void tlg_propagate_step(TLineGraph *g) {
     /* FDTD on each edge with per-cell L */
     for (int ei = 0; ei < g->n_edges; ei++) {
         TLineEdge *e = &g->edges[ei];
@@ -2188,18 +2163,18 @@ void tline_propagate_step(TLineGraph *g) {
     }
 }
 
-void tline_propagate(TLineGraph *g, int steps) {
-    tline_apply_impedance(g);
-    for (int s = 0; s < steps; s++) tline_propagate_step(g);
+void tlg_propagate(TLineGraph *g, int steps) {
+    tlg_apply_impedance(g);
+    for (int s = 0; s < steps; s++) tlg_propagate_step(g);
 }
 
-void tline_observe(TLineNode *n) {
+void tlg_observe(TLineNode *n) {
     n->V_peak = n->V_peak;  /* already tracked in propagate_step */
 }
 
 /* Back-reaction: collision-only. Impedance grows only when 2+ edges
  * deliver energy simultaneously. Single signal = relay = no mass. */
-void tline_backreaction(TLineGraph *g, double kappa) {
+void tlg_backreaction(TLineGraph *g, double kappa) {
     for (int ni = 0; ni < g->n_nodes; ni++) {
         TLineNode *n = &g->nodes[ni];
         if (n->is_input) continue;

@@ -49,7 +49,7 @@ void run_observer_tests(void) {
         g0->nodes[sc].val = -80;
         graph_wire(g0, sa, sa, sd, 255, 0);
         graph_wire(g0, sc, sc, sd, 255, 0);
-        engine_tick(&eng);
+        for (int t = 0; t < 25; t++) engine_tick(&eng);
         Node *d = &g0->nodes[sd];
 
         int z0 = obs_bool(d->val);

@@ -45,10 +45,10 @@ static void run_2input_tt(TLineGraph *tg, int a, int b, int c,
     memset(z2, 0, sizeof(TT));
 
     for (int i = 0; i < 4; i++) {
-        tline_clear(tg);
-        tline_inject(tg, a, ins[i][0], 1.0);
-        tline_inject(tg, b, ins[i][1], 1.0);
-        tline_propagate(tg, TLINE_STEPS);
+        tlg_clear(tg);
+        tlg_inject(tg, a, ins[i][0], 1.0);
+        tlg_inject(tg, b, ins[i][1], 1.0);
+        tlg_propagate(tg, TLINE_STEPS);
 
         TLineNode *nc = &tg->nodes[c];
         /* Z=0: magnitude detection (XNOR) */
@@ -70,14 +70,14 @@ static void run_2input_tt(TLineGraph *tg, int a, int b, int c,
 static void test_basic_collision(void) {
     printf("  -- tline: basic collision (XNOR/AND/XOR emerge) --\n");
 
-    TLineGraph tg; tline_graph_init(&tg);
-    int a = tline_add_node(&tg, 0, 0, 0, "A");
-    int b = tline_add_node(&tg, 4, 0, 0, "B");
-    int c = tline_add_node(&tg, 2, 0, 0, "C");
+    TLineGraph tg; tlg_init(&tg);
+    int a = tlg_add_node(&tg, 0, 0, 0, "A");
+    int b = tlg_add_node(&tg, 4, 0, 0, "B");
+    int c = tlg_add_node(&tg, 2, 0, 0, "C");
     tg.nodes[a].is_input = 1;
     tg.nodes[b].is_input = 1;
-    tline_add_edge(&tg, a, c, 1.0);
-    tline_add_edge(&tg, b, c, 1.0);
+    tlg_add_edge(&tg, a, c, 1.0);
+    tlg_add_edge(&tg, b, c, 1.0);
 
     TT z0, z1, z2;
     run_2input_tt(&tg, a, b, c, &z0, &z1, &z2);
@@ -99,14 +99,14 @@ static void test_impedance_sweep(void) {
     int all_xnor = 1;
 
     for (int ii = 0; ii < n_imps; ii++) {
-        TLineGraph tg; tline_graph_init(&tg);
-        int a = tline_add_node(&tg, 0, 0, 0, "A");
-        int b = tline_add_node(&tg, 4, 0, 0, "B");
-        int c = tline_add_node(&tg, 2, 0, 0, "C");
+        TLineGraph tg; tlg_init(&tg);
+        int a = tlg_add_node(&tg, 0, 0, 0, "A");
+        int b = tlg_add_node(&tg, 4, 0, 0, "B");
+        int c = tlg_add_node(&tg, 2, 0, 0, "C");
         tg.nodes[a].is_input = 1;
         tg.nodes[b].is_input = 1;
-        tline_add_edge(&tg, a, c, imps[ii]);
-        tline_add_edge(&tg, b, c, imps[ii]);
+        tlg_add_edge(&tg, a, c, imps[ii]);
+        tlg_add_edge(&tg, b, c, imps[ii]);
 
         TT z0, z1, z2;
         run_2input_tt(&tg, a, b, c, &z0, &z1, &z2);
@@ -134,28 +134,28 @@ static void test_composability(void) {
     double best_imp = 1.0;
 
     for (int di = 0; di < nd; di++) {
-        TLineGraph tg; tline_graph_init(&tg);
-        int a  = tline_add_node(&tg, 0, 0, 0, "A");
-        int b  = tline_add_node(&tg, 6, 0, 0, "B");
-        int c1 = tline_add_node(&tg, 3, 0, 1, "C1");
-        int d  = tline_add_node(&tg, 3, 6, 0, "D");
-        int c2 = tline_add_node(&tg, 3, 3, 2, "C2");
+        TLineGraph tg; tlg_init(&tg);
+        int a  = tlg_add_node(&tg, 0, 0, 0, "A");
+        int b  = tlg_add_node(&tg, 6, 0, 0, "B");
+        int c1 = tlg_add_node(&tg, 3, 0, 1, "C1");
+        int d  = tlg_add_node(&tg, 3, 6, 0, "D");
+        int c2 = tlg_add_node(&tg, 3, 3, 2, "C2");
         tg.nodes[a].is_input = 1;
         tg.nodes[b].is_input = 1;
         tg.nodes[d].is_input = 1;
-        tline_add_edge(&tg, a, c1, 1.0);
-        tline_add_edge(&tg, b, c1, 1.0);
-        tline_add_edge(&tg, c1, c2, 1.0);
-        tline_add_edge(&tg, d, c2, d_imps[di]);
+        tlg_add_edge(&tg, a, c1, 1.0);
+        tlg_add_edge(&tg, b, c1, 1.0);
+        tlg_add_edge(&tg, c1, c2, 1.0);
+        tlg_add_edge(&tg, d, c2, d_imps[di]);
 
         double vpk[8];
         for (int combo = 0; combo < 8; combo++) {
             int ia = (combo >> 2) & 1, ib = (combo >> 1) & 1, id = combo & 1;
-            tline_clear(&tg);
-            tline_inject(&tg, a, ia, 1.0);
-            tline_inject(&tg, b, ib, 1.0);
-            tline_inject(&tg, d, id, 1.0);
-            tline_propagate(&tg, TLINE_STEPS * 2);
+            tlg_clear(&tg);
+            tlg_inject(&tg, a, ia, 1.0);
+            tlg_inject(&tg, b, ib, 1.0);
+            tlg_inject(&tg, d, id, 1.0);
+            tlg_propagate(&tg, TLINE_STEPS * 2);
             vpk[combo] = tg.nodes[c2].V_peak;
         }
         double d0min = 99, d0max = -99, d1min = 99, d1max = -99;
@@ -169,28 +169,28 @@ static void test_composability(void) {
     }
 
     /* Run the best impedance and check MAJ(A,B,D) */
-    TLineGraph tg; tline_graph_init(&tg);
-    int a  = tline_add_node(&tg, 0, 0, 0, "A");
-    int b  = tline_add_node(&tg, 6, 0, 0, "B");
-    int c1 = tline_add_node(&tg, 3, 0, 1, "C1");
-    int d  = tline_add_node(&tg, 3, 6, 0, "D");
-    int c2 = tline_add_node(&tg, 3, 3, 2, "C2");
+    TLineGraph tg; tlg_init(&tg);
+    int a  = tlg_add_node(&tg, 0, 0, 0, "A");
+    int b  = tlg_add_node(&tg, 6, 0, 0, "B");
+    int c1 = tlg_add_node(&tg, 3, 0, 1, "C1");
+    int d  = tlg_add_node(&tg, 3, 6, 0, "D");
+    int c2 = tlg_add_node(&tg, 3, 3, 2, "C2");
     tg.nodes[a].is_input = 1;
     tg.nodes[b].is_input = 1;
     tg.nodes[d].is_input = 1;
-    tline_add_edge(&tg, a, c1, 1.0);
-    tline_add_edge(&tg, b, c1, 1.0);
-    tline_add_edge(&tg, c1, c2, 1.0);
-    tline_add_edge(&tg, d, c2, best_imp);
+    tlg_add_edge(&tg, a, c1, 1.0);
+    tlg_add_edge(&tg, b, c1, 1.0);
+    tlg_add_edge(&tg, c1, c2, 1.0);
+    tlg_add_edge(&tg, d, c2, best_imp);
 
     int maj_match = 0;
     for (int combo = 0; combo < 8; combo++) {
         int ia = (combo >> 2) & 1, ib = (combo >> 1) & 1, id = combo & 1;
-        tline_clear(&tg);
-        tline_inject(&tg, a, ia, 1.0);
-        tline_inject(&tg, b, ib, 1.0);
-        tline_inject(&tg, d, id, 1.0);
-        tline_propagate(&tg, TLINE_STEPS * 2);
+        tlg_clear(&tg);
+        tlg_inject(&tg, a, ia, 1.0);
+        tlg_inject(&tg, b, ib, 1.0);
+        tlg_inject(&tg, d, id, 1.0);
+        tlg_propagate(&tg, TLINE_STEPS * 2);
 
         int c2_z1 = (tg.nodes[c2].V_peak > MAG_THRESH) ? 1 : 0;
         int maj = (ia & ib) | (ia & id) | (ib & id);
@@ -206,24 +206,24 @@ static void test_composability(void) {
 static void test_backreaction(void) {
     printf("  -- tline: back-reaction (collision-only mass) --\n");
 
-    TLineGraph tg; tline_graph_init(&tg);
-    int a = tline_add_node(&tg, 0, 0, 0, "A");
-    int b = tline_add_node(&tg, 4, 0, 0, "B");
-    int c = tline_add_node(&tg, 2, 0, 0, "C");
+    TLineGraph tg; tlg_init(&tg);
+    int a = tlg_add_node(&tg, 0, 0, 0, "A");
+    int b = tlg_add_node(&tg, 4, 0, 0, "B");
+    int c = tlg_add_node(&tg, 2, 0, 0, "C");
     tg.nodes[a].is_input = 1;
     tg.nodes[b].is_input = 1;
-    tline_add_edge(&tg, a, c, 1.0);
-    tline_add_edge(&tg, b, c, 1.0);
+    tlg_add_edge(&tg, a, c, 1.0);
+    tlg_add_edge(&tg, b, c, 1.0);
 
     double imp_before = tg.nodes[c].impedance;
 
     /* Run 10 rounds of collision + back-reaction */
     for (int r = 0; r < 10; r++) {
-        tline_clear(&tg);
-        tline_inject(&tg, a, 1, 1.0);
-        tline_inject(&tg, b, 1, 1.0);
-        tline_propagate(&tg, TLINE_STEPS);
-        tline_backreaction(&tg, 0.002);
+        tlg_clear(&tg);
+        tlg_inject(&tg, a, 1, 1.0);
+        tlg_inject(&tg, b, 1, 1.0);
+        tlg_propagate(&tg, TLINE_STEPS);
+        tlg_backreaction(&tg, 0.002);
     }
 
     double imp_after = tg.nodes[c].impedance;
@@ -244,30 +244,30 @@ static void test_propagation_delay(void) {
     printf("  -- tline: propagation delay (Z = depth in cells) --\n");
 
     /* Short edge: 2 nodes close */
-    TLineGraph tg1; tline_graph_init(&tg1);
-    int a1 = tline_add_node(&tg1, 0, 0, 0, "A");
-    int c1 = tline_add_node(&tg1, 1, 0, 0, "C");  /* dist=1, cells=1*4+12=16 */
+    TLineGraph tg1; tlg_init(&tg1);
+    int a1 = tlg_add_node(&tg1, 0, 0, 0, "A");
+    int c1 = tlg_add_node(&tg1, 1, 0, 0, "C");  /* dist=1, cells=1*4+12=16 */
     tg1.nodes[a1].is_input = 1;
-    tline_add_edge(&tg1, a1, c1, 1.0);
+    tlg_add_edge(&tg1, a1, c1, 1.0);
 
     /* Long edge: nodes far apart (but capped at TLINE_EC) */
-    TLineGraph tg2; tline_graph_init(&tg2);
-    int a2 = tline_add_node(&tg2, 0, 0, 0, "A");
-    int c2 = tline_add_node(&tg2, 0, 0, 1, "C");  /* dist=1 same cells */
+    TLineGraph tg2; tlg_init(&tg2);
+    int a2 = tlg_add_node(&tg2, 0, 0, 0, "A");
+    int c2 = tlg_add_node(&tg2, 0, 0, 1, "C");  /* dist=1 same cells */
     tg2.nodes[a2].is_input = 1;
-    tline_add_edge(&tg2, a2, c2, 1.0);
+    tlg_add_edge(&tg2, a2, c2, 1.0);
 
     /* Use higher impedance on edge 2 to slow propagation */
     for (int i = 0; i < tg2.edges[0].n_cells; i++)
         tg2.edges[0].Lc[i] = 4.0;  /* 2x slower (v = 1/sqrt(LC)) */
 
-    tline_inject(&tg1, a1, 1, 1.0);
-    tline_inject(&tg2, a2, 1, 1.0);
+    tlg_inject(&tg1, a1, 1, 1.0);
+    tlg_inject(&tg2, a2, 1, 1.0);
 
     int arrival1 = -1, arrival2 = -1;
     for (int s = 0; s < TLINE_STEPS; s++) {
-        tline_propagate_step(&tg1);
-        tline_propagate_step(&tg2);
+        tlg_propagate_step(&tg1);
+        tlg_propagate_step(&tg2);
         if (arrival1 < 0 && fabs(tg1.nodes[c1].V) > 0.05) arrival1 = s;
         if (arrival2 < 0 && fabs(tg2.nodes[c2].V) > 0.05) arrival2 = s;
     }

@@ -240,7 +240,7 @@ void run_stress_tests(void) {
         for (int i = 0; i < 100; i++) {
             engine_ingest_text(&eng, "stable_node",
                 "identical content repeated many times to test convergence");
-            engine_tick(&eng);
+            for (int t = 0; t < 20; t++) engine_tick(&eng);
         }
         Graph *g0 = &eng.shells[0].g;
         int idx = graph_find(g0, "stable_node");
