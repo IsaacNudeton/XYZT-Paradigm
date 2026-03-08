@@ -1,8 +1,8 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 6, 2026
-**Tests:** 243/243 passing
-**Tracking:** 0.900 (contradiction detection via destructive interference, 5/5 TP, 0 FP — down from 0.949 after directed edges changed the containment denominator)
+**Date:** March 7, 2026
+**Tests:** 252/252 passing
+**Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP — recovered from 0.900 by per-node grow threshold)
 
 ## What It Is
 
@@ -34,6 +34,8 @@ Merges three XYZT engine versions:
 - **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Zone A holds 3 incoherent. 7888 edges at 12% capacity. No zone collapsed.
 - **Inner T (child learning):** `child_tick_once` has Hebbian (co-active strengthen, inactive weaken), edge growth (co-active pairs → output node), and local heartbeat at `SUBSTRATE_INT/4` with SPRT error accumulator. Independent drive state: frustration accelerates growth, boredom crystallizes edges. Diagnostic: 73K learns, 36 edges (from 4), 61 heartbeats, drive=1.
 - **Save/load v12:** full engine persistence — children, inner T state (error_accum, prev_output, local_heartbeat, drive), OneTwoSystem, SubstrateT, all graph params (15 params, was 11). v11/v10/v9 backward compatible.
+- **Per-node grow threshold (MDL-style):** dense nodes (n_in≥4) demand higher correlation. Incoherent nodes get 2/3 threshold. Replaced flat global `grow_mean`. Recovered tracking from 0.900 to 0.949.
+- **Transmission line edges (TLineEdge):** Self-contained FDTD edge system alongside existing Edge. Per-cell V[], I[], Lc[] with telegrapher's equations. 9 tests: XNOR/AND/XOR from wave collision, MAJORITY(8/8) from impedance cascade, back-reaction collision-only, propagation delay scales with L, Schwarzschild τ/t exact. Ported from xyzt_unified.c + universe_tline_v2.c.
 
 ## What's Broken / Incomplete
 
@@ -41,8 +43,8 @@ Merges three XYZT engine versions:
 
 | Issue | Details |
 |-------|---------|
-| **Z axis still 0** | Directed edges + inner T are in, but containment asymmetry is too small (A→E=85, E→A=80, delta=5). 4514 bidir vs 4 unidir edges. `grow_mean` homogenizes the asymmetry. Per-zone grow thresholds needed. |
-| **Behavioral homogenization** | `grow_mean` is global — all zones use the same threshold. Per-zone MDL splitting criterion is the fix. Inner T changed weight dynamics: frustrated children attract weight toward sick zones (T3 weight-flow direction reversed). Isolation still holds. |
+| **Z axis still 0** | Fingerprint asymmetry path is dead (delta stuck at 5, symmetric encoding). Z will come from transmission line edges: propagation depth in cells = Z. TLineEdge proven standalone, needs integration into engine tick cycle. |
+| **TLine integration** | TLineEdge is parallel infrastructure — not yet wired into engine. Replace `accum += val * weight / 255` with FDTD propagation. Touches S3 (propagate), S5 (grow), Hebbian, save/load, child_tick_once. Biggest structural change since v9. |
 
 ### MEDIUM priority
 
@@ -93,9 +95,9 @@ Merges three XYZT engine versions:
 
 | File | Lines | Role |
 |------|-------|------|
-| engine.c | 2557 | CPU engine core (v12 save/load, inner T) |
-| engine.h | 470 | All types + inline helpers |
-| main.cu | 1256 | Entry point, tests, diagnostics, interactive CLI |
+| engine.c | 2772 | CPU engine core (v12 save/load, inner T, TLine FDTD) |
+| engine.h | 527 | All types + inline helpers + TLineEdge/TLineGraph |
+| main.cu | 1258 | Entry point, tests, diagnostics, interactive CLI |
 | substrate.cu | 520 | 7 CUDA kernels |
 | substrate.cuh | 167 | GPU types + host API |
 | onetwo.c | 329 | ONETWO encoder |
@@ -108,22 +110,25 @@ Merges three XYZT engine versions:
 | sense.c | 396 | Sense layer (windowed, pass-aware) |
 | sense.h | 61 | Sense API |
 | sweep_tracking.c | 966 | Parameter sweep + tracking tests |
-| tests/ | 2918 | 10 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_gpu) |
+| tests/ | 3117 | 11 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_tline, test_gpu) |
 | build.bat | — | Windows build (canonical) |
 | rebuild.bat | — | Windows rebuild (canonical) |
 
 ## Next Steps (by impact)
 
-1. **Per-zone grow_mean** — MDL splitting criterion instead of global average. The global threshold homogenizes zone topology and flattens containment asymmetry. This is the remaining blocker for Z emergence.
-2. **Re-sweep at T3 scale** — 200 nodes, children with inner T, per-zone thresholds. The N-sweep was flat (0.949 at every N, grow_interval pegged to 200). With inner T operational, the sweep may find a resonant frequency.
+1. **TLine integration** — Wire TLineEdge into engine's tick cycle. Replace `accum += val * weight / 255` with FDTD propagation. Start with child edges (smallest blast radius), then main graph. Z emerges as propagation depth.
+2. **Re-sweep with TLine** — N-sweep was flat (0.900 at every N). With transmission line edges, different N changes how many FDTD steps elapse between samples — the heartbeat rate becomes a tuning parameter for filter bandwidth.
 3. **Child pruning** — children grow 4→36 edges but never prune. Need weight-based pruning or conservation to prevent saturation.
 4. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume
 5. **Child-to-child communication** — children of different parents don't interact
 
-## What's Done (completed this session)
+## What's Done (completed work)
 
+- ✓ **Transmission line edges** (2b177c9) — TLineEdge with FDTD, 9 new tests, gates emerge from wave physics. Proven standalone alongside existing Edge.
+- ✓ **Per-node grow threshold** (f978520) — MDL-style local threshold. Dense nodes demand higher correlation. Tracking recovered 0.900→0.949.
 - ✓ **Inner T** (1c81194) — children learn, grow, accumulate error, drive independently. 73K learns, 36 edges, 61 heartbeats.
-- ✓ **Child Hebbian** — co-active retina nodes strengthen, inactive weaken. Part of inner T.
 - ✓ **Directed edges** (2249226) — `bs_contain` at all 6 sites, single-wire grow, child tick fix.
 - ✓ **v12 save/load** — 15 graph params (inner T fields), v11 backward compatible.
-- ✓ **Z-axis diagnostic** — T3-style 5-zone diverse data, per-zone Z reporting, containment asymmetry readout.
+- ✓ **Z-axis diagnostic** — fingerprint asymmetry path ruled out (delta=5, encoding is symmetric). TLine is the path forward.
+- ✗ **Directional popcount filter** — tested, no effect (delta stayed at 5). Reverted. Confirmed bottleneck is encoding, not filter.
+- ✗ **Hebbian stability hack** — proposed then abandoned. Transmission line edges provide the same filtering through physics (lossy propagation) instead of software.

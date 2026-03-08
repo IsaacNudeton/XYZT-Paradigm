@@ -28,17 +28,18 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 243 tests covering:
+The `pc/` engine runs 252 tests covering:
 
 - **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Cross-zone edges starve (weight 53) while intra-zone edges stay strong (123). Conservation isolates the damage without walls — through economics.
 - **Production load** (T3 Full): 200 nodes across 5 zones (conflict, stable, telemetry, ASCII, boundary chimera), 30 cycles. All zones survive. Healthy zones crystallize 40/40. The conflict zone holds 3 incoherent nodes. 7888 edges at 12% of capacity — no explosion.
 - **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.900 (5/5 true positives, 0 false positives on a 20-sentence benchmark). Score dropped from 0.949 after switching to directed containment (asymmetric denominator).
 - **Inner T** (child learning): children run Hebbian learning, edge growth, and SPRT-style error accumulation with independent drive states. In diagnostic: 73K learns, edges grown from 4→36, 61 heartbeats, frustration-driven growth acceleration. Children are alive.
 - **Full persistence** (v12 save/load): the entire engine state — topology, adapted parameters, children, inner T state, feedback history, substrate time — survives shutdown and reload. v11 backward compatible.
+- **Transmission line edges** (TLineEdge): parallel FDTD edge system with per-cell V[], I[], Lc[] arrays and telegrapher's equations. Proven standalone: XNOR/AND/XOR emerge from wave collision, MAJORITY gate composable via impedance matching (8/8), back-reaction grows impedance at collision nodes only, Schwarzschild time dilation exact at machine precision. Z = propagation depth in cells. Filtering = lossy propagation. Same physics as universe_tline_v2.c.
 - **GPU substrate**: 4096 cubes (262K voxels) benchmarked at 9.5 billion voxel-ticks/second on an RTX 2080 Super.
 - **Formal proofs**: 10 Lean4 proofs (zero `sorry`, zero axiom) covering basic properties, duality, gain, IO, lattice structure, physics correspondence, sequential composition, substrate invariants, and topology.
 
-Known limitations: directed edges and inner T are both operational, but the Z-axis still shows 0 — containment asymmetry exists (A→E=85, E→A=80) but the global `grow_mean` threshold homogenizes it. Per-zone grow thresholds (MDL splitting) are needed to let zones develop distinct topology. Inner T also changes weight dynamics: frustrated children amplify parent output, attracting weight toward sick zones instead of away — the T3 weight-flow direction reversed but isolation still holds.
+Known limitations: TLineEdge is proven but not yet wired into the engine's tick cycle — the existing Edge system still handles all propagation. The integration (replacing `accum += val * weight / 255` with FDTD wave propagation) is the next major step. Inner T children are alive but disconnected from the parent's measurement. Directed edges create containment asymmetry (A→E=85, E→A=80) but it's too small for Z emergence through the old edge system — the transmission line approach will produce Z naturally through propagation depth.
 
 ## Repository structure
 
