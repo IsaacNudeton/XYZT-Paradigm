@@ -288,6 +288,63 @@ typedef struct {
     uint8_t  invert_a, invert_b;
 } Edge;
 
+/* ══════════════════════════════════════════════════════════════
+ * TRANSMISSION LINE EDGE — edges with per-cell FDTD propagation
+ *
+ * From xyzt_unified.c (February 2026, proven standalone).
+ * Edge is a 1D transmission line: V[i], I[i], Lc[i] per cell.
+ * Telegrapher's equations: dI/dt = -(1/L)·dV/dx
+ *                          dV/dt = -(1/C)·dI/dx
+ * Node impedance modifies boundary Lc cells (mass curves space).
+ * Z = how many cells deep. Filtering = lossy propagation.
+ * ══════════════════════════════════════════════════════════════ */
+#define TLINE_EC      16     /* cells per edge (start small, HANDOFF says 8-16) */
+#define TLINE_C0      1.0    /* capacitance per cell (uniform) */
+#define TLINE_DT      0.45   /* FDTD timestep (Courant stable for L>=0.5) */
+#define TLINE_DAMP    0.001  /* resistive loss per cell */
+#define TLINE_IMP_DEPTH 4    /* how many boundary cells node impedance affects */
+#define TLINE_MAX_NODES 64
+#define TLINE_MAX_EDGES 256
+
+typedef struct {
+    int src, dst, n_cells;
+    double V[TLINE_EC], I[TLINE_EC];
+    double Lc[TLINE_EC];       /* per-cell inductance — THE key field */
+    double L_base;              /* base inductance (from construction) */
+    double Z0_base;             /* sqrt(L_base/C0) */
+} TLineEdge;
+
+typedef struct {
+    int x, y, z;
+    char name[32];
+    double V, V_peak;
+    double energy, I_energy, total_energy;
+    double impedance;           /* grows via back-reaction at collisions */
+    int is_input;
+    int n_edges;
+    int edge_ids[TLINE_MAX_EDGES];
+    int edge_dirs[TLINE_MAX_EDGES]; /* -1 = node is src, +1 = node is dst */
+} TLineNode;
+
+typedef struct {
+    TLineNode nodes[TLINE_MAX_NODES];
+    int n_nodes;
+    TLineEdge edges[TLINE_MAX_EDGES];
+    int n_edges;
+} TLineGraph;
+
+/* TLine API (implemented in engine.c) */
+void tline_graph_init(TLineGraph *g);
+int  tline_add_node(TLineGraph *g, int x, int y, int z, const char *name);
+int  tline_add_edge(TLineGraph *g, int src, int dst, double L_base);
+void tline_clear(TLineGraph *g);
+void tline_inject(TLineGraph *g, int node_id, int bit, double amplitude);
+void tline_apply_impedance(TLineGraph *g);
+void tline_propagate_step(TLineGraph *g);
+void tline_propagate(TLineGraph *g, int steps);
+void tline_observe(TLineNode *n);
+void tline_backreaction(TLineGraph *g, double kappa);
+
 typedef struct {
     Node *nodes; Edge *edges;
     int n_nodes, n_edges;

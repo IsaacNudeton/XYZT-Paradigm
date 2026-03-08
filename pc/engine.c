@@ -2020,6 +2020,207 @@ void engine_status(const Engine *eng) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+ * TRANSMISSION LINE EDGES — FDTD propagation on graph edges
+ *
+ * Ported from xyzt_unified.c (February 2026, proven standalone).
+ * Self-contained: operates on TLineGraph, does not touch Engine.
+ * This is Step 1 of the incremental integration.
+ * ══════════════════════════════════════════════════════════════ */
+
+void tline_graph_init(TLineGraph *g) { memset(g, 0, sizeof(TLineGraph)); }
+
+int tline_add_node(TLineGraph *g, int x, int y, int z, const char *name) {
+    int id = g->n_nodes++;
+    TLineNode *n = &g->nodes[id];
+    memset(n, 0, sizeof(TLineNode));
+    n->x = x; n->y = y; n->z = z;
+    n->impedance = 1.0;
+    strncpy(n->name, name, 31);
+    return id;
+}
+
+int tline_add_edge(TLineGraph *g, int src, int dst, double L_base) {
+    int id = g->n_edges++;
+    TLineEdge *e = &g->edges[id];
+    memset(e, 0, sizeof(TLineEdge));
+    e->src = src; e->dst = dst;
+    TLineNode *ns = &g->nodes[src], *nd = &g->nodes[dst];
+    int dist = abs(ns->x - nd->x) + abs(ns->y - nd->y) + abs(ns->z - nd->z);
+    e->n_cells = dist * 4 + 12;
+    if (e->n_cells > TLINE_EC) e->n_cells = TLINE_EC;
+    e->L_base = L_base;
+    e->Z0_base = sqrt(L_base / TLINE_C0);
+    for (int i = 0; i < TLINE_EC; i++) e->Lc[i] = L_base;
+
+    ns->edge_ids[ns->n_edges] = id;
+    ns->edge_dirs[ns->n_edges] = -1;  /* src side */
+    ns->n_edges++;
+    nd->edge_ids[nd->n_edges] = id;
+    nd->edge_dirs[nd->n_edges] = +1;  /* dst side */
+    nd->n_edges++;
+    return id;
+}
+
+void tline_clear(TLineGraph *g) {
+    for (int ei = 0; ei < g->n_edges; ei++) {
+        TLineEdge *e = &g->edges[ei];
+        memset(e->V, 0, sizeof(double) * TLINE_EC);
+        memset(e->I, 0, sizeof(double) * TLINE_EC);
+    }
+    for (int ni = 0; ni < g->n_nodes; ni++) {
+        TLineNode *n = &g->nodes[ni];
+        n->V = 0; n->V_peak = 0;
+        n->energy = 0; n->I_energy = 0; n->total_energy = 0;
+    }
+}
+
+void tline_inject(TLineGraph *g, int nid, int bit, double amp) {
+    TLineNode *n = &g->nodes[nid];
+    double a = bit ? +amp : -amp;
+    double sigma = 2.0;
+    for (int ei = 0; ei < n->n_edges; ei++) {
+        TLineEdge *e = &g->edges[n->edge_ids[ei]];
+        int dir = n->edge_dirs[ei];
+        int center = (dir < 0) ? 3 : e->n_cells - 4;
+        for (int i = 0; i < e->n_cells; i++) {
+            double d = (double)(i - center);
+            double env = exp(-d * d / (2 * sigma * sigma));
+            e->V[i] += a * env;
+            double Z_local = sqrt(e->Lc[i] / TLINE_C0);
+            double I_sign = (dir < 0) ? +1.0 : -1.0;
+            e->I[i] += (a * env / Z_local) * I_sign;
+        }
+    }
+}
+
+/* Node impedance → edge boundary L bumps.
+ * High impedance = mass on the transmission line = voltage amplification.
+ * T = 2*Z_high / (Z_low + Z_high) > 1 when Z_high > Z_low.
+ * Same physics as Schwarzschild in universe_tline_v2.c. */
+void tline_apply_impedance(TLineGraph *g) {
+    /* Reset all cells to base */
+    for (int ei = 0; ei < g->n_edges; ei++) {
+        TLineEdge *e = &g->edges[ei];
+        for (int i = 0; i < e->n_cells; i++) e->Lc[i] = e->L_base;
+    }
+    /* Apply node impedance as boundary bumps */
+    for (int ni = 0; ni < g->n_nodes; ni++) {
+        TLineNode *n = &g->nodes[ni];
+        if (n->impedance <= 1.0001) continue;
+        for (int ei = 0; ei < n->n_edges; ei++) {
+            TLineEdge *e = &g->edges[n->edge_ids[ei]];
+            int dir = n->edge_dirs[ei];
+            int nc = e->n_cells;
+            for (int d = 0; d < TLINE_IMP_DEPTH && d < nc; d++) {
+                double scale = n->impedance * exp(-(double)d * 0.7);
+                if (scale < 1.0) scale = 1.0;
+                if (dir < 0)
+                    e->Lc[d] = e->L_base * scale;
+                else
+                    e->Lc[nc - 1 - d] = e->L_base * scale;
+            }
+        }
+    }
+}
+
+/* Single FDTD step: telegrapher's equations on every edge,
+ * then junction coupling at every non-input node. */
+void tline_propagate_step(TLineGraph *g) {
+    /* FDTD on each edge with per-cell L */
+    for (int ei = 0; ei < g->n_edges; ei++) {
+        TLineEdge *e = &g->edges[ei];
+        int nc = e->n_cells;
+        /* Update I (staggered: I[i] sits between V[i] and V[i+1]) */
+        for (int i = 0; i < nc - 1; i++) {
+            double dV = e->V[i + 1] - e->V[i];
+            e->I[i] -= (TLINE_DT / e->Lc[i]) * dV
+                      + (TLINE_DAMP * TLINE_DT / e->Lc[i]) * e->I[i];
+        }
+        /* Update V (interior cells only) */
+        for (int i = 1; i < nc - 1; i++) {
+            double dI = e->I[i] - e->I[i - 1];
+            e->V[i] -= (TLINE_DT / TLINE_C0) * dI;
+        }
+    }
+
+    /* Node junction coupling: impedance-weighted average of arriving signals */
+    for (int ni = 0; ni < g->n_nodes; ni++) {
+        TLineNode *n = &g->nodes[ni];
+        if (n->n_edges == 0 || n->is_input) continue;
+
+        double sum_VZ = 0, sum_1Z = 0;
+        for (int ei = 0; ei < n->n_edges; ei++) {
+            TLineEdge *e = &g->edges[n->edge_ids[ei]];
+            int dir = n->edge_dirs[ei];
+            int cell = (dir > 0) ? e->n_cells - 2 : 1;
+            double V_end = e->V[cell];
+            double Z_local = sqrt(e->Lc[cell] / TLINE_C0);
+            sum_VZ += V_end / Z_local;
+            sum_1Z += 1.0 / Z_local;
+        }
+        /* Node as impedance stub in the junction */
+        double node_contrib = n->V / (n->impedance + 0.001);
+        sum_VZ += node_contrib;
+        sum_1Z += 1.0 / (n->impedance + 0.001);
+
+        if (sum_1Z > 1e-12) n->V = sum_VZ / sum_1Z;
+        if (fabs(n->V) > fabs(n->V_peak)) n->V_peak = n->V;
+        n->energy += 0.5 * n->V * n->V;
+
+        /* Track I energy */
+        double Isum = 0;
+        for (int ei = 0; ei < n->n_edges; ei++) {
+            TLineEdge *e = &g->edges[n->edge_ids[ei]];
+            int dir = n->edge_dirs[ei];
+            int cell = (dir > 0) ? e->n_cells - 2 : 1;
+            Isum += e->I[cell] * e->I[cell];
+        }
+        n->I_energy += 0.5 * Isum;
+        n->total_energy = n->energy + n->I_energy;
+
+        /* Scatter node voltage to boundary cells */
+        for (int ei = 0; ei < n->n_edges; ei++) {
+            TLineEdge *e = &g->edges[n->edge_ids[ei]];
+            int dir = n->edge_dirs[ei];
+            if (dir > 0) e->V[e->n_cells - 1] = n->V;
+            else e->V[0] = n->V;
+        }
+    }
+}
+
+void tline_propagate(TLineGraph *g, int steps) {
+    tline_apply_impedance(g);
+    for (int s = 0; s < steps; s++) tline_propagate_step(g);
+}
+
+void tline_observe(TLineNode *n) {
+    n->V_peak = n->V_peak;  /* already tracked in propagate_step */
+}
+
+/* Back-reaction: collision-only. Impedance grows only when 2+ edges
+ * deliver energy simultaneously. Single signal = relay = no mass. */
+void tline_backreaction(TLineGraph *g, double kappa) {
+    for (int ni = 0; ni < g->n_nodes; ni++) {
+        TLineNode *n = &g->nodes[ni];
+        if (n->is_input) continue;
+        int active_edges = 0;
+        for (int ei = 0; ei < n->n_edges; ei++) {
+            TLineEdge *e = &g->edges[n->edge_ids[ei]];
+            int dir = n->edge_dirs[ei];
+            int cell = (dir > 0) ? e->n_cells - 2 : 1;
+            double edge_energy = 0.5 * e->V[cell] * e->V[cell]
+                               + 0.5 * e->I[cell] * e->I[cell];
+            if (edge_energy > 0.01) active_edges++;
+        }
+        if (active_edges >= 2)
+            n->impedance += kappa * n->total_energy;
+        if (n->impedance < 1.0) n->impedance = 1.0;
+        if (n->impedance > 50.0) n->impedance = 50.0;
+        n->energy *= 0.5; n->I_energy *= 0.5; n->total_energy *= 0.5;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
  * SAVE / LOAD (binary format, v9/v10/v11)
  * ══════════════════════════════════════════════════════════════ */
 
