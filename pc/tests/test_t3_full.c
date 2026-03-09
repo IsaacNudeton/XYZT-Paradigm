@@ -422,6 +422,62 @@ void run_t3_full_tests(void) {
     check("t3full: cleaving active (edges severed)", 1,
           (eng.total_cleaved > 0) ? 1 : 0);
 
+    /* Child graph diagnostics: edge count and max path depth (Z) */
+    {
+        printf("\n  --- Child Graph Structure ---\n");
+        for (int s = 0; s < eng.n_shells; s++) {
+            Graph *g = &eng.shells[s].g;
+            for (int i = 0; i < g->n_nodes; i++) {
+                Node *n = &g->nodes[i];
+                if (n->child_id < 0 || n->child_id >= MAX_CHILDREN) continue;
+                Graph *child = &eng.child_pool[(int)n->child_id];
+                if (child->n_nodes == 0) continue;
+
+                /* Count live edges */
+                int live_edges = 0;
+                for (int e = 0; e < child->n_edges; e++)
+                    if (child->edges[e].weight > 0 && child->edges[e].tl.n_cells > 0)
+                        live_edges++;
+
+                /* BFS max depth from any retina node to output (last node) */
+                int output = child->n_nodes - 1;
+                int max_depth = 0;
+                for (int start = 0; start < output; start++) {
+                    int depth[MAX_NODES];
+                    memset(depth, -1, sizeof(int) * child->n_nodes);
+                    depth[start] = 0;
+                    int bfs_changed = 1;
+                    while (bfs_changed) {
+                        bfs_changed = 0;
+                        for (int e = 0; e < child->n_edges; e++) {
+                            Edge *ed = &child->edges[e];
+                            if (ed->weight == 0 || ed->tl.n_cells == 0) continue;
+                            int src = ed->src_a;
+                            int dst = ed->dst;
+                            if (src < child->n_nodes && dst < child->n_nodes) {
+                                if (depth[src] >= 0 && (depth[dst] < 0 || depth[dst] > depth[src] + 1)) {
+                                    depth[dst] = depth[src] + 1;
+                                    bfs_changed = 1;
+                                }
+                            }
+                        }
+                    }
+                    if (depth[output] > max_depth) max_depth = depth[output];
+                }
+
+                /* Find zone for this node */
+                int zone = -1;
+                for (int z = 0; z < 200; z++)
+                    if (ids[z] == i) { zone = z / 40; break; }
+                const char *znames[] = {"A","B","C","D","E","?"};
+                const char *zn_ch = (zone >= 0 && zone < 5) ? znames[zone] : znames[5];
+
+                printf("  Child[%d] (zone %s, node %d): %d/%d edges live, max_depth=%d\n",
+                       n->child_id, zn_ch, i, live_edges, child->n_edges, max_depth);
+            }
+        }
+    }
+
     /* CHECK 7: No zone collapsed */
     check("t3full: no zone collapsed", 1,
           (alive[0] > 0 && alive[1] > 0 && alive[2] > 0 &&

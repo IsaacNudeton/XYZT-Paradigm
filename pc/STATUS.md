@@ -37,6 +37,7 @@ Merges three XYZT engine versions:
 - **Save/load v13:** full engine persistence — children, inner T state, OneTwoSystem, SubstrateT, all graph params (15 params), per-node plasticity. v12/v11/v10/v9 backward compatible.
 - **Per-node plasticity (temperature gradient):** `float plasticity` on every Node (0.5..2.0). Frustration heats incoherent nodes (+0.01/tick), boredom cools coherent nodes (-0.005/tick). Scales graph_learn Lc rate, S7 decay, boredom strengthen. Zone A (conflict) Lc_var=0.065 vs Zone B (stable) Lc_var=0.005 — 14x differentiation. Hot nodes resolve incoherence faster.
 - **Structural cleaving:** Phase transition at PLASTICITY_MAX — node that stays incoherent long enough severs its worst incoming edge (highest Lc). Heat consumed to break bond, plasticity resets to 1.0. 587 edges cleaved in T3 Full. S6 prune compacts away severed edges; counter tracks total.
+- **Fractal thermodynamics:** Child graphs run the same heat/cleave/cool physics as parent. Frustration heats child nodes, cleaving severs worst edge (with survival floor: won't sever last incoming edge), boredom cools and strengthens scaled by plasticity. Currently children are too stable (drive=2, err_accum=0, 36/36 edges) — mechanism planted, awaiting conflict injection.
 - **Per-node grow threshold (MDL-style):** dense nodes (n_in≥4) demand higher correlation. Incoherent nodes get 2/3 threshold. Replaced flat global `grow_mean`. Recovered tracking from 0.900 to 0.949.
 - **Transmission line edges (shift-register):** TLine embedded in every Edge. Shift-register delay line with per-cell loss and exponential smoothing (TLINE_ALPHA=0.5). Replaces FDTD (unstable on short 4-8 cell edges due to Mur boundary ringing). All 3 propagation sites (S2 boundary, S3 per-shell, child_tick_once) use tline inject/step/read. graph_learn drives Lc from bs_contain correlation. 15 standalone tests + 252 engine tests all pass.
 
@@ -55,7 +56,7 @@ Merges three XYZT engine versions:
 | Issue | Details |
 |-------|---------|
 | **Gateway seeding** | GPU inter-cube routing (kernel_route_3d) exists but gateway lanes are never seeded with real values from engine. Cubes are isolated islands. |
-| **Child pruning** | Children grow edges (4→36) but never prune. At 36 edges on 9 nodes, children saturate. Need weight-based pruning or edge capacity limit. |
+| ~~Child pruning~~ | Done. Fractal thermodynamics: child frustration cleaves worst edge (survival floor: keeps last incoming). Currently children are stable (drive=2), so mechanism dormant. |
 | **No child-to-child communication** | Children of different parents don't interact. No substrate-level connection between child graphs. |
 | **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. Canonical scripts: build.bat, rebuild.bat. |
 
@@ -127,7 +128,8 @@ Merges three XYZT engine versions:
 
 ## What's Done (completed work)
 
-- ✓ **Structural cleaving** — Phase transition at PLASTICITY_MAX severs worst edge. 253/253+15/15 all pass. 587 cleaves in T3 Full.
+- ✓ **Fractal thermodynamics** — Child graphs run heat/cleave/cool. 253/253+15/15 all pass. Children stable (36/36 edges, drive=2) — mechanism planted.
+- ✓ **Structural cleaving** — Phase transition at PLASTICITY_MAX severs worst edge. 587 cleaves in T3 Full.
 - ✓ **Per-node plasticity** — Temperature gradient: frustration heats, boredom cools. Zone A Lc variance 14x zone B. Save/load v13 with v12 backward compat.
 - ✓ **Shift-register edges** (f045a46) — FDTD→shift-register, 251/251+15/15 all pass. FDTD was unstable on short edges; shift-register gives propagation delay + frequency filtering + exact weight roundtrip.
 - ✓ **TLine Phase 1** (e5ebc5f) — TLine library + 9 standalone proof tests.

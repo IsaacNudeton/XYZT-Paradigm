@@ -782,11 +782,60 @@ static int child_tick_once(Graph *g) {
                 g->drive = 1;  /* frustration — grow faster */
                 g->grow_interval = g->grow_interval * 2 / 3;
                 if (g->grow_interval < 2) g->grow_interval = 2;
+
+                /* Fractal thermodynamics: heat and cleave child nodes */
+                for (int i = 0; i < g->n_nodes; i++) {
+                    Node *nh = &g->nodes[i];
+                    if (!nh->alive) continue;
+
+                    nh->plasticity += PLASTICITY_HEAT;
+
+                    /* Phase transition: structural cleaving in child */
+                    if (nh->plasticity > PLASTICITY_MAX) {
+                        int worst_edge = -1;
+                        double max_lc = -1.0;
+                        int incoming_count = 0;
+
+                        /* Find most resistive incoming edge & count total */
+                        for (int e = 0; e < g->n_edges; e++) {
+                            Edge *ed = &g->edges[e];
+                            if (ed->dst == (uint16_t)i && ed->weight > 0 && ed->tl.n_cells > 0) {
+                                incoming_count++;
+                                if (ed->tl.Lc[0] > max_lc) {
+                                    max_lc = ed->tl.Lc[0];
+                                    worst_edge = e;
+                                }
+                            }
+                        }
+
+                        /* Sever only if node has a backup path (survival floor) */
+                        if (worst_edge >= 0 && incoming_count > 1) {
+                            g->edges[worst_edge].weight = 0;
+                            g->edges[worst_edge].tl.n_cells = 0;
+                            nh->plasticity = PLASTICITY_DEFAULT;  /* consume heat */
+                        } else {
+                            nh->plasticity = PLASTICITY_MAX;  /* cap — can't cleave */
+                        }
+                    }
+                }
             } else if (g->error_accum < bore_thresh) {
                 g->drive = 2;  /* boredom — crystallize */
+
+                /* Cool child nodes */
+                for (int i = 0; i < g->n_nodes; i++) {
+                    Node *nc = &g->nodes[i];
+                    if (nc->alive && nc->plasticity > PLASTICITY_MIN) {
+                        nc->plasticity -= PLASTICITY_COOL;
+                        if (nc->plasticity < PLASTICITY_MIN) nc->plasticity = PLASTICITY_MIN;
+                    }
+                }
+
+                /* Strengthen surviving edges scaled by plasticity */
                 for (int e = 0; e < g->n_edges; e++) {
-                    if (g->edges[e].weight > 0) {
-                        tline_strengthen(&g->edges[e].tl, 0.01);
+                    if (g->edges[e].weight > 0 && g->edges[e].tl.n_cells > 0) {
+                        double plast = (double)g->nodes[g->edges[e].dst].plasticity;
+                        if (plast < (double)PLASTICITY_MIN) plast = (double)PLASTICITY_MIN;
+                        tline_strengthen(&g->edges[e].tl, 0.01 * plast);
                         g->edges[e].weight = tline_weight(&g->edges[e].tl);
                     }
                 }
