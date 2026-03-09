@@ -1849,7 +1849,35 @@ void engine_tick(Engine *eng) {
                 if (!nh->alive || nh->layer_zero) continue;
                 if (nh->coherent < 0) {
                     nh->plasticity += PLASTICITY_HEAT;
-                    if (nh->plasticity > PLASTICITY_MAX) nh->plasticity = PLASTICITY_MAX;
+
+                    /* Phase transition: structural cleaving.
+                     * Node has been incoherent long enough that Lc tuning can't fix it.
+                     * Consume the heat to sever the worst incoming edge. */
+                    if (nh->plasticity > PLASTICITY_MAX) {
+                        int worst_edge = -1;
+                        double max_lc = -1.0;
+
+                        /* Find most resistive incoming edge (highest Lc = most impedance) */
+                        for (int e = 0; e < g0->n_edges; e++) {
+                            Edge *ed = &g0->edges[e];
+                            if (ed->dst == (uint16_t)i && ed->weight > 0 && ed->tl.n_cells > 0) {
+                                if (ed->tl.Lc[0] > max_lc) {
+                                    max_lc = ed->tl.Lc[0];
+                                    worst_edge = e;
+                                }
+                            }
+                        }
+
+                        /* Sever and consume heat — only if there's a bond to break */
+                        if (worst_edge >= 0) {
+                            g0->edges[worst_edge].weight = 0;
+                            g0->edges[worst_edge].tl.n_cells = 0;
+                            eng->total_cleaved++;
+                            nh->plasticity = PLASTICITY_DEFAULT;  /* consume: reset to 1.0 */
+                        } else {
+                            nh->plasticity = PLASTICITY_MAX;  /* no bond to break: cap */
+                        }
+                    }
                 }
             }
         }

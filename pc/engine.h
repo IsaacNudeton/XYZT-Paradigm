@@ -411,6 +411,7 @@ typedef struct {
     int pol_kw_total;       /* keyword votes (text path only) */
     int pol_kw_invert;
     int32_t graph_error;    /* direct: incoherent node count (updated at SUBSTRATE_INT) */
+    int32_t total_cleaved;  /* edges severed by structural cleaving */
 } Engine;
 
 /* ══════════════════════════════════════════════════════════════
