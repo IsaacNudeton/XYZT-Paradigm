@@ -1,7 +1,7 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 8, 2026
-**Tests:** 251/251 passing (+ 15/15 standalone tline = 266 total)
+**Date:** March 9, 2026
+**Tests:** 252/252 passing (+ 15/15 standalone tline = 267 total)
 **Branch:** `tline-edges`
 **Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
 
@@ -32,11 +32,12 @@ Merges three XYZT engine versions:
 - **Retina entanglement:** child graphs read parent's substrate via zero-copy pointer
 - **Z-depth observers:** obs_and (Z=1), obs_freq (Z=3), obs_corr (Z=4), obs_xor (energy collision)
 - **Lysis:** automatic valence decay + apoptosis under contradiction
-- **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Zone A holds 3 incoherent. 7888 edges at 12% capacity. No zone collapsed.
+- **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Falsifiable Lc variance check: zone A var > zone B var. 8872 edges at 14% capacity. No zone collapsed.
 - **Inner T (child learning):** `child_tick_once` has Hebbian (co-active strengthen, inactive weaken), edge growth (co-active pairs → output node), and local heartbeat at `SUBSTRATE_INT/4` with SPRT error accumulator. Independent drive state: frustration accelerates growth, boredom crystallizes edges. Diagnostic: 73K learns, 36 edges (from 4), 61 heartbeats, drive=1.
-- **Save/load v12:** full engine persistence — children, inner T state (error_accum, prev_output, local_heartbeat, drive), OneTwoSystem, SubstrateT, all graph params (15 params, was 11). v11/v10/v9 backward compatible.
+- **Save/load v13:** full engine persistence — children, inner T state, OneTwoSystem, SubstrateT, all graph params (15 params), per-node plasticity. v12/v11/v10/v9 backward compatible.
+- **Per-node plasticity (temperature gradient):** `float plasticity` on every Node (0.5..2.0). Frustration heats incoherent nodes (+0.01/tick), boredom cools coherent nodes (-0.005/tick). Scales graph_learn Lc rate, S7 decay, boredom strengthen. Zone A (conflict) Lc_var=0.065 vs Zone B (stable) Lc_var=0.005 — 14x differentiation. Hot nodes resolve incoherence faster.
 - **Per-node grow threshold (MDL-style):** dense nodes (n_in≥4) demand higher correlation. Incoherent nodes get 2/3 threshold. Replaced flat global `grow_mean`. Recovered tracking from 0.900 to 0.949.
-- **Transmission line edges (shift-register):** TLine embedded in every Edge. Shift-register delay line with per-cell loss and exponential smoothing (TLINE_ALPHA=0.5). Replaces FDTD (unstable on short 4-8 cell edges due to Mur boundary ringing). All 3 propagation sites (S2 boundary, S3 per-shell, child_tick_once) use tline inject/step/read. graph_learn drives Lc from bs_contain correlation. 15 standalone tests + 251 engine tests all pass.
+- **Transmission line edges (shift-register):** TLine embedded in every Edge. Shift-register delay line with per-cell loss and exponential smoothing (TLINE_ALPHA=0.5). Replaces FDTD (unstable on short 4-8 cell edges due to Mur boundary ringing). All 3 propagation sites (S2 boundary, S3 per-shell, child_tick_once) use tline inject/step/read. graph_learn drives Lc from bs_contain correlation. 15 standalone tests + 252 engine tests all pass.
 
 ## What's Broken / Incomplete
 
@@ -45,7 +46,7 @@ Merges three XYZT engine versions:
 | Issue | Details |
 |-------|---------|
 | **Z axis still 0** | Fingerprint asymmetry path is dead (delta stuck at 5, symmetric encoding). Z will come from transmission line edges: propagation depth in cells = Z. TLine integrated but Z not yet derived from it. |
-| **Save/load v13** | TLine data not persisted. Need version bump, whole-struct fwrite of TLine in each Edge, v12 backward compat via tline_init_from_weight. |
+| ~~Save/load v13~~ | Done. Plasticity field persisted. v12 backward compat sets plasticity=1.0. |
 | **feedback → topology** | ONETWO feedback[0..7] is observed but doesn't drive structural changes. Next frontier: close the loop from feedback to topology adaptation. |
 
 ### MEDIUM priority
@@ -97,8 +98,8 @@ Merges three XYZT engine versions:
 
 | File | Lines | Role |
 |------|-------|------|
-| engine.c | ~2770 | CPU engine core (v12 save/load, inner T, shift-register edges) |
-| engine.h | ~530 | All types + inline helpers + TLineEdge/TLineGraph |
+| engine.c | ~2820 | CPU engine core (v13 save/load, inner T, shift-register edges, plasticity) |
+| engine.h | ~540 | All types + inline helpers + TLineEdge/TLineGraph + plasticity constants |
 | main.cu | 1258 | Entry point, tests, diagnostics, interactive CLI |
 | substrate.cu | 520 | 7 CUDA kernels |
 | substrate.cuh | 167 | GPU types + host API |
@@ -118,14 +119,14 @@ Merges three XYZT engine versions:
 
 ## Next Steps (by impact)
 
-1. **Save/load v13** — Persist TLine data in edges. v12 backward compat via tline_init_from_weight.
-2. **feedback[0..7] → topology change** — The real frontier. ONETWO output should drive structural adaptation, not just observation.
-3. **Behavioral homogenization** — T3 Full: intra-zone weights converge (230-237), only 5 cross-zone edges. Engine isolates but can't distinguish.
-4. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume.
-5. **Child-to-child communication** — children of different parents don't interact.
+1. **feedback[0..7] → topology change** — The real frontier. ONETWO output should drive structural adaptation, not just observation.
+2. **Behavioral homogenization** — T3 Full: intra-zone weights converge (230-237), only 5 cross-zone edges. Engine isolates but can't distinguish.
+3. **Seed gateways** — connect cubes so substrate patterns can propagate across the volume.
+4. **Child-to-child communication** — children of different parents don't interact.
 
 ## What's Done (completed work)
 
+- ✓ **Per-node plasticity** — Temperature gradient: frustration heats, boredom cools. 252/252+15/15 all pass. Zone A Lc variance 14x zone B. Save/load v13 with v12 backward compat.
 - ✓ **Shift-register edges** (f045a46) — FDTD→shift-register, 251/251+15/15 all pass. FDTD was unstable on short edges; shift-register gives propagation delay + frequency filtering + exact weight roundtrip.
 - ✓ **TLine Phase 1** (e5ebc5f) — TLine library + 9 standalone proof tests.
 - ✓ **Per-node grow threshold** (f978520) — MDL-style local threshold. Dense nodes demand higher correlation. Tracking recovered 0.900→0.949.

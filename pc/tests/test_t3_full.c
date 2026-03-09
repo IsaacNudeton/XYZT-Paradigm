@@ -355,6 +355,66 @@ void run_t3_full_tests(void) {
            ((avg_ea <= avg_eb) && (avg_ea <= avg_ec) && (avg_ea <= avg_ed))
            ? "away from sick" : "toward sick (Inner T effect)");
 
+    /* Per-zone plasticity and Lc variance diagnostics */
+    {
+        double plast_sum[5] = {0}; int plast_cnt[5] = {0};
+        double lc_sum[5] = {0}, lc_sq[5] = {0}; int lc_cnt[5] = {0};
+
+        /* Build node→zone lookup */
+        int nz[MAX_NODES];
+        memset(nz, -1, sizeof(nz));
+        for (int i = 0; i < 200; i++)
+            if (ids[i] >= 0 && ids[i] < g0->n_nodes)
+                nz[ids[i]] = i / 40;
+
+        /* Plasticity per zone */
+        for (int i = 0; i < 200; i++) {
+            if (ids[i] < 0 || ids[i] >= g0->n_nodes) continue;
+            Node *n = &g0->nodes[ids[i]];
+            if (!n->alive || n->layer_zero) continue;
+            int z = i / 40;
+            plast_sum[z] += (double)n->plasticity;
+            plast_cnt[z]++;
+        }
+
+        /* Lc by destination zone */
+        for (int e = 0; e < g0->n_edges; e++) {
+            Edge *ed = &g0->edges[e];
+            if (ed->tl.n_cells == 0) continue;
+            int zd = (ed->dst < MAX_NODES) ? nz[ed->dst] : -1;
+            if (zd < 0) continue;
+            for (int c = 0; c < ed->tl.n_cells; c++) {
+                double lc = ed->tl.Lc[c];
+                lc_sum[zd] += lc;
+                lc_sq[zd] += lc * lc;
+                lc_cnt[zd]++;
+            }
+        }
+
+        double lc_var[5];
+        for (int z = 0; z < 5; z++) {
+            if (lc_cnt[z] > 1) {
+                double mean = lc_sum[z] / lc_cnt[z];
+                lc_var[z] = lc_sq[z] / lc_cnt[z] - mean * mean;
+            } else {
+                lc_var[z] = 0.0;
+            }
+        }
+
+        printf("\n  --- Plasticity & Lc Variance ---\n");
+        for (int z = 0; z < 5; z++) {
+            const char *zn[] = {"A","B","C","D","E"};
+            double pavg = plast_cnt[z] > 0 ? plast_sum[z] / plast_cnt[z] : 0;
+            double lavg = lc_cnt[z] > 0 ? lc_sum[z] / lc_cnt[z] : 0;
+            printf("  Zone %s: plasticity_avg=%.3f  Lc_avg=%.3f  Lc_var=%.4f  (%d cells)\n",
+                   zn[z], pavg, lavg, lc_var[z], lc_cnt[z]);
+        }
+
+        /* Falsifiable: zone A (conflict) should have higher Lc variance than zone B (stable) */
+        check("t3full: zone A Lc var > zone B Lc var", 1,
+              (lc_cnt[0] > 0 && lc_cnt[1] > 0 && lc_var[0] > lc_var[1]) ? 1 : 0);
+    }
+
     /* CHECK 7: No zone collapsed */
     check("t3full: no zone collapsed", 1,
           (alive[0] > 0 && alive[1] > 0 && alive[2] > 0 &&

@@ -87,6 +87,11 @@ static inline int xyzt_ctzll(uint64_t x) {
 #define VAL_CEILING        1000000 /* hard ceiling on node values (±1M) */
 #define LYSIS_THRESHOLD    100     /* valence below this -> kill child (apoptosis) */
 #define VALENCE_DECAY_RATE   2     /* per SUBSTRATE_INT cycle under high error */
+#define PLASTICITY_DEFAULT  1.0f
+#define PLASTICITY_MIN      0.5f
+#define PLASTICITY_MAX      2.0f
+#define PLASTICITY_HEAT     0.01f   /* frustration increment */
+#define PLASTICITY_COOL     0.005f  /* boredom decrement */
 
 /* Shell impedance: K = 3/2 per boundary crossing */
 static const double SHELL_Z[3] = { 1.0, 1.5, 2.25 };
@@ -279,6 +284,7 @@ typedef struct {
     int8_t    child_id;
     uint8_t   has_negation;   /* 1 if source text contained negation markers */
     uint8_t   contradicted;  /* 1 if node has inverted incoming edges (disputed) */
+    float     plasticity;       /* learning rate multiplier (0.5..2.0) */
 } Node;
 
 typedef struct {

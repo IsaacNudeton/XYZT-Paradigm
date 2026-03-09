@@ -433,6 +433,7 @@ int graph_add(Graph *g, const char *name, uint8_t shell_id, const SubstrateT *T)
     n->layer_zero = 1;
     n->shell_id = shell_id;
     n->child_id = -1;
+    n->plasticity = PLASTICITY_DEFAULT;
     /* Hash name into 3D coords — hash chaining for independent axes */
     uint32_t hx = hash32((const uint8_t *)name, (int)strlen(name));
     uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
@@ -596,8 +597,11 @@ int graph_learn(Graph *g) {
         double target_lc = e->tl.L_base * (200.0 - (double)corr) / 100.0;
         if (target_lc < 0.1) target_lc = 0.1;
         if (target_lc > 10.0) target_lc = 10.0;
-        /* Move Lc toward target at mismatch tax rate */
+        /* Move Lc toward target at mismatch tax rate, scaled by destination plasticity */
         double rate = (double)MISMATCH_TAX_NUM / (double)MISMATCH_TAX_DEN;
+        double plast = (double)g->nodes[e->dst].plasticity;
+        if (plast < (double)PLASTICITY_MIN) plast = (double)PLASTICITY_MIN;
+        rate *= plast;
         for (int c = 0; c < e->tl.n_cells; c++) {
             double error = target_lc - e->tl.Lc[c];
             e->tl.Lc[c] += error * rate;
@@ -824,6 +828,7 @@ static int nest_spawn(Engine *eng, int node_id) {
             child->nodes[rid].layer_zero = 0;  /* NOT source — receives from retina */
             child->nodes[rid].identity.len = 64;
             child->nodes[rid].Z = owner->Z;
+            child->nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
     int out = graph_add(child, "output", 0, &eng->T);
@@ -832,6 +837,7 @@ static int nest_spawn(Engine *eng, int node_id) {
         child->nodes[out].layer_zero = 0;
         child->nodes[out].identity.len = 64;
         child->nodes[out].Z = owner->Z;
+        child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
 
     /* Wire retina pairs to output: (r0,r1)→out, (r2,r3)→out, etc.
@@ -1416,7 +1422,7 @@ void engine_tick(Engine *eng) {
                 if (n->valence > 0) n->valence--;
                 for (int e = 0; e < g->n_edges; e++)
                     if (g->edges[e].src_a == i || g->edges[e].src_b == i) {
-                        tline_weaken(&g->edges[e].tl, 0.01);
+                        tline_weaken(&g->edges[e].tl, 0.01 * n->plasticity);
                         g->edges[e].weight = tline_weight(&g->edges[e].tl);
                     }
             }
@@ -1836,6 +1842,16 @@ void engine_tick(Engine *eng) {
                     g0->nodes[target].valence -= erosion;
                 }
             }
+
+            /* Heat incoherent nodes: frustration raises plasticity */
+            for (int i = 0; i < g0->n_nodes; i++) {
+                Node *nh = &g0->nodes[i];
+                if (!nh->alive || nh->layer_zero) continue;
+                if (nh->coherent < 0) {
+                    nh->plasticity += PLASTICITY_HEAT;
+                    if (nh->plasticity > PLASTICITY_MAX) nh->plasticity = PLASTICITY_MAX;
+                }
+            }
         }
 
         /* ── CURIOSITY: error positive but not alarming ──
@@ -1859,10 +1875,15 @@ void engine_tick(Engine *eng) {
                 uint32_t age = T_now(&eng->T) - n->last_active;
                 if (n->val != 0 && age < SUBSTRATE_INT) {
                     if (n->valence < 255) n->valence++;
+                    /* Cool coherent nodes: boredom lowers plasticity */
+                    if (n->plasticity > PLASTICITY_MIN) {
+                        n->plasticity -= PLASTICITY_COOL;
+                        if (n->plasticity < PLASTICITY_MIN) n->plasticity = PLASTICITY_MIN;
+                    }
                     /* Strengthen incoming edges: they carried signal that worked */
                     for (int e = 0; e < g0->n_edges; e++) {
                         if (g0->edges[e].dst == (uint16_t)i && g0->edges[e].weight > 0) {
-                            tline_strengthen(&g0->edges[e].tl, 0.01);
+                            tline_strengthen(&g0->edges[e].tl, 0.01 * n->plasticity);
                             g0->edges[e].weight = tline_weight(&g0->edges[e].tl);
                         }
                     }
@@ -2196,7 +2217,7 @@ void tlg_backreaction(TLineGraph *g, double kappa) {
 }
 
 /* ══════════════════════════════════════════════════════════════
- * SAVE / LOAD (binary format, v9/v10/v11)
+ * SAVE / LOAD (binary format, v9-v13)
  * ══════════════════════════════════════════════════════════════ */
 
 static void save_graph(FILE *f, const Graph *g) {
@@ -2257,8 +2278,18 @@ static int load_graph(FILE *f, Graph *g, int ver) {
         g->error_accum = 0; g->prev_output = 0;
         g->local_heartbeat = 0; g->drive = 0;
     }
-    for (int i = 0; i < g->n_nodes; i++)
-        if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) return -1;
+    if (ver >= 13) {
+        for (int i = 0; i < g->n_nodes; i++)
+            if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) return -1;
+    } else {
+        /* v12: Node without plasticity (4 bytes smaller) */
+        size_t old_sz = sizeof(Node) - sizeof(float);
+        for (int i = 0; i < g->n_nodes; i++) {
+            memset(&g->nodes[i], 0, sizeof(Node));
+            if (fread(&g->nodes[i], old_sz, 1, f) != 1) return -1;
+            g->nodes[i].plasticity = PLASTICITY_DEFAULT;
+        }
+    }
     for (int i = 0; i < g->n_edges; i++)
         if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) return -1;
     return 0;
@@ -2268,7 +2299,7 @@ int engine_save(const Engine *eng, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     uint32_t magic = 0x58595A54; /* XYZT */
-    uint32_t version = 12;
+    uint32_t version = 13;
     fwrite(&magic, 4, 1, f);
     fwrite(&version, 4, 1, f);
 
@@ -2379,9 +2410,15 @@ int engine_load(Engine *eng, const char *path) {
             g->auto_learn = sh.auto_l;
             eng->shells[s].id = sh.sid;
             strncpy(eng->shells[s].name, sh.sname, 31);
-            /* v9 bulk reads */
-            for (int i = 0; i < g->n_nodes; i++)
-                if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) { fclose(f); return -4; }
+            /* v9 bulk reads — old Node without plasticity */
+            {
+                size_t old_sz = sizeof(Node) - sizeof(float);
+                for (int i = 0; i < g->n_nodes; i++) {
+                    memset(&g->nodes[i], 0, sizeof(Node));
+                    if (fread(&g->nodes[i], old_sz, 1, f) != 1) { fclose(f); return -4; }
+                    g->nodes[i].plasticity = PLASTICITY_DEFAULT;
+                }
+            }
             for (int i = 0; i < g->n_edges; i++)
                 if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -5; }
             /* v9 does NOT write grow_mean */
@@ -2407,8 +2444,14 @@ int engine_load(Engine *eng, const char *path) {
             Graph *g = &eng->shells[s].g;
             fread(&g->n_nodes, sizeof(g->n_nodes), 1, f);
             if (g->n_nodes > MAX_NODES) g->n_nodes = MAX_NODES;
-            for (int i = 0; i < g->n_nodes; i++)
-                fread(&g->nodes[i], sizeof(Node), 1, f);
+            {
+                size_t old_sz = sizeof(Node) - sizeof(float);
+                for (int i = 0; i < g->n_nodes; i++) {
+                    memset(&g->nodes[i], 0, sizeof(Node));
+                    fread(&g->nodes[i], old_sz, 1, f);
+                    g->nodes[i].plasticity = PLASTICITY_DEFAULT;
+                }
+            }
             fread(&g->n_edges, sizeof(g->n_edges), 1, f);
             if (g->n_edges > MAX_EDGES) g->n_edges = MAX_EDGES;
             for (int i = 0; i < g->n_edges; i++)
@@ -2417,8 +2460,8 @@ int engine_load(Engine *eng, const char *path) {
         }
         for (int i = 0; i < eng->n_boundary_edges; i++)
             fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
-    } else if (version == 11 || version == 12) {
-        /* v11/v12: full persistence — engine params, OneTwoSystem, SubstrateT, children */
+    } else if (version >= 11 && version <= 13) {
+        /* v11-v13: full persistence — engine params, OneTwoSystem, SubstrateT, children */
         uint32_t ns, nb;
         fread(&ns, 4, 1, f);
         fread(&nb, 4, 1, f);
