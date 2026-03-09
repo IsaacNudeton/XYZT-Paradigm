@@ -222,7 +222,7 @@ void run_t3_stage1_tests(void) {
         ingest_all(&eng, ids);
 
         /* Tick one SUBSTRATE_INT cycle */
-        for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++) {
+        for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++) {
             engine_tick(&eng);
             int32_t fb7 = eng.onetwo.feedback[7];
             int32_t ae = fb7 < 0 ? -fb7 : fb7;

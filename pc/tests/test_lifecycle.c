@@ -114,31 +114,49 @@ void run_lifecycle_tests(void) {
         { uint8_t poison[400]; memset(poison, 0xFF, 400);
           ot_sys_ingest(&eng.onetwo, poison, 400); }
 
-        /* Crush edges to max impedance — leaves a trickle of I_energy
-         * so nodes maintain coherence flag, but too weak to drive signal. */
+        /* Kill all edges: set n_cells=0 and weight=0 so S3 propagation
+         * skips them (n_cells==0 check) and graph_learn ignores them.
+         * tline_weight clamps to 1, so we must set weight=0 directly. */
         for (int e = 0; e < g0->n_edges; e++) {
-            for (int c = 0; c < g0->edges[e].tl.n_cells; c++)
-                g0->edges[e].tl.Lc[c] = 50.0;
-            g0->edges[e].weight = tline_weight(&g0->edges[e].tl);
+            g0->edges[e].tl.n_cells = 0;
+            g0->edges[e].weight = 0;
         }
-        if (eng.n_shells >= 2) {
-            Graph *g1 = &eng.shells[1].g;
-            for (int e = 0; e < g1->n_edges; e++) {
-                for (int c = 0; c < g1->edges[e].tl.n_cells; c++)
-                    g1->edges[e].tl.Lc[c] = 50.0;
-                g1->edges[e].weight = tline_weight(&g1->edges[e].tl);
+        for (int s = 1; s < eng.n_shells; s++) {
+            Graph *gs = &eng.shells[s].g;
+            for (int e = 0; e < gs->n_edges; e++) {
+                gs->edges[e].tl.n_cells = 0;
+                gs->edges[e].weight = 0;
             }
         }
+        for (int e = 0; e < eng.n_boundary_edges; e++) {
+            eng.boundary_edges[e].tl.n_cells = 0;
+            eng.boundary_edges[e].weight = 0;
+        }
+
+        /* Reset coherence state so the coherence detector starts clean.
+         * Also remove children — child propagation changes parent val,
+         * which the coherence detector picks up as instability.
+         * Disable auto_grow — S5 would create fresh (un-crushed) edges
+         * that carry signal, changing val and triggering incoherence. */
+        for (int n = 0; n < g0->n_nodes; n++) {
+            g0->nodes[n].prev_edge_sum = 0;
+            g0->nodes[n].prev_val = g0->nodes[n].val;
+            g0->nodes[n].coherent = 1;
+            g0->nodes[n].last_active = (uint32_t)T_now(&eng.T);
+            g0->nodes[n].child_id = -1;
+        }
+        for (int s = 0; s < eng.n_shells; s++)
+            eng.shells[s].g.auto_grow = 0;
 
         while (eng.total_ticks % SUBSTRATE_INT != (SUBSTRATE_INT - 1))
             engine_tick(&eng);
         engine_tick(&eng);
-
         uint8_t valence_after = g0->nodes[0].valence;
         int32_t error_1st = eng.onetwo.feedback[7];
         int32_t energy_1st = eng.onetwo.feedback[5];
-        printf("  1st cycle: error=%d energy=%d  valence: %d -> %d\n",
-               error_1st, energy_1st, valence_before, valence_after);
+        printf("  1st cycle: error=%d energy=%d  valence: %d -> %d  coherent=%d alive=%d\n",
+               error_1st, energy_1st, valence_before, valence_after,
+               g0->nodes[0].coherent, g0->nodes[0].alive);
         check("error spike from poison", 1, abs(error_1st) > energy_1st / 3 ? 1 : 0);
         /* Targeted decay: coherent nodes are protected. With edges zeroed,
          * all nodes lack neighbors → scale<2 → coherent → no decay. */

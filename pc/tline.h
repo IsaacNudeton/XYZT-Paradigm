@@ -1,12 +1,15 @@
 /*
  * tline.h — Transmission line edge library
  *
- * Per-cell FDTD with R,G loss terms (telegrapher's equations).
- * Extracted from xyzt_unified.c + universe_tline_v2.c.
+ * Shift-register delay line with per-cell loss and smoothing.
+ * Replaces FDTD (which was unstable on short edges).
  *
- * Without loss (R=0, G=0), propagation is just time delay — Z collapses
- * to T. With loss, high frequencies attenuate faster than low frequencies.
- * Cell 0 sees the full signal. Cell N sees the marble.
+ * Each cell applies: new = alpha * (incoming * atten) + (1-alpha) * old
+ * where atten = 1 - (R + G*Lc[i]).
+ *
+ * R controls base loss, G*Lc controls per-cell variable loss.
+ * Smoothing (alpha) creates frequency-dependent filtering:
+ * slow signals propagate, fast signals get averaged out.
  * That gradient IS Z.
  *
  * Isaac Oravec & Claude, March 2026
@@ -17,23 +20,22 @@
 #include <stdint.h>
 
 #define TLINE_MAX_CELLS 32
+#define TLINE_ALPHA     0.5    /* smoothing: 0=frozen, 1=no smoothing */
 
 typedef struct {
     double V[TLINE_MAX_CELLS];
-    double I[TLINE_MAX_CELLS];
-    double Lc[TLINE_MAX_CELLS];   /* per-cell inductance */
+    double Lc[TLINE_MAX_CELLS];   /* per-cell inductance (controls loss) */
     int    n_cells;                /* active cells (4-32) */
     double L_base;                 /* base inductance */
-    double C0;                     /* capacitance per cell */
-    double R;                      /* series resistance per cell (current loss) */
-    double G;                      /* shunt conductance per cell (voltage drain) */
-    double mur[4];                 /* Mur ABC state: [V0_old, V1_old, Vn_old, Vn1_old] */
+    double C0;                     /* capacitance per cell (unused by shift-reg, kept for compat) */
+    double R;                      /* base loss per cell */
+    double G;                      /* Lc-dependent loss per cell */
 } TLine;
 
 /* Initialize a transmission line with n_cells, base impedance z0 */
 void tline_init(TLine *tl, int n_cells, double z0);
 
-/* Inject a value at cell 0 (source end) */
+/* Inject a value at cell 0 (source end) — replaces, not additive */
 void tline_inject(TLine *tl, double val);
 
 /* Read the value at cell n-1 (destination end) */
@@ -42,29 +44,27 @@ double tline_read(const TLine *tl);
 /* Read the value at any cell (for Z-depth observation) */
 double tline_read_at(const TLine *tl, int cell);
 
-/* One FDTD step — propagate signals through all cells */
+/* One step: shift register with per-cell attenuation + smoothing */
 void tline_step(TLine *tl);
 
 /* Apply node impedance bump at boundary cells */
 void tline_set_impedance(TLine *tl, double z_src, double z_dst);
 
-/* Effective "weight" — what the old engine would see.
- * Ratio of output amplitude to input amplitude at steady state.
+/* Effective "weight" — product of per-cell attenuation.
  * Returns uint8_t so old code reading e->weight stays compatible. */
 uint8_t tline_weight(const TLine *tl);
 
-/* Back-reaction: collision energy grows Lc at boundary cells.
- * Call when 2+ edges deliver energy to same node simultaneously. */
+/* Back-reaction: collision energy grows Lc at boundary cells. */
 void tline_backreaction(TLine *tl, double collision_energy);
 
-/* Strengthen: decrease Lc by rate (faster propagation, stronger coupling) */
+/* Strengthen: decrease Lc by rate (less loss, stronger coupling) */
 void tline_strengthen(TLine *tl, double rate);
 
-/* Weaken: increase Lc by rate (slower propagation, weaker coupling) */
+/* Weaken: increase Lc by rate (more loss, weaker coupling) */
 void tline_weaken(TLine *tl, double rate);
 
 /* Initialize TLine from an old-format weight value (v12 backward compat).
- * Tunes Lc so tline_weight() returns approximately the given weight. */
+ * Tunes R,G so tline_weight() returns approximately the given weight. */
 void tline_init_from_weight(TLine *tl, uint8_t weight);
 
 #endif /* TLINE_H */

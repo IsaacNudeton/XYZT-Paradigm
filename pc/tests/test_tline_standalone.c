@@ -90,8 +90,7 @@ static void test_frequency_dependent_loss(void) {
     tline_init(&tl_fast, 16, 1.0);
     double peak_fast = 0;
     for (int s = 0; s < 200; s++) {
-        tl_fast.V[0] = (s % 2 == 0) ? 1.0 : -1.0;
-        tl_fast.I[0] = tl_fast.V[0] / sqrt(tl_fast.Lc[0] / tl_fast.C0);
+        tline_inject(&tl_fast, (s % 2 == 0) ? 1.0 : -1.0);
         tline_step(&tl_fast);
         if (s > 50) {  /* after warmup */
             double v = fabs(tline_read(&tl_fast));
@@ -105,8 +104,7 @@ static void test_frequency_dependent_loss(void) {
     double peak_slow = 0;
     for (int s = 0; s < 200; s++) {
         double val = ((s / 20) % 2 == 0) ? 1.0 : -1.0;
-        tl_slow.V[0] = val;
-        tl_slow.I[0] = val / sqrt(tl_slow.Lc[0] / tl_slow.C0);
+        tline_inject(&tl_slow, val);
         tline_step(&tl_slow);
         if (s > 50) {
             double v = fabs(tline_read(&tl_slow));
@@ -154,7 +152,7 @@ static void test_z_depth_observation(void) {
 }
 
 /*
- * T5: Impedance matching — mismatched Z0 causes reflection.
+ * T5: Impedance discontinuity — Lc bump attenuates signal.
  */
 static void test_impedance_matching(void) {
     printf("  T5: impedance discontinuity (mass = Lc bump = reflection)\n");

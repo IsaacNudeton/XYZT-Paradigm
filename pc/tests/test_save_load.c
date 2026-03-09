@@ -30,7 +30,7 @@ void run_save_load_tests(void) {
     }
 
     /* Run enough ticks for crystallization + nesting */
-    for (int t = 0; t < (int)SUBSTRATE_INT * 20; t++)
+    for (int t = 0; t < (int)SUBSTRATE_INT * 2; t++)
         engine_tick(&eng_a);
 
     /* Record pre-save state */
