@@ -16,7 +16,7 @@ void run_child_conflict_tests(void) {
     SubstrateT T;
     T_init(&T);
 
-    /* Build child graph: 8 retina + 1 output (same as nest_spawn) */
+    /* Build child graph: 8 retina + 4 hidden + 1 output (same as nest_spawn) */
     Graph child;
     graph_init(&child);
 
@@ -32,6 +32,18 @@ void run_child_conflict_tests(void) {
             child.nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
+    for (int h = 0; h < 4; h++) {
+        char hname[32];
+        snprintf(hname, 32, "hidden_%d", h);
+        int hid = graph_add(&child, hname, 0, &T);
+        if (hid >= 0) {
+            child.nodes[hid].alive = 1;
+            child.nodes[hid].layer_zero = 0;
+            child.nodes[hid].identity.len = 64;
+            child.nodes[hid].Z = 1.0;
+            child.nodes[hid].plasticity = PLASTICITY_DEFAULT;
+        }
+    }
     int out = graph_add(&child, "output", 0, &T);
     if (out >= 0) {
         child.nodes[out].alive = 1;
@@ -40,12 +52,23 @@ void run_child_conflict_tests(void) {
         child.nodes[out].Z = 1.0;
         child.nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
-    /* Wire retina pairs to output: (0,1)->8, (2,3)->8, (4,5)->8, (6,7)->8 */
-    for (int r = 0; r < 8; r += 2)
-        graph_wire(&child, r, r + 1, 8, 128, 0);
+    /* Wire retina pairs to hidden: (0,1)->h8, (2,3)->h9, (4,5)->h10, (6,7)->h11 */
+    for (int r = 0; r < 8; r += 2) {
+        int hidden_target = 8 + r / 2;
+        graph_wire(&child, r, r + 1, hidden_target, 128, 0);
+    }
+    /* Wire hidden to output (12): paired hidden nodes */
+    {
+        int out_idx = child.n_nodes - 1;
+        for (int h = 0; h < 4; h++) {
+            int h1 = 8 + h;
+            int h2 = 8 + ((h + 1) % 4);
+            graph_wire(&child, h1, h2, out_idx, 64, 0);
+        }
+    }
 
-    check("cc: child has 9 nodes", 1, child.n_nodes == 9);
-    check("cc: child has 4 edges", 1, child.n_edges == 4);
+    check("cc: child has 13 nodes", 1, child.n_nodes == 13);
+    check("cc: child has 8 edges", 1, child.n_edges == 8);
 
     /* Fake substrate: 4x4x4 = 64 bytes.
      * Left half (x<2) = 200, right half (x>=2) = 50.
@@ -61,7 +84,7 @@ void run_child_conflict_tests(void) {
     child.retina = substrate;
     child.retina_len = 64;
 
-    /* Inject retina values (same logic as engine.c line 1291) */
+    /* Inject retina values (same logic as engine.c retina injection) */
     for (int r = 0; r < 8 && r < child.n_nodes; r++) {
         int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
         int32_t octant_val = 0;
@@ -75,7 +98,6 @@ void run_child_conflict_tests(void) {
     /* Phase 1: Stabilize — 30 cycles of child_tick_once with same pattern.
      * Each "cycle" = inject retina + 64 ticks (matching engine's ct<64 loop). */
     for (int cyc = 0; cyc < 30; cyc++) {
-        /* Re-inject retina each cycle */
         for (int r = 0; r < 8 && r < child.n_nodes; r++) {
             int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
             int32_t octant_val = 0;
@@ -98,7 +120,7 @@ void run_child_conflict_tests(void) {
            edges_before, child.drive, child.local_heartbeat,
            (unsigned long long)child.total_learns);
 
-    check("cc: edges survived stabilization", 1, edges_before >= 4);
+    check("cc: edges survived stabilization", 1, edges_before >= 8);
 
     /* Phase 2: CONFLICT — flip the substrate (left=50, right=200).
      * This inverts every retina node's value. Hebbian weights built for
@@ -110,7 +132,6 @@ void run_child_conflict_tests(void) {
 
     /* Run 50 conflict cycles — enough for plasticity to hit MAX and cleave */
     for (int cyc = 0; cyc < 50; cyc++) {
-        /* Re-inject flipped retina */
         for (int r = 0; r < 8 && r < child.n_nodes; r++) {
             int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
             int32_t octant_val = 0;
@@ -139,16 +160,42 @@ void run_child_conflict_tests(void) {
             max_plast = child.nodes[i].plasticity;
     }
 
+    /* BFS max depth: retina → output */
+    int max_depth = 0;
+    int output_idx = child.n_nodes - 1;
+    for (int start = 0; start < 8; start++) {
+        int depth[MAX_NODES];
+        memset(depth, -1, sizeof(int) * (unsigned)child.n_nodes);
+        depth[start] = 0;
+        int bfs_changed = 1;
+        while (bfs_changed) {
+            bfs_changed = 0;
+            for (int e = 0; e < child.n_edges; e++) {
+                Edge *ed = &child.edges[e];
+                if (ed->weight == 0 || ed->tl.n_cells == 0) continue;
+                int src = ed->src_a;
+                int dst = ed->dst;
+                if (src < child.n_nodes && dst < child.n_nodes) {
+                    if (depth[src] >= 0 && (depth[dst] < 0 || depth[dst] > depth[src] + 1)) {
+                        depth[dst] = depth[src] + 1;
+                        bfs_changed = 1;
+                    }
+                }
+            }
+        }
+        if (depth[output_idx] > max_depth) max_depth = depth[output_idx];
+    }
+
     printf("  [cc] after conflict: edges=%d (was %d), drive=%d, heartbeats=%d\n",
            edges_after, edges_before, child.drive, child.local_heartbeat);
-    printf("  [cc] hot_nodes=%d, max_plasticity=%.3f, grown=%llu\n",
-           hot_nodes, max_plast, (unsigned long long)child.total_grown);
+    printf("  [cc] hot_nodes=%d, max_plasticity=%.3f, grown=%llu, max_depth=%d\n",
+           hot_nodes, max_plast, (unsigned long long)child.total_grown, max_depth);
 
     /* Falsifiable checks */
     check("cc: child entered frustration at some point", 1,
-          child.drive == 1 || child.total_grown > 4 || edges_after != edges_before);
+          child.drive == 1 || child.total_grown > 8 || edges_after != edges_before);
     check("cc: conflict changed edge structure", 1,
-          edges_after != edges_before || child.total_grown > 4);
+          edges_after != edges_before || child.total_grown > 8);
 
     graph_destroy(&child);
 }

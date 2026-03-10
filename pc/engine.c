@@ -745,15 +745,24 @@ int child_tick_once(Graph *g) {
         }
     }
 
-    /* ── Grow: wire co-active pairs that lack edges ── */
+    /* ── Grow: wire co-active pairs to downstream nodes ── */
     if (g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
         int out = g->n_nodes - 1;  /* output node is always last */
         for (int i = 0; i < g->n_nodes; i++) {
             if (!g->nodes[i].alive || g->nodes[i].val == 0) continue;
             for (int j = i + 1; j < g->n_nodes; j++) {
                 if (!g->nodes[j].alive || g->nodes[j].val == 0) continue;
-                if (graph_find_edge(g, i, j, out) < 0) {
-                    graph_wire(g, i, j, out, 32, 0);
+                /* Find a downstream target: prefer hidden nodes (8..out-1),
+                 * fall back to output. Don't wire to retina (0-7). */
+                int dst = -1;
+                for (int h = 8; h < out; h++) {
+                    if (h == i || h == j) continue;
+                    if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
+                }
+                if (dst < 0 && graph_find_edge(g, i, j, out) < 0)
+                    dst = out;
+                if (dst >= 0) {
+                    graph_wire(g, i, j, dst, 32, 0);
                     g->total_grown++;
                 }
             }
@@ -864,7 +873,7 @@ static int nest_spawn(Engine *eng, int node_id) {
     graph_init(&eng->child_pool[slot]);
     Graph *child = &eng->child_pool[slot];
 
-    /* 8 retina input nodes (one per octant of parent's 4^3 cube) + 1 output.
+    /* 8 retina input nodes (one per octant of parent's 4^3 cube).
      * Each retina node reads spatial substrate from its octant.
      * Replaces scalar int32_t passthrough — children see parent's
      * spatial structure directly via zero-copy retina pointer. */
@@ -880,6 +889,21 @@ static int nest_spawn(Engine *eng, int node_id) {
             child->nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
+    /* 4 hidden nodes — intermediate processing layer.
+     * Without these, all edges target output directly (star topology, depth=1).
+     * Hidden nodes allow retina → hidden → hidden → output chains (depth>1). */
+    for (int h = 0; h < 4; h++) {
+        char hname[32];
+        snprintf(hname, 32, "hidden_%d", h);
+        int hid = graph_add(child, hname, 0, &eng->T);
+        if (hid >= 0) {
+            child->nodes[hid].alive = 1;
+            child->nodes[hid].layer_zero = 0;
+            child->nodes[hid].identity.len = 64;
+            child->nodes[hid].Z = owner->Z;
+            child->nodes[hid].plasticity = PLASTICITY_DEFAULT;
+        }
+    }
     int out = graph_add(child, "output", 0, &eng->T);
     if (out >= 0) {
         child->nodes[out].alive = 1;
@@ -889,10 +913,22 @@ static int nest_spawn(Engine *eng, int node_id) {
         child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
 
-    /* Wire retina pairs to output: (r0,r1)→out, (r2,r3)→out, etc.
-     * Paired octants are spatial opposites — natural 2-input edges. */
-    for (int r = 0; r < 8; r += 2)
-        graph_wire(child, r, r + 1, 8, 128, 0);
+    /* Wire retina pairs to hidden nodes, not directly to output.
+     * (r0,r1)→hidden_0, (r2,r3)→hidden_1, (r4,r5)→hidden_2, (r6,r7)→hidden_3.
+     * Hidden nodes are at indices 8,9,10,11. Output is at index 12. */
+    for (int r = 0; r < 8; r += 2) {
+        int hidden_target = 8 + r / 2;
+        graph_wire(child, r, r + 1, hidden_target, 128, 0);
+    }
+    /* Wire hidden nodes to output: each hidden feeds forward */
+    {
+        int out_idx = child->n_nodes - 1;  /* output is last node = 12 */
+        for (int h = 0; h < 4; h++) {
+            int h1 = 8 + h;
+            int h2 = 8 + ((h + 1) % 4);
+            graph_wire(child, h1, h2, out_idx, 64, 0);
+        }
+    }
 
     eng->child_owner[slot] = node_id;
     eng->n_children++;
@@ -1437,10 +1473,19 @@ void engine_tick(Engine *eng) {
                     }
                 }
                 for (int k = 0; k < n_top; k++) {
-                    if (graph_find_edge(g, i, top_j[k], i) >= 0) continue;
-                    /* Edge weight from raw corr (identity overlap), not opportunity score */
-                    int geid1 = graph_wire(g, i, top_j[k], i, (uint8_t)(top_raw[k] * 255 / 100), 0);
-                    /* No reverse wire. j→i evaluated when j is outer loop variable. */
+                    int j = top_j[k];
+                    int geid1;
+                    if (n_in[j] <= 1) {
+                        /* j is a relay (low fanin). Wire feed-forward: i → j.
+                         * src_a=i, src_b=i, dst=j. Creates a chain — graph_compute_z
+                         * sees sa!=d && sb!=d, so Z increments. */
+                        if (graph_find_edge(g, i, i, j) >= 0) continue;
+                        geid1 = graph_wire(g, i, i, j, (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    } else {
+                        /* j is saturated. Standard listen-edge: j feeds into i. */
+                        if (graph_find_edge(g, i, j, i) >= 0) continue;
+                        geid1 = graph_wire(g, i, j, i, (uint8_t)(top_raw[k] * 255 / 100), 0);
+                    }
                     edge_set_negation_invert(g, geid1);
                     g->total_grown += 1; total_grown += 1;
                 }

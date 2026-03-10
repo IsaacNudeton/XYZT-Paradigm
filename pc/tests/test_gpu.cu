@@ -99,10 +99,10 @@ extern "C" void run_gpu_tests(void) {
             for (int i = 0; i < MAX_CHILDREN; i++)
                 if (eng.child_owner[i] >= 0) { slot = i; break; }
             if (slot >= 0) {
-                check("child has 9 nodes", 9, eng.child_pool[slot].n_nodes);
-                check("child has 4 edges", 4, eng.child_pool[slot].n_edges);
+                check("child has 13 nodes", 13, eng.child_pool[slot].n_nodes);
+                check("child has 8 edges", 8, eng.child_pool[slot].n_edges);
                 check("child ticked", 1, eng.child_pool[slot].total_ticks > 0 ? 1 : 0);
-                check("output node alive", 1, eng.child_pool[slot].nodes[8].alive);
+                check("output node alive", 1, eng.child_pool[slot].nodes[12].alive);
                 check("retina nodes not layer_zero", 0, eng.child_pool[slot].nodes[0].layer_zero);
             }
         }
