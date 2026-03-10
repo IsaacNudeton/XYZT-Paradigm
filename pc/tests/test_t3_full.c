@@ -333,12 +333,43 @@ void run_t3_full_tests(void) {
     check("t3full: zone C crystallized", 1,
           (alive[2] > 0 && crystal[2] * 2 > alive[2]) ? 1 : 0);
 
-    /* OBSERVATION: Zone D crystallization.
-     * With relay feed-forward wiring, zone D (ASCII) may not reach majority crystal.
-     * Core check: zone D survived (alive > 0). */
-    check("t3full: zone D survived", 1, alive[3] > 0 ? 1 : 0);
-    printf("  Zone D crystal: %d/%d (%s)\n", crystal[3], alive[3],
-           (crystal[3] * 2 > alive[3]) ? "majority" : "minority — relay topology effect");
+    /* CHECK 4: Zone D crystallized — source-side valence rewards emitters
+     * that feed successful downstream collisions. Zone D nodes accumulate
+     * valence through both collision back-propagation and boredom hardening. */
+    check("t3full: zone D crystallized", 1,
+          (alive[3] > 0 && crystal[3] * 2 > alive[3]) ? 1 : 0);
+
+    /* Diagnostic: zone D valence distribution — trace why crystallization fails */
+    if (crystal[3] * 2 <= alive[3]) {
+        printf("  ** Zone D valence diagnostic (crystal=%d/%d):\n", crystal[3], alive[3]);
+        int val_bins[4] = {0}; /* [0-49] [50-99] [100-199] [200-255] */
+        for (int i = 0; i < 200; i++) {
+            if (ids[i] < 0 || ids[i] >= g0->n_nodes) continue;
+            Node *nd = &g0->nodes[ids[i]];
+            if (!nd->alive || nd->layer_zero) continue;
+            char z = nd->name[1];
+            if (z != 'D') continue;
+            int v = nd->valence;
+            if (v < 50) val_bins[0]++;
+            else if (v < 100) val_bins[1]++;
+            else if (v < 200) val_bins[2]++;
+            else val_bins[3]++;
+        }
+        printf("     val[0-49]=%d  val[50-99]=%d  val[100-199]=%d  val[200+]=%d\n",
+               val_bins[0], val_bins[1], val_bins[2], val_bins[3]);
+        /* Count edges where zone D nodes are upstream of collision sites */
+        int d_upstream = 0;
+        for (int e = 0; e < g0->n_edges; e++) {
+            Edge *ed = &g0->edges[e];
+            if (ed->weight == 0) continue;
+            int sa = ed->src_a;
+            if (sa < g0->n_nodes && g0->nodes[sa].alive) {
+                char zs = g0->nodes[sa].name[1];
+                if (zs == 'D') d_upstream++;
+            }
+        }
+        printf("     edges with zone D as src_a: %d\n", d_upstream);
+    }
 
     /* CHECK 5: Zone A survives with differentiation — with plasticity + cleaving,
      * zone A resolves fast (hot→learn fast, sever bad edges). Lc variance (CHECK 6)
@@ -412,12 +443,34 @@ void run_t3_full_tests(void) {
                    zn[z], pavg, lavg, lc_var[z], lc_cnt[z]);
         }
 
-        /* OBSERVATION: Lc variance differentiation.
-         * With relay feed-forward + massive cleaving, Lc homogenizes across zones.
-         * Informational, not invariant under topology change. */
-        printf("  Lc var diff: A=%.4f B=%.4f → %s\n", lc_var[0], lc_var[1],
-               (lc_cnt[0] > 0 && lc_cnt[1] > 0 && lc_var[0] > lc_var[1])
-               ? "A > B (plasticity differentiation)" : "converged (relay topology)");
+        /* Falsifiable: zone A (conflict) should have higher Lc variance than zone B.
+         * Bidirectional plasticity means hot zone A source nodes drive wild Lc tuning
+         * on their outgoing edges, while cold zone B edges freeze. */
+        check("t3full: zone A Lc var > zone B Lc var", 1,
+              (lc_cnt[0] > 0 && lc_cnt[1] > 0 && lc_var[0] > lc_var[1]) ? 1 : 0);
+
+        /* Diagnostic: bidirectional plasticity rate sampling */
+        if (!(lc_cnt[0] > 0 && lc_cnt[1] > 0 && lc_var[0] > lc_var[1])) {
+            printf("  ** Lc var diagnostic: A=%.6f B=%.6f (diff=%.6f)\n",
+                   lc_var[0], lc_var[1], lc_var[0] - lc_var[1]);
+            /* Sample max(src,dst) plasticity for zone A vs zone B edges */
+            double max_plast_A = 0, max_plast_B = 0;
+            int cnt_A = 0, cnt_B = 0;
+            for (int e = 0; e < g0->n_edges; e++) {
+                Edge *ed = &g0->edges[e];
+                if (ed->tl.n_cells == 0 || ed->weight == 0) continue;
+                double ps = (double)g0->nodes[ed->src_a].plasticity;
+                double pd = (double)g0->nodes[ed->dst].plasticity;
+                double pm = ps > pd ? ps : pd;
+                char zs = (ed->src_a < g0->n_nodes) ? g0->nodes[ed->src_a].name[1] : '?';
+                char zd = (ed->dst < g0->n_nodes) ? g0->nodes[ed->dst].name[1] : '?';
+                if (zs == 'A' || zd == 'A') { max_plast_A += pm; cnt_A++; }
+                if (zs == 'B' || zd == 'B') { max_plast_B += pm; cnt_B++; }
+            }
+            printf("     avg max(src,dst) plast: A=%.4f (%d edges) B=%.4f (%d edges)\n",
+                   cnt_A > 0 ? max_plast_A/cnt_A : 0, cnt_A,
+                   cnt_B > 0 ? max_plast_B/cnt_B : 0, cnt_B);
+        }
     }
 
     /* Structural cleaving diagnostics (uses engine counter — S6 prune compacts array) */

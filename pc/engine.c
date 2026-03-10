@@ -597,9 +597,13 @@ int graph_learn(Graph *g) {
         double target_lc = e->tl.L_base * (200.0 - (double)corr) / 100.0;
         if (target_lc < 0.1) target_lc = 0.1;
         if (target_lc > 10.0) target_lc = 10.0;
-        /* Move Lc toward target at mismatch tax rate, scaled by destination plasticity */
+        /* Bidirectional plasticity: hottest participant drives learning rate.
+         * Feed-forward edges (src_a==src_b) put zone nodes as sources — without
+         * this, hot emitters pump signal with no thermodynamic return. */
         double rate = (double)MISMATCH_TAX_NUM / (double)MISMATCH_TAX_DEN;
-        double plast = (double)g->nodes[e->dst].plasticity;
+        double plast_dst = (double)g->nodes[e->dst].plasticity;
+        double plast_src = (double)g->nodes[e->src_a].plasticity;
+        double plast = plast_dst > plast_src ? plast_dst : plast_src;
         if (plast < (double)PLASTICITY_MIN) plast = (double)PLASTICITY_MIN;
         rate *= plast;
         for (int c = 0; c < e->tl.n_cells; c++) {
@@ -1391,7 +1395,20 @@ void engine_tick(Engine *eng) {
                         n->I_energy - val_energy : 0;
                     /* Collision-only valence: mass forms at interaction vertices.
                      * Skip contradicted nodes — disputed nodes don't harden. */
-                    if (n->valence < 255 && !n->contradicted) n->valence++;
+                    if (n->valence < 255 && !n->contradicted) {
+                        n->valence++;
+                        /* Source-side valence: reward upstream nodes that fed this collision.
+                         * Feed-forward edges (i,i,j) make j the collision site but i the emitter.
+                         * Without this, emitters never crystallize — cut off from collision valence. */
+                        for (int e_back = 0; e_back < g->n_edges; e_back++) {
+                            Edge *ed = &g->edges[e_back];
+                            if (ed->dst == (uint16_t)i && ed->weight > 0) {
+                                Node *src = &g->nodes[ed->src_a];
+                                if (src->alive && !src->contradicted && src->valence < 255)
+                                    src->valence++;
+                            }
+                        }
+                    }
                 } else {
                     n->I_energy = 0;
                 }

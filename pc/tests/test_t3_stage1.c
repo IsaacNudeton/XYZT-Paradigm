@@ -287,12 +287,11 @@ void run_t3_stage1_tests(void) {
     int b_crystallized = (alive_B > 0 && crystal_B * 2 > alive_B) ? 1 : 0;
     check("t3s1: zone B crystallized (stable daemon)", 1, b_crystallized);
 
-    /* OBSERVATION: Zone A incoherence vs zone B.
-     * With relay feed-forward wiring, zone A propagates conflict through chains.
-     * Plasticity still heats incoherent nodes, but topology change means
-     * zone A may not resolve faster than zone B. Informational, not invariant. */
-    printf("  Incoherence: A=%d B=%d → %s\n", incoh_A, incoh_B,
-           (incoh_A <= incoh_B) ? "A resolved (plasticity effect)" : "A still hot (relay propagation)");
+    /* CHECK 3: Zone A incoherence resolves — bidirectional plasticity means
+     * hot source nodes drive fast learning on feed-forward edges.
+     * Zone A should resolve at least as fast as zone B. */
+    check("t3s1: zone A resolved (bidirectional plasticity)", 1,
+          (incoh_A <= incoh_B) ? 1 : 0);
 
     /* OBSERVATION: Zone C weight direction (BC vs AC).
      * Inner T children change weight dynamics — frustrated children produce
