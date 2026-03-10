@@ -603,7 +603,10 @@ int graph_learn(Graph *g) {
         double rate = (double)MISMATCH_TAX_NUM / (double)MISMATCH_TAX_DEN;
         double plast_dst = (double)g->nodes[e->dst].plasticity;
         double plast_src = (double)g->nodes[e->src_a].plasticity;
-        double plast = plast_dst > plast_src ? plast_dst : plast_src;
+        /* Product, not max: coupled thermodynamic state of both endpoints.
+         * Hot×Hot (1.5×1.5=2.25) vs Cold×Cold (0.8×0.8=0.64) = 3.5x spread.
+         * max() only gave 1% difference — a low-pass filter on temperature. */
+        double plast = plast_dst * plast_src;
         if (plast < (double)PLASTICITY_MIN) plast = (double)PLASTICITY_MIN;
         rate *= plast;
         for (int c = 0; c < e->tl.n_cells; c++) {
@@ -1404,8 +1407,10 @@ void engine_tick(Engine *eng) {
                             Edge *ed = &g->edges[e_back];
                             if (ed->dst == (uint16_t)i && ed->weight > 0) {
                                 Node *src = &g->nodes[ed->src_a];
-                                if (src->alive && !src->contradicted && src->valence < 255)
-                                    src->valence++;
+                                if (src->alive && !src->contradicted && src->valence < 253) {
+                                    src->valence += 3;  /* upstream reward: +3 per collision fed */
+                                    if (src->valence > 255) src->valence = 255;
+                                }
                             }
                         }
                     }
