@@ -484,6 +484,7 @@ int  graph_learn(Graph *g);
 int  graph_compute_z(Graph *g);
 
 /* Engine lifecycle */
+int  child_tick_once(Graph *g);
 void engine_init(Engine *eng);
 void engine_destroy(Engine *eng);
 int  engine_ingest(Engine *eng, const char *name, const BitStream *data);

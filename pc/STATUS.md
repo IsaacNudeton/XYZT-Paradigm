@@ -1,7 +1,7 @@
 # XYZT Unified PC Engine — Status
 
 **Date:** March 9, 2026
-**Tests:** 253/253 passing (+ 15/15 standalone tline = 268 total)
+**Tests:** 258/258 passing (+ 15/15 standalone tline = 273 total)
 **Branch:** `tline-edges`
 **Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
 
@@ -38,6 +38,7 @@ Merges three XYZT engine versions:
 - **Per-node plasticity (temperature gradient):** `float plasticity` on every Node (0.5..2.0). Frustration heats incoherent nodes (+0.01/tick), boredom cools coherent nodes (-0.005/tick). Scales graph_learn Lc rate, S7 decay, boredom strengthen. Zone A (conflict) Lc_var=0.065 vs Zone B (stable) Lc_var=0.005 — 14x differentiation. Hot nodes resolve incoherence faster.
 - **Structural cleaving:** Phase transition at PLASTICITY_MAX — node that stays incoherent long enough severs its worst incoming edge (highest Lc). Heat consumed to break bond, plasticity resets to 1.0. 587 edges cleaved in T3 Full. S6 prune compacts away severed edges; counter tracks total.
 - **Fractal thermodynamics:** Child graphs run the same heat/cleave/cool physics as parent. Frustration heats child nodes, cleaving severs worst edge (with survival floor: won't sever last incoming edge), boredom cools and strengthens scaled by plasticity. Currently children are too stable (drive=2, err_accum=0, 36/36 edges) — mechanism planted, awaiting conflict injection.
+- **Child conflict test:** Standalone test wires fake substrate with differentiated L/R pattern, injects retina, stabilizes (30 cycles → 36 edges grown from 4), flips pattern to induce conflict, runs 50 more cycles. Child adapts: 32 edges grown total, max_plasticity=0.975. Cleaving didn't fire — flip wasn't sustained enough to push past PLASTICITY_MAX. Proves retina wiring + child learning work; cleaving needs stronger/longer contradiction to trigger.
 - **Per-node grow threshold (MDL-style):** dense nodes (n_in≥4) demand higher correlation. Incoherent nodes get 2/3 threshold. Replaced flat global `grow_mean`. Recovered tracking from 0.900 to 0.949.
 - **Transmission line edges (shift-register):** TLine embedded in every Edge. Shift-register delay line with per-cell loss and exponential smoothing (TLINE_ALPHA=0.5). Replaces FDTD (unstable on short 4-8 cell edges due to Mur boundary ringing). All 3 propagation sites (S2 boundary, S3 per-shell, child_tick_once) use tline inject/step/read. graph_learn drives Lc from bs_contain correlation. 15 standalone tests + 252 engine tests all pass.
 
@@ -115,7 +116,7 @@ Merges three XYZT engine versions:
 | sense.c | 396 | Sense layer (windowed, pass-aware) |
 | sense.h | 61 | Sense API |
 | sweep_tracking.c | 966 | Parameter sweep + tracking tests |
-| tests/ | 3117 | 11 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_tline, test_gpu) |
+| tests/ | ~3250 | 12 test files + test.h (test_core, test_lifecycle, test_observer, test_stress, test_sense, test_collision, test_t3_stage1, test_t3_full, test_save_load, test_tline, test_child_conflict, test_gpu) |
 | build.bat | — | Windows build (canonical) |
 | rebuild.bat | — | Windows rebuild (canonical) |
 

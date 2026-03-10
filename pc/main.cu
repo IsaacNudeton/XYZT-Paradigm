@@ -127,6 +127,7 @@ void run_t3_stage1_tests(void);
 void run_t3_full_tests(void);
 void run_save_load_tests(void);
 void run_tline_tests(void);
+void run_child_conflict_tests(void);
 void run_tracking_sweep(void);
 void run_sense_diagnostic(void);
 }
@@ -247,6 +248,7 @@ static void cmd_test(void) {
     run_t3_full_tests();
     run_save_load_tests();
     run_tline_tests();
+    run_child_conflict_tests();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);

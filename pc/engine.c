@@ -663,7 +663,7 @@ int graph_compute_z(Graph *g) {
  * NESTING — systems containing systems
  * ══════════════════════════════════════════════════════════════ */
 
-static int child_tick_once(Graph *g) {
+int child_tick_once(Graph *g) {
     int changed = 0;
     g->total_ticks++;
     for (int i = 0; i < g->n_edges; i++) {
