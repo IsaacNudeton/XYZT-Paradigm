@@ -68,7 +68,13 @@ static const char *ground_A[] = {
     "the lazy dog sleeps under the oak tree beside the river bank",
     "fox and dog rest together on the grassy river bank at dawn",
     "the river flows past the oak where the fox watches the dog sleep",
+    "brown fox and lazy dog share the riverbank meadow every morning",
+    "the oak tree shades the sleeping dog while the fox hunts nearby",
+    "fog rises from the river as the fox trots past the old oak",
+    "the dog wakes and follows the fox along the winding river path",
+    "beneath the oak the fox and dog drink from the cold river water",
 };
+#define CORPUS_SIZE 10
 
 static const char *ground_B[] = {
     "hydrogen bonds form between water molecules in liquid state",
@@ -76,6 +82,11 @@ static const char *ground_B[] = {
     "oxygen reacts with iron producing rust on exposed metal surfaces",
     "nitrogen makes up most of the atmosphere above sea level",
     "helium atoms resist bonding due to full electron shell configuration",
+    "silicon crystals conduct electricity when doped with phosphorus atoms",
+    "chlorine gas dissolves in water producing hydrochloric acid solution",
+    "sodium metal reacts violently with water releasing hydrogen gas",
+    "copper conducts heat and electricity through metallic bonding structure",
+    "argon remains inert even under extreme temperature and pressure",
 };
 
 static const char *contra_A[] = {
@@ -84,6 +95,11 @@ static const char *contra_A[] = {
     "the dog no longer stays at the oak tree or the river bank",
     "fox and dog separated and never returned to the river bank",
     "the river does not flow anymore and the oak is no longer standing",
+    "the riverbank meadow is empty with no fox or dog present",
+    "no oak tree stands here and no dog has ever slept beneath it",
+    "the river has not produced fog since the fox stopped coming",
+    "the dog does not follow the fox because neither visits the river",
+    "no fox or dog drinks from the river beneath any oak tree now",
 };
 
 /* Semantic contradictions: oppose ground_A meaning, zero negation keywords.
@@ -94,6 +110,11 @@ static const char *semantic_contra[] = {
     "the dog attacked the oak tree and destroyed the river bank",
     "fox and dog fought viciously and abandoned the grassy river bank at dawn",
     "the river froze solid and the oak collapsed where the fox once watched",
+    "the meadow burned and the fox escaped while the dog ran away",
+    "the oak fell into the river and the fox disappeared from the bank",
+    "fog vanished as the river dried and the fox abandoned the area",
+    "the dog chased the fox away from the river path permanently",
+    "the river froze and the oak rotted leaving the fox and dog homeless",
 };
 
 static const char *contra_B[] = {
@@ -102,14 +123,19 @@ static const char *contra_B[] = {
     "oxygen no longer reacts with iron when chromium coating applied",
     "nitrogen is no longer the majority of the atmosphere after capture",
     "helium atoms form exotic bonds under extreme magnetic confinement",
+    "silicon does not conduct when impurities are removed completely",
+    "chlorine no longer dissolves in water at extreme alkaline conditions",
+    "sodium does not react with water when coated in mineral oil barrier",
+    "copper loses conductivity when transformed into cupric oxide compound",
+    "argon is no longer inert when subjected to extreme laser ionization",
 };
 
 /* Track node IDs for scoring */
 typedef struct {
-    int ground_a[5];
-    int ground_b[5];
-    int contra_a[5];
-    int contra_b[5];
+    int ground_a[CORPUS_SIZE];
+    int ground_b[CORPUS_SIZE];
+    int contra_a[CORPUS_SIZE];
+    int contra_b[CORPUS_SIZE];
 } TrackingIDs;
 
 static void ingest_corpus(Engine *eng, const char **texts, int n, int *ids) {
@@ -142,6 +168,14 @@ typedef struct {
     int total_alive, total_crystal, total_edges;
     int32_t total_error;
     int grow_interval, prune_interval;
+
+    /* SPRT accumulation — parent inner T */
+    int32_t error_accum;
+    int heartbeats;
+    int drive;
+    int total_cleaved;
+    int32_t peak_ge;       /* peak graph_error during adaptation */
+    int32_t peak_accum;    /* peak |error_accum| during adaptation */
 } TrackingScore;
 
 static TrackingScore run_tracking(int n_adapt_cycles) {
@@ -153,8 +187,8 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     memset(&sc, 0, sizeof(sc));
 
     /* ── Phase 1: Ingest ground truth, stabilize ── */
-    ingest_corpus(&eng, ground_A, 5, ids.ground_a);
-    ingest_corpus(&eng, ground_B, 5, ids.ground_b);
+    ingest_corpus(&eng, ground_A, CORPUS_SIZE, ids.ground_a);
+    ingest_corpus(&eng, ground_B, CORPUS_SIZE, ids.ground_b);
 
     /* Stabilize: run enough cycles for crystallization.
      * 5 SUBSTRATE_INT cycles should be enough for boredom to max valence. */
@@ -163,7 +197,7 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
 
     /* Verify ground truth crystallized */
     int ga_cryst = 0, gb_cryst = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < CORPUS_SIZE; i++) {
         if (ids.ground_a[i] >= 0 && g0->nodes[ids.ground_a[i]].alive
             && g0->nodes[ids.ground_a[i]].valence >= 200) ga_cryst++;
         if (ids.ground_b[i] >= 0 && g0->nodes[ids.ground_b[i]].alive
@@ -171,18 +205,18 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     }
 
     /* ── Phase 2: Inject contradiction wave 1 (attacks cluster A) ── */
-    ingest_corpus(&eng, contra_A, 5, ids.contra_a);
+    ingest_corpus(&eng, contra_A, CORPUS_SIZE, ids.contra_a);
 
     /* Diagnostic: check negation flags, wiring between ground and contra */
     {
         int n_negated_a = 0, n_negated_b = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (ids.contra_a[i] >= 0 && g0->nodes[ids.contra_a[i]].has_negation) n_negated_a++;
             if (ids.ground_a[i] >= 0) printf("  [diag] gA[%d] id=%d neg=%d val=%d valence=%d\n",
                 i, ids.ground_a[i], g0->nodes[ids.ground_a[i]].has_negation,
                 g0->nodes[ids.ground_a[i]].val, g0->nodes[ids.ground_a[i]].valence);
         }
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (ids.contra_a[i] >= 0) printf("  [diag] cA[%d] id=%d neg=%d val=%d valence=%d\n",
                 i, ids.contra_a[i], g0->nodes[ids.contra_a[i]].has_negation,
                 g0->nodes[ids.contra_a[i]].val, g0->nodes[ids.contra_a[i]].valence);
@@ -193,8 +227,8 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
             Edge *ed = &g0->edges[e];
             if (ed->invert_a || ed->invert_b) total_inverted++;
             /* Check if this edge connects a gA node to a cA node */
-            for (int gi = 0; gi < 5; gi++) {
-                for (int ci = 0; ci < 5; ci++) {
+            for (int gi = 0; gi < CORPUS_SIZE; gi++) {
+                for (int ci = 0; ci < CORPUS_SIZE; ci++) {
                     if ((ed->src_a == ids.ground_a[gi] && ed->src_b == ids.contra_a[ci]) ||
                         (ed->src_a == ids.contra_a[ci] && ed->src_b == ids.ground_a[gi]) ||
                         (ed->src_a == ids.ground_a[gi] && ed->dst == ids.contra_a[ci]) ||
@@ -210,8 +244,8 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
         if (ids.ground_a[0] >= 0 && ids.contra_a[0] >= 0)
             mc01 = bs_mutual_contain(&g0->nodes[ids.ground_a[0]].identity,
                                      &g0->nodes[ids.contra_a[0]].identity);
-        printf("  [diag] contra_A: %d/5 negated, %d inverted edges, %d total edges\n",
-               n_negated_a, total_inverted, g0->n_edges);
+        printf("  [diag] contra_A: %d/%d negated, %d inverted edges, %d total edges\n",
+               n_negated_a, CORPUS_SIZE, total_inverted, g0->n_edges);
         printf("  [diag] gA↔cA: %d edges, %d inverted, mc(gA0,cA0)=%d\n",
                ga_ca_edges, ga_ca_inverted, mc01);
     }
@@ -219,23 +253,32 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     /* Let the engine process for n_adapt_cycles SUBSTRATE_INT intervals.
      * This is where N matters: how many observations does the engine get
      * to detect and resolve the contradiction? */
-    for (int t = 0; t < (int)SUBSTRATE_INT * n_adapt_cycles; t++)
+    int32_t peak_ge = 0, peak_accum = 0;
+    for (int t = 0; t < (int)SUBSTRATE_INT * n_adapt_cycles; t++) {
         engine_tick(&eng);
+        if (eng.graph_error > peak_ge) peak_ge = eng.graph_error;
+        int32_t aa = g0->error_accum < 0 ? -g0->error_accum : g0->error_accum;
+        if (aa > peak_accum) peak_accum = aa;
+    }
 
     /* ── Phase 3: Inject contradiction wave 2 (attacks cluster B)
      *             WHILE wave 1 is still being processed ── */
-    ingest_corpus(&eng, contra_B, 5, ids.contra_b);
+    ingest_corpus(&eng, contra_B, CORPUS_SIZE, ids.contra_b);
 
     /* Let the engine process both waves */
-    for (int t = 0; t < (int)SUBSTRATE_INT * n_adapt_cycles; t++)
+    for (int t = 0; t < (int)SUBSTRATE_INT * n_adapt_cycles; t++) {
         engine_tick(&eng);
+        if (eng.graph_error > peak_ge) peak_ge = eng.graph_error;
+        int32_t aa = g0->error_accum < 0 ? -g0->error_accum : g0->error_accum;
+        if (aa > peak_accum) peak_accum = aa;
+    }
 
     /* ── Phase 4: Score ── */
 
     /* Ground A: should have dissolved (contradicted by wave 1) */
     sc.ga_dissolved = 0;
     sc.ga_crystalized = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < CORPUS_SIZE; i++) {
         int id = ids.ground_a[i];
         if (id < 0) continue;
         Node *n = &g0->nodes[id];
@@ -246,7 +289,7 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     /* Ground B: should have dissolved (contradicted by wave 2) */
     sc.gb_dissolved = 0;
     sc.gb_crystalized = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < CORPUS_SIZE; i++) {
         int id = ids.ground_b[i];
         if (id < 0) continue;
         Node *n = &g0->nodes[id];
@@ -257,7 +300,7 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     /* Contra A: should have survived and crystallized */
     sc.ca_survived = 0;
     sc.ca_crystalized = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < CORPUS_SIZE; i++) {
         int id = ids.contra_a[i];
         if (id < 0) continue;
         Node *n = &g0->nodes[id];
@@ -268,7 +311,7 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     /* Contra B: should have survived and crystallized */
     sc.cb_survived = 0;
     sc.cb_crystalized = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < CORPUS_SIZE; i++) {
         int id = ids.contra_b[i];
         if (id < 0) continue;
         Node *n = &g0->nodes[id];
@@ -277,13 +320,13 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     }
 
     /* Compute scores */
-    sc.recall_a = sc.ga_dissolved / 5.0;
-    sc.recall_b = sc.gb_dissolved / 5.0;
-    sc.recall = (sc.ga_dissolved + sc.gb_dissolved) / 10.0;
+    sc.recall_a = sc.ga_dissolved / (double)CORPUS_SIZE;
+    sc.recall_b = sc.gb_dissolved / (double)CORPUS_SIZE;
+    sc.recall = (sc.ga_dissolved + sc.gb_dissolved) / (2.0 * CORPUS_SIZE);
 
-    sc.spec_a = sc.ca_survived / 5.0;
-    sc.spec_b = sc.cb_survived / 5.0;
-    sc.spec = (sc.ca_survived + sc.cb_survived) / 10.0;
+    sc.spec_a = sc.ca_survived / (double)CORPUS_SIZE;
+    sc.spec_b = sc.cb_survived / (double)CORPUS_SIZE;
+    sc.spec = (sc.ca_survived + sc.cb_survived) / (2.0 * CORPUS_SIZE);
 
     sc.score = sqrt(sc.recall * sc.spec);  /* geometric mean */
 
@@ -307,6 +350,14 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     sc.grow_interval = g0->grow_interval;
     sc.prune_interval = g0->prune_interval;
 
+    /* SPRT accumulation state */
+    sc.error_accum = g0->error_accum;
+    sc.heartbeats = g0->local_heartbeat;
+    sc.drive = g0->drive;
+    sc.total_cleaved = eng.total_cleaved;
+    sc.peak_ge = peak_ge;
+    sc.peak_accum = peak_accum;
+
     engine_destroy(&eng);
     return sc;
 }
@@ -315,7 +366,8 @@ void run_tracking_sweep(void) {
     printf("=== TRACKING SWEEP: adaptation quality vs SUBSTRATE_INT ===\n");
     printf("N\tscore\trecall\tspec\tga_dis\tgb_dis\tca_sur\tcb_sur\t"
            "ga_cry\tgb_cry\tca_cry\tcb_cry\talive\tcrystal\tedges\t"
-           "grow_int\tprune_int\n");
+           "grow_int\tprune_int\terr_acc\theartbeats\tdrive\tcleaved\t"
+           "peak_ge\tpeak_acc\n");
 
     /* The test gives each N the same number of adaptation CYCLES (not ticks).
      * 3 cycles per wave = 6 total. That's enough for frustration to fire
@@ -344,7 +396,8 @@ void run_tracking_sweep(void) {
         TrackingScore sc = run_tracking(adapt_cycles);
 
         printf("%u\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t"
-               "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+               "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t"
+               "%d\t%d\t%d\t%d\t%d\t%d\n",
                SUBSTRATE_INT,
                sc.score, sc.recall, sc.spec,
                sc.ga_dissolved, sc.gb_dissolved,
@@ -352,7 +405,9 @@ void run_tracking_sweep(void) {
                sc.ga_crystalized, sc.gb_crystalized,
                sc.ca_crystalized, sc.cb_crystalized,
                sc.total_alive, sc.total_crystal, sc.total_edges,
-               sc.grow_interval, sc.prune_interval);
+               sc.grow_interval, sc.prune_interval,
+               sc.error_accum, sc.heartbeats, sc.drive, sc.total_cleaved,
+               sc.peak_ge, sc.peak_accum);
 
         break;  /* Only one run per compilation. Sweep script handles iteration. */
     }
@@ -541,8 +596,8 @@ void run_sense_diagnostic(void) {
         Graph *g0 = &eng.shells[0].g;
 
         /* Ingest only cluster A ground truth */
-        int ids[5];
-        for (int i = 0; i < 5; i++)
+        int ids[CORPUS_SIZE];
+        for (int i = 0; i < CORPUS_SIZE; i++)
             ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
 
         /* Stabilize */
@@ -564,7 +619,7 @@ void run_sense_diagnostic(void) {
 
         /* Node state */
         printf("  Node state:\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (ids[i] < 0) continue;
             Node *n = &g0->nodes[ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d contradicted=%d alive=%d\n",
@@ -588,7 +643,7 @@ void run_sense_diagnostic(void) {
 
         printf("  Node state:\n");
         int dead_a = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (ids[i] < 0) continue;
             Node *n = &g0->nodes[ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d contradicted=%d alive=%d\n",
@@ -600,7 +655,7 @@ void run_sense_diagnostic(void) {
 
         /* Polarity prediction: control group (should all predict 0) */
         printf("\n  ── POLARITY PREDICTION (control) ──\n");
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             if (ids[i] >= 0)
                 engine_predict_polarity(&eng, ids[i], ground_A[i]);
         engine_polarity_summary(&eng);
@@ -616,7 +671,7 @@ void run_sense_diagnostic(void) {
 
         /* Ingest cluster A ground truth */
         int gt_ids[5];
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             gt_ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
 
         /* Stabilize */
@@ -636,7 +691,7 @@ void run_sense_diagnostic(void) {
         print_profile("B-stable", &p_before);
 
         printf("  Node state before contradiction:\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d contradicted=%d alive=%d\n",
@@ -645,7 +700,7 @@ void run_sense_diagnostic(void) {
 
         /* Inject contradictions */
         int ct_ids[5];
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             ct_ids[i] = engine_ingest_text(&eng, contra_A[i], contra_A[i]);
 
         /* Snapshot sense IMMEDIATELY after contradiction injection */
@@ -659,7 +714,7 @@ void run_sense_diagnostic(void) {
         dump_sense("B-injected", &eng, &sr_injected);
 
         printf("  Ground truth state (post-injection, pre-adaptation):\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d contradicted=%d I_energy=%d\n",
@@ -684,7 +739,7 @@ void run_sense_diagnostic(void) {
 
         printf("  Ground truth state (post-adaptation):\n");
         int dead_b = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d contradicted=%d alive=%d I_energy=%d\n",
@@ -692,7 +747,7 @@ void run_sense_diagnostic(void) {
             if (!n->alive || n->valence < 100) dead_b++;
         }
         printf("  Contradiction node state:\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (ct_ids[i] < 0) continue;
             Node *n = &g0->nodes[ct_ids[i]];
             printf("    [%d] val=%-8d valence=%-3d coherent=%d has_neg=%d alive=%d I_energy=%d\n",
@@ -704,13 +759,13 @@ void run_sense_diagnostic(void) {
 
         /* Polarity prediction: ground truth (should predict 0 — normal) */
         printf("\n  ── POLARITY PREDICTION (ground truth) ──\n");
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             if (gt_ids[i] >= 0)
                 engine_predict_polarity(&eng, gt_ids[i], ground_A[i]);
 
         /* Polarity prediction: contradictions (should predict 1 — invert) */
         printf("  ── POLARITY PREDICTION (contradictions) ──\n");
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             if (ct_ids[i] >= 0)
                 engine_predict_polarity(&eng, ct_ids[i], contra_A[i]);
         engine_polarity_summary(&eng);
@@ -728,7 +783,7 @@ void run_sense_diagnostic(void) {
         /* Phase 1: ingest 10 normal sentences from both corpora */
         int normal_ids[10];
         printf("  Phase 1: ingesting 10 normal sentences...\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             normal_ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
             normal_ids[5 + i] = engine_ingest_text(&eng, ground_B[i], ground_B[i]);
         }
@@ -788,7 +843,7 @@ void run_sense_diagnostic(void) {
         }
 
         printf("  ── POLARITY PREDICTION (extra normal — should be 0) ──\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             /* Find the node by name since we didn't save IDs carefully */
             int nid = graph_find(g0, extra_normal[i]);
             if (nid >= 0 && g0->nodes[nid].alive) {
@@ -825,7 +880,7 @@ void run_sense_diagnostic(void) {
 
         /* Ingest ground truth */
         int gt_ids[5];
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             gt_ids[i] = engine_ingest_text(&eng, ground_A[i], ground_A[i]);
 
         /* Stabilize */
@@ -835,7 +890,7 @@ void run_sense_diagnostic(void) {
 
         /* Snapshot ground truth state */
         printf("  Ground truth after stabilization:\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    gt[%d] val=%-8d valence=%-3d coherent=%d crystal=%d alive=%d\n",
@@ -846,7 +901,7 @@ void run_sense_diagnostic(void) {
         /* Ingest semantic contradictions */
         printf("  Ingesting semantic contradictions (zero negation keywords):\n");
         int sc_ids[5];
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             sc_ids[i] = engine_ingest_text(&eng, semantic_contra[i], semantic_contra[i]);
             if (sc_ids[i] >= 0) {
                 Node *n = &g0->nodes[sc_ids[i]];
@@ -857,7 +912,7 @@ void run_sense_diagnostic(void) {
 
         /* Snapshot immediately after injection */
         printf("  Ground truth immediately after semantic injection:\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    gt[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d I_energy=%d\n",
@@ -874,7 +929,7 @@ void run_sense_diagnostic(void) {
         printf("\n  ── POST-ADAPTATION GRID ──\n");
         printf("  Ground truth nodes:\n");
         int gt_dead = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0) continue;
             Node *n = &g0->nodes[gt_ids[i]];
             printf("    gt[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d "
@@ -887,7 +942,7 @@ void run_sense_diagnostic(void) {
 
         printf("  Semantic contradiction nodes:\n");
         int sc_dead = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (sc_ids[i] < 0) continue;
             Node *n = &g0->nodes[sc_ids[i]];
             printf("    sc[%d] val=%-8d valence=%-3d coherent=%d contradicted=%d "
@@ -905,18 +960,18 @@ void run_sense_diagnostic(void) {
         /* Observer predictions */
         printf("\n  ── OBSERVER PREDICTIONS ──\n");
         printf("  Ground truth (expect 0 — normal):\n");
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             if (gt_ids[i] >= 0)
                 engine_predict_polarity(&eng, gt_ids[i], ground_A[i]);
 
         printf("  Semantic contradictions (expect 0 — observer blind):\n");
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < CORPUS_SIZE; i++)
             if (sc_ids[i] >= 0)
                 engine_predict_polarity(&eng, sc_ids[i], semantic_contra[i]);
 
         /* BitStream overlap: what does the transducer actually see? */
         printf("\n  ── BITSTREAM OVERLAP ──\n");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < CORPUS_SIZE; i++) {
             if (gt_ids[i] < 0 || sc_ids[i] < 0) continue;
             BitStream *gt_bs = &g0->nodes[gt_ids[i]].identity;
             BitStream *sc_bs = &g0->nodes[sc_ids[i]].identity;
