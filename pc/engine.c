@@ -752,6 +752,24 @@ int child_tick_once(Graph *g) {
         }
     }
 
+    /* ── Prune: remove edges conservation and Hebbian starved ──
+     * Same pattern as parent S6. Conservation crushes overloaded edges
+     * to weight 1-3. Hebbian weakens inactive edges. Without prune,
+     * dead edges persist forever (343 on 13 nodes = permanent hairball).
+     * No arithmetic filter needed — topology already did the sorting. */
+    {
+        int w = 0;
+        for (int e = 0; e < g->n_edges; e++) {
+            if (g->edges[e].weight >= (uint8_t)PRUNE_FLOOR) {
+                if (w != e) g->edges[w] = g->edges[e];
+                w++;
+            } else {
+                g->total_pruned++;
+            }
+        }
+        g->n_edges = w;
+    }
+
     /* ── Grow: wire co-active pairs to downstream nodes ── */
     if (g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
         int out = g->n_nodes - 1;  /* output node is always last */

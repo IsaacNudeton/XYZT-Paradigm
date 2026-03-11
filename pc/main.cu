@@ -444,11 +444,12 @@ static void cmd_test(void) {
             if (eng.child_owner[i] < 0) continue;
             Graph *c = &eng.child_pool[i];
             printf("  child[%d]: owner=%d ticks=%llu learns=%llu edges=%d "
-                   "grown=%llu err_accum=%d drive=%d hb=%d\n",
+                   "grown=%llu pruned=%llu err_accum=%d drive=%d hb=%d\n",
                    i, eng.child_owner[i],
                    (unsigned long long)c->total_ticks,
                    (unsigned long long)c->total_learns,
                    c->n_edges, (unsigned long long)c->total_grown,
+                   (unsigned long long)c->total_pruned,
                    c->error_accum, c->drive, c->local_heartbeat);
         }
         printf("  Children alive: %s\n",
