@@ -441,6 +441,11 @@ void run_t3_full_tests(void) {
     }
 
     /* Structural cleaving diagnostics (uses engine counter — S6 prune compacts array) */
+    printf("\n  --- Parent SPRT ---\n");
+    printf("  Parent SPRT: error_accum=%d heartbeats=%d drive=%d\n",
+           eng.shells[0].g.error_accum, eng.shells[0].g.local_heartbeat,
+           eng.shells[0].g.drive);
+
     printf("\n  --- Structural Cleaving ---\n");
     printf("  Total cleaved: %d\n", eng.total_cleaved);
 

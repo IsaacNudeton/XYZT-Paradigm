@@ -1800,6 +1800,19 @@ void engine_tick(Engine *eng) {
                 eng->graph_error = 0;
         }
 
+        /* TYXZT: Parent SPRT accumulation — inner T for root graph.
+         * Accumulate graph_error delta across heartbeats instead of
+         * thresholding instantaneously. Decay: half-life ~5 heartbeats
+         * (same 7/8 ratio as child inner T). */
+        {
+            Graph *g0_acc = &eng->shells[0].g;
+            int32_t delta = eng->graph_error - g0_acc->prev_output;
+            g0_acc->error_accum += delta;
+            g0_acc->error_accum = g0_acc->error_accum * 7 / 8;
+            g0_acc->prev_output = eng->graph_error;
+            g0_acc->local_heartbeat++;
+        }
+
         int32_t error = eng->onetwo.feedback[7];
         int32_t stability = eng->onetwo.feedback[4];
         int32_t energy = eng->onetwo.feedback[5];
@@ -1922,14 +1935,24 @@ void engine_tick(Engine *eng) {
         int32_t abs_fp = fp_error < 0 ? -fp_error : fp_error;
         int32_t stability = eng->onetwo.feedback[4];
 
-        /* Two signals, two thresholds. Either can trigger frustration.
-         * feedback[7] (fingerprint delta): absolute, scale 0-100+, thresh SUBSTRATE_INT/4
-         * graph_error (incoherence %): ratio 0-100, thresh from mismatch tax rate */
+        /* TYXZT: Drive state from SPRT accumulation, not single-tick snapshot.
+         * error_accum integrates graph_error deltas over multiple heartbeats.
+         * Positive accumulation = structure dissolving = frustration.
+         * Near-zero = stable = curiosity. Negative = converging = boredom. */
+        Graph *g0_drive = &eng->shells[0].g;
+        int32_t accumulated = g0_drive->error_accum;
+        int32_t abs_accum = accumulated < 0 ? -accumulated : accumulated;
+
         int32_t fp_thresh = (int32_t)(SUBSTRATE_INT / 4);                           /* = 34 */
         int32_t ge_thresh = (int32_t)(MISMATCH_TAX_NUM * 400 / MISMATCH_TAX_DEN);  /* = 14 */
-        int frustrated = (abs_fp > fp_thresh) || (eng->graph_error > ge_thresh);
-        int32_t abs_error = abs_fp > eng->graph_error ? abs_fp : eng->graph_error;
-        int32_t silence_thresh    = (int32_t)(MISMATCH_TAX_NUM);
+
+        /* Frustration: accumulated error above threshold OR instantaneous spike.
+         * Keep the instantaneous path — a sudden large error shouldn't wait
+         * for accumulation to catch up. Belt and suspenders. */
+        int frustrated = (abs_accum > fp_thresh) || (abs_fp > fp_thresh) || (eng->graph_error > ge_thresh);
+        int32_t abs_error = abs_accum > abs_fp ? abs_accum : abs_fp;
+        if (eng->graph_error > abs_error) abs_error = eng->graph_error;
+        int32_t silence_thresh = (int32_t)(MISMATCH_TAX_NUM);
 
         /* ── FRUSTRATION: either signal above its threshold ──
          * Seek connections. Grow faster. Find and erode the worst
@@ -2014,11 +2037,15 @@ void engine_tick(Engine *eng) {
                     }
                 }
             }
+            g0->drive = 1;  /* frustration */
         }
 
         /* ── CURIOSITY: error positive but not alarming ──
          * The system is learning. Do nothing. The absence of intervention
          * IS curiosity. This comment exists so the absence is intentional. */
+        if (!frustrated && !(abs_error < silence_thresh && stability)) {
+            g0_drive->drive = 0;  /* curiosity */
+        }
 
         /* ── BOREDOM: error below noise floor + system stable ──
          * Crystallize COHERENT active nodes only. A node must be:
@@ -2059,6 +2086,8 @@ void engine_tick(Engine *eng) {
             /* Grow slower: stop seeking, digest what you have */
             g0->grow_interval = g0->grow_interval * 3 / 2;
             if (g0->grow_interval > 200) g0->grow_interval = 200;
+
+            g0->drive = 2;  /* boredom */
         }
     }
 }

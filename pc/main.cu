@@ -455,6 +455,9 @@ static void cmd_test(void) {
         printf("  Children alive: %s\n",
                (eng.n_children > 0 && eng.child_pool[0].total_learns > 0)
                ? "YES" : "NO");
+        printf("  Parent SPRT: error_accum=%d heartbeats=%d drive=%d\n",
+               eng.shells[0].g.error_accum, eng.shells[0].g.local_heartbeat,
+               eng.shells[0].g.drive);
         engine_destroy(&eng);
     }
 }
