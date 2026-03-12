@@ -715,6 +715,41 @@ int graph_compute_topology(Graph *g, int z_depth) {
  * ══════════════════════════════════════════════════════════════ */
 
 int child_tick_once(Graph *g) {
+    /* ══════════════════════════════════════════════════════════════
+     * NEW: Child Hebbian Learning (Retinal Co-activation)
+     * Direct wiring between co-active retina nodes
+     * ══════════════════════════════════════════════════════════════ */
+    int new_edges_grown = 0;
+    
+    for (int i = 0; i < g->n_nodes; i++) {
+        Node *a = &g->nodes[i];
+        if (!a->alive || a->val < 128) continue;
+
+        for (int j = i + 1; j < g->n_nodes; j++) {
+            Node *b = &g->nodes[j];
+            if (!b->alive || b->val < 128) continue;
+
+            int e_idx = graph_find_edge(g, a->id, b->id, 0);
+            if (e_idx >= 0) {
+                /* Edge exists: strengthen */
+                int nw = g->edges[e_idx].weight + 2;
+                g->edges[e_idx].weight = (nw > 255) ? 255 : (uint8_t)nw;
+                
+                if (a->valence < 255) a->valence++;
+                if (b->valence < 255) b->valence++;
+            } else {
+                /* No edge: grow new connection (limit per tick) */
+                if (new_edges_grown < 10) {
+                    graph_wire(g, a->id, b->id, 0, 16, 0); 
+                    new_edges_grown++;
+                }
+            }
+        }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+     * Original TLine propagation
+     * ══════════════════════════════════════════════════════════════ */
     int changed = 0;
     g->total_ticks++;
     for (int i = 0; i < g->n_edges; i++) {
