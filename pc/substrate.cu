@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "engine.h"
 #include "substrate.cuh"
 
 /* Portable count-trailing-zeros for host code */
@@ -459,6 +460,75 @@ extern "C" int substrate_inject_gateways(int n_cubes) {
 
     cudaError_t err = cudaDeviceSynchronize();
     return (err == cudaSuccess) ? 0 : -1;
+}
+
+extern "C" int substrate_seed_gateways(const Engine *eng, int n_cubes) {
+    /* Seed gateway lanes from CPU engine nodes at cube boundaries.
+     * Nodes at cube faces send signals into neighboring cubes via gateway routing.
+     * 
+     * For each alive engine node:
+     *   1. Map to voxel position
+     *   2. If at cube face, set corresponding gateway lane
+     *   3. Lane value = node valence (activity level)
+     */
+    if (!d_gateways || n_cubes > d_allocated) return -1;
+    if (!eng) return -1;
+
+    const Graph *g0 = &eng->shells[0].g;
+    
+    /* Download gateway state */
+    GatewayState3D *h_gw = (GatewayState3D *)calloc(n_cubes, sizeof(GatewayState3D));
+    cudaMemcpy(h_gw, d_gateways, n_cubes * sizeof(GatewayState3D), cudaMemcpyDeviceToHost);
+
+    /* Seed gateway lanes from engine nodes */
+    for (int i = 0; i < g0->n_nodes; i++) {
+        const Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+
+        /* Map node to voxel */
+        int x = coord_x(n->coord) % (VOL_X * CUBE_DIM);
+        int y = coord_y(n->coord) % (VOL_Y * CUBE_DIM);
+        int z = coord_z(n->coord) % (VOL_Z * CUBE_DIM);
+
+        int cx = x / CUBE_DIM, cy = y / CUBE_DIM, cz = z / CUBE_DIM;
+        int cube_id = cube_id_from(cx, cy, cz);
+        if (cube_id < 0 || cube_id >= n_cubes) continue;
+
+        int lx = x % CUBE_DIM, ly = y % CUBE_DIM, lz = z % CUBE_DIM;
+
+        /* Check if at cube face — if so, seed the corresponding gateway lane */
+        GatewayState3D *gw = &h_gw[cube_id];
+        
+        /* +X face (lx = CUBE_DIM-1) → send to +X neighbor */
+        if (lx == CUBE_DIM - 1 && n->valence > 50)
+            gw->lane[0] = n->valence > 255 ? 255 : n->valence;
+        
+        /* -X face (lx = 0) → send to -X neighbor */
+        if (lx == 0 && n->valence > 50)
+            gw->lane[1] = n->valence > 255 ? 255 : n->valence;
+        
+        /* +Y face (ly = CUBE_DIM-1) → send to +Y neighbor */
+        if (ly == CUBE_DIM - 1 && n->valence > 50)
+            gw->lane[2] = n->valence > 255 ? 255 : n->valence;
+        
+        /* -Y face (ly = 0) → send to -Y neighbor */
+        if (ly == 0 && n->valence > 50)
+            gw->lane[3] = n->valence > 255 ? 255 : n->valence;
+        
+        /* +Z face (lz = CUBE_DIM-1) → send to +Z neighbor */
+        if (lz == CUBE_DIM - 1 && n->valence > 50)
+            gw->lane[4] = n->valence > 255 ? 255 : n->valence;
+        
+        /* -Z face (lz = 0) → send to -Z neighbor */
+        if (lz == 0 && n->valence > 50)
+            gw->lane[5] = n->valence > 255 ? 255 : n->valence;
+    }
+
+    /* Upload seeded gateway state */
+    cudaMemcpy(d_gateways, h_gw, n_cubes * sizeof(GatewayState3D), cudaMemcpyHostToDevice);
+    free(h_gw);
+
+    return 0;
 }
 
 extern "C" void substrate_hebbian_update(CubeState *cubes, int n_cubes) {

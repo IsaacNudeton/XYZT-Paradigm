@@ -144,6 +144,10 @@ int substrate_route_step(int n_cubes);
  * Call after route_step, before tick. */
 int substrate_inject_gateways(int n_cubes);
 
+/* Seed gateway lanes from CPU engine nodes at cube boundaries.
+ * Call before substrate_tick, after wire_engine_to_gpu. */
+int substrate_seed_gateways(const Engine *eng, int n_cubes);
+
 /* Update substrate weights (Hebbian, called from CPU) */
 void substrate_hebbian_update(CubeState *cubes, int n_cubes);
 

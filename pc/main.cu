@@ -698,6 +698,7 @@ static void cmd_t3(int argc, char *argv[]) {
     /* Sync to GPU */
     if (gpu_ok) {
         wire_engine_to_gpu(&eng, h_cubes, n_cubes);
+        substrate_seed_gateways(&eng, n_cubes);  /* Seed gateway lanes from CPU nodes at cube faces */
         substrate_upload(h_cubes, n_cubes);
     }
 
@@ -1053,6 +1054,7 @@ static void cmd_run(void) {
                     wire_gpu_to_engine(&eng, h_cubes, n_cubes);
                     wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
                     wire_engine_to_gpu(&eng, h_cubes, n_cubes);
+                    substrate_seed_gateways(&eng, n_cubes);  /* Seed gateway lanes from CPU nodes at cube faces */
                     substrate_upload(h_cubes, n_cubes);
                 }
             }
