@@ -270,7 +270,7 @@ void run_core_tests(void) {
         if (e_sim < 0) e_sim = graph_find_edge(g0, hb, ha, hb);
         if (e_diff < 0) e_diff = graph_find_edge(g0, hc, ha, hc);
         (void)e_sim; (void)e_diff; /* suppress unused warnings before learn */
-        graph_learn(g0);
+        graph_learn(g0, 100);  /* baseline structural_match = 100 (normal) */
         uint8_t w_sim_after = (e_sim >= 0) ? g0->edges[e_sim].weight : 0;
         uint8_t w_diff_after = (e_diff >= 0) ? g0->edges[e_diff].weight : 0;
         check("similar edge exists", 1, e_sim >= 0 ? 1 : 0);

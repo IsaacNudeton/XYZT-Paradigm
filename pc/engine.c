@@ -584,8 +584,16 @@ void engine_polarity_reset(Engine *eng) {
     eng->pol_kw_total = eng->pol_kw_invert = 0;
 }
 
-int graph_learn(Graph *g) {
+int graph_learn(Graph *g, int32_t structural_match) {
     int changed = 0;
+    /* ONETWO feedback gating: structural_match controls learning rate.
+     * Baseline 100 = normal (1.0x), <30 = near freeze (0.1-0.3x), >150 = accelerated (1.5-2.0x).
+     * This is the thermodynamic clutch: low match = slipping (don't lock bad topology),
+     * high match = engaged (rapidly crystallize good configuration). */
+    double match_gate = (double)structural_match / 100.0;
+    if (match_gate < 0.1) match_gate = 0.1;
+    if (match_gate > 2.0) match_gate = 2.0;
+
     for (int i = 0; i < g->n_edges; i++) {
         Edge *e = &g->edges[i];
         if (e->tl.n_cells == 0) continue;
@@ -608,7 +616,8 @@ int graph_learn(Graph *g) {
          * max() only gave 1% difference — a low-pass filter on temperature. */
         double plast = plast_dst * plast_src;
         if (plast < (double)PLASTICITY_MIN) plast = (double)PLASTICITY_MIN;
-        rate *= plast;
+        /* Apply ONETWO gating multiplier: plasticity × structural match. */
+        rate *= plast * match_gate;
         for (int c = 0; c < e->tl.n_cells; c++) {
             double error = target_lc - e->tl.Lc[c];
             e->tl.Lc[c] += error * rate;
@@ -1646,7 +1655,7 @@ void engine_tick(Engine *eng) {
     /* ── S9: Hebbian + topology ─────────────────── */
     if (eng->learn_interval > 0 && eng->total_ticks % (unsigned)eng->learn_interval == 0) {
         for (int s = 0; s < eng->n_shells; s++) {
-            graph_learn(&eng->shells[s].g);
+            graph_learn(&eng->shells[s].g, eng->onetwo.feedback[0]);
             graph_compute_topology(&eng->shells[s].g, s);
         }
     }
