@@ -313,11 +313,11 @@ void run_core_tests(void) {
         g0->nodes[src].val = 42;
         graph_wire(g0, src, src, mid, 255, 0);
         graph_wire(g0, mid, mid, dst, 255, 0);
-        int max_z = graph_compute_z(g0);
-        check("Z chain has depth", 1, max_z >= 2 ? 1 : 0);
-        check("src at Z=0", 0, coord_z(g0->nodes[src].coord));
-        check("mid at Z=1", 1, coord_z(g0->nodes[mid].coord));
-        check("dst at Z=2", 2, coord_z(g0->nodes[dst].coord));
+        int max_y = graph_compute_topology(g0, 0);
+        check("Y chain has depth", 1, max_y >= 2 ? 1 : 0);
+        check("src at Y=0", 0, coord_y(g0->nodes[src].coord));
+        check("mid at Y=1", 1, coord_y(g0->nodes[mid].coord));
+        check("dst at Y=2", 2, coord_y(g0->nodes[dst].coord));
         for (int t = 0; t < 25; t++) engine_tick(&eng);
         check("mid received signal", 1, g0->nodes[mid].val != 0 ? 1 : 0);
         check("dst received cascade", 1, g0->nodes[dst].val != 0 ? 1 : 0);

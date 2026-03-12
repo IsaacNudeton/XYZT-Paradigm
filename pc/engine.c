@@ -622,48 +622,83 @@ int graph_learn(Graph *g) {
     return changed;
 }
 
-int graph_compute_z(Graph *g) {
+/* TYXZT Coordinate Mapping: Position IS Meaning
+ * Y = Sequential distinction (topological depth along path)
+ * X = Parallel distinction (independent signal lane)
+ * Z = Abstraction level (shell nesting depth passed as arg) 
+ */
+int graph_compute_topology(Graph *g, int z_depth) {
     if (g->n_nodes == 0) return 0;
-    int *z_level = (int *)calloc(g->n_nodes, sizeof(int));
-    uint8_t *bidir = (uint8_t *)calloc(g->n_edges, sizeof(uint8_t));
+    
+    int y_level[MAX_NODES] = {0};
+    int x_lane[MAX_NODES];
+    for (int i = 0; i < MAX_NODES; i++) x_lane[i] = -1;
 
-    for (int e = 0; e < g->n_edges; e++) {
-        if (g->edges[e].weight == 0) continue;
-        int d = g->edges[e].dst, sa = g->edges[e].src_a;
-        for (int j = 0; j < g->n_edges; j++) {
-            if (j == e) continue;
-            if (g->edges[j].src_a == d && g->edges[j].dst == sa) {
-                bidir[e] = bidir[j] = 1;
-                break;
+    int current_lane = 0;
+    int max_y = 0;
+
+    /* 1. Identify roots (injection points with 0 incoming active edges) */
+    for (int i = 0; i < g->n_nodes; i++) {
+        if (!g->nodes[i].alive) continue;
+        int n_in = 0;
+        for (int e = 0; e < g->n_edges; e++) {
+            if (g->edges[e].dst == i && g->edges[e].weight > 0 && g->nodes[g->edges[e].src_a].alive) {
+                n_in++;
             }
+        }
+        if (n_in == 0) {
+            x_lane[i] = current_lane++;
+            y_level[i] = 0; /* Sequence starts at 0 */
         }
     }
 
+    /* 2. Iterative relaxation to propagate Y (sequence) and X (lane) */
     int changed = 1;
-    for (int iter = 0; iter < 100 && changed; iter++) {
+    int iters = 0;
+    while (changed && iters < g->n_nodes) {
         changed = 0;
+        iters++;
         for (int e = 0; e < g->n_edges; e++) {
-            if (g->edges[e].weight == 0 || bidir[e]) continue;
-            int sa = g->edges[e].src_a, sb = g->edges[e].src_b, d = g->edges[e].dst;
-            if (sa == d || sb == d) continue;
-            int max_src = z_level[sa] > z_level[sb] ? z_level[sa] : z_level[sb];
-            if (z_level[d] < max_src + 1) {
-                z_level[d] = max_src + 1;
+            Edge *ed = &g->edges[e];
+            if (ed->weight == 0) continue;
+            int s = ed->src_a;
+            int d = ed->dst;
+            if (!g->nodes[s].alive || !g->nodes[d].alive) continue;
+            if (s == d) continue; /* skip self-loops */
+
+            /* Propagate Sequence (Y): Max depth along the path */
+            if (y_level[d] < y_level[s] + 1) {
+                y_level[d] = y_level[s] + 1;
+                changed = 1;
+            }
+
+            /* Propagate Parallel Lane (X): Inherit lane from source */
+            if (x_lane[s] != -1 && x_lane[d] == -1) {
+                x_lane[d] = x_lane[s];
                 changed = 1;
             }
         }
     }
 
-    int max_z = 0;
+    /* 3. Handle isolated cycles (nodes with no connection to roots) */
     for (int i = 0; i < g->n_nodes; i++) {
-        Coord c = g->nodes[i].coord;
-        g->nodes[i].coord = coord_pack(coord_x(c), coord_y(c), z_level[i]);
-        if (z_level[i] > max_z) max_z = z_level[i];
+        if (g->nodes[i].alive && x_lane[i] == -1) {
+            x_lane[i] = current_lane++;
+        }
     }
 
-    free(z_level);
-    free(bidir);
-    return max_z;
+    /* 4. Pack the strictly structural coordinates */
+    for (int i = 0; i < g->n_nodes; i++) {
+        if (g->nodes[i].alive) {
+            uint32_t x = (uint32_t)(x_lane[i] & 0x3FF);
+            uint32_t y = (uint32_t)(y_level[i] & 0x3FF);
+            uint32_t z = (uint32_t)(z_depth & 0x3FF);
+            g->nodes[i].coord = coord_pack(x, y, z);
+            if (y_level[i] > max_y) max_y = y_level[i];
+        }
+    }
+    
+    return max_y;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1608,11 +1643,11 @@ void engine_tick(Engine *eng) {
         eng->boundary_interval = adaptive_interval(eng->boundary_interval, eng->n_boundary_edges - before, 10, 500);
     }
 
-    /* ── S9: Hebbian + Z ─────────────────── */
+    /* ── S9: Hebbian + topology ─────────────────── */
     if (eng->learn_interval > 0 && eng->total_ticks % (unsigned)eng->learn_interval == 0) {
         for (int s = 0; s < eng->n_shells; s++) {
             graph_learn(&eng->shells[s].g);
-            graph_compute_z(&eng->shells[s].g);
+            graph_compute_topology(&eng->shells[s].g, s);
         }
     }
 

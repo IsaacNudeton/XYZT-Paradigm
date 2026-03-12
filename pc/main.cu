@@ -365,15 +365,15 @@ static void cmd_test(void) {
             zone_ids[ZD_PER_ZONE*4 + i] = engine_ingest(&eng, name, &bs);
         }
 
-        /* Let graph grow — need enough ticks for edges + Z computation */
+        /* Let graph grow — need enough ticks for edges + topology computation */
         for (int t = 0; t < (int)SUBSTRATE_INT * 10; t++) engine_tick(&eng);
-        graph_compute_z(g0);
+        graph_compute_topology(g0, 0);
 
-        /* max_z */
-        int max_z = 0;
+        /* max_y (sequence depth) */
+        int max_y = 0;
         for (int i = 0; i < g0->n_nodes; i++) {
-            int z = coord_z(g0->nodes[i].coord);
-            if (z > max_z) max_z = z;
+            int y = coord_y(g0->nodes[i].coord);
+            if (y > max_y) max_y = y;
         }
 
         /* bidir vs unidir edge counts */
@@ -389,14 +389,14 @@ static void cmd_test(void) {
             if (has_reverse) bidir_count++; else unidir_count++;
         }
 
-        /* Per-zone average Z */
-        int zone_z_sum[5] = {0}, zone_z_cnt[5] = {0};
+        /* Per-zone average Y (sequence depth) */
+        int zone_y_sum[5] = {0}, zone_y_cnt[5] = {0};
         for (int z = 0; z < 5; z++) {
             for (int i = 0; i < ZD_PER_ZONE; i++) {
                 int id = zone_ids[z * ZD_PER_ZONE + i];
                 if (id >= 0 && id < g0->n_nodes && g0->nodes[id].alive) {
-                    zone_z_sum[z] += coord_z(g0->nodes[id].coord);
-                    zone_z_cnt[z]++;
+                    zone_y_sum[z] += coord_y(g0->nodes[id].coord);
+                    zone_y_cnt[z]++;
                 }
             }
         }
@@ -411,18 +411,18 @@ static void cmd_test(void) {
                                     &g0->nodes[zone_ids[0]].identity);
         }
 
-        printf("\n=== Z-AXIS DIAGNOSTIC ===\n");
-        printf("  max_z = %d\n", max_z);
+        printf("\n=== TYXZT TOPOLOGY DIAGNOSTIC ===\n");
+        printf("  max_y (sequence depth) = %d\n", max_y);
         printf("  bidir edges: %d, unidir edges: %d\n", bidir_count, unidir_count);
         for (int z = 0; z < 5; z++) {
-            float avg = zone_z_cnt[z] > 0 ? (float)zone_z_sum[z] / zone_z_cnt[z] : 0.0f;
-            printf("  Zone %c(%s): avg_z = %.2f\n",
+            float avg = zone_y_cnt[z] > 0 ? (float)zone_y_sum[z] / zone_y_cnt[z] : 0.0f;
+            printf("  Zone %c(%s): avg_y = %.2f\n",
                    'A' + z, zone_names[z], avg);
         }
         printf("  contain(A0,E0) = %d, contain(E0,A0) = %d  (delta=%d)\n",
                contain_ae, contain_ea,
                contain_ae > contain_ea ? contain_ae - contain_ea : contain_ea - contain_ae);
-        printf("  Z alive: %s\n", max_z > 0 ? "YES" : "NO -- directed edges not producing Z separation");
+        printf("  Y (sequence) alive: %s\n", max_y > 0 ? "YES" : "NO -- directed edges not producing Y separation");
         engine_destroy(&eng);
     }
 

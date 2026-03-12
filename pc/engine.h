@@ -481,7 +481,7 @@ int  graph_add(Graph *g, const char *name, uint8_t shell_id, const SubstrateT *T
 int  graph_find_edge(Graph *g, int a, int b, int d);
 int  graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter);
 int  graph_learn(Graph *g);
-int  graph_compute_z(Graph *g);
+int  graph_compute_topology(Graph *g, int z_depth);
 
 /* Engine lifecycle */
 int  child_tick_once(Graph *g);

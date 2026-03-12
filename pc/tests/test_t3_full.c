@@ -509,11 +509,11 @@ void run_t3_full_tests(void) {
         }
     }
 
-    /* Parent Z diagnostic */
+    /* Parent Y (sequence depth) diagnostic */
     {
-        int parent_z = graph_compute_z(g0);
-        printf("\n  --- Parent Z ---\n");
-        printf("  max_z = %d\n", parent_z);
+        int parent_y = graph_compute_topology(g0, 0);
+        printf("\n  --- Parent Y (sequence depth) ---\n");
+        printf("  max_y = %d\n", parent_y);
     }
 
     /* CHECK 7: No zone collapsed */
