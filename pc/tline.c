@@ -41,6 +41,10 @@ void tline_inject(TLine *tl, double val) {
     /* Replace cell 0 with source value.
      * Not additive — cell 0 IS the boundary condition. */
     tl->V[0] = val;
+    
+    /* Mark as actively driven this tick.
+     * Repurpose unused C0 capacitance field as 'driven' state flag. */
+    tl->C0 = 1.0;
 }
 
 double tline_read(const TLine *tl) {
@@ -55,7 +59,8 @@ double tline_read_at(const TLine *tl, int cell) {
 
 void tline_step(TLine *tl) {
     int nc = tl->n_cells;
-    /* Shift from far end back to cell 1.
+    
+    /* 1. Shift from far end back to cell 1.
      * Each cell receives the value from its neighbor toward cell 0,
      * attenuated and smoothed. */
     for (int i = nc - 1; i >= 1; i--) {
@@ -65,8 +70,15 @@ void tline_step(TLine *tl) {
         double incoming = tl->V[i - 1] * atten;
         tl->V[i] = TLINE_ALPHA * incoming + (1.0 - TLINE_ALPHA) * tl->V[i];
     }
-    /* Cell 0 also decays (self-attenuation from R+G*Lc[0]) */
-    {
+    
+    /* 2. Source Boundary Condition (Cell 0)
+     * If actively driven this tick, it acts as an ideal voltage source.
+     * If left floating (undriven), it dissipates its remaining energy. */
+    if (tl->C0 > 0.5) {
+        /* Hold intended voltage, clear flag for next tick */
+        tl->C0 = 0.0;
+    } else {
+        /* Undriven boundary leak (self-attenuation) */
         double atten = 1.0 - (tl->R + tl->G * tl->Lc[0]);
         if (atten < 0.0) atten = 0.0;
         if (atten > 1.0) atten = 1.0;
