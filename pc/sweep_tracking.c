@@ -176,6 +176,9 @@ typedef struct {
     int total_cleaved;
     int32_t peak_ge;       /* peak graph_error during adaptation */
     int32_t peak_accum;    /* peak |error_accum| during adaptation */
+    int32_t zone_a_peak_accum;  /* peak |error_accum| for ground truth A */
+    int32_t zone_b_peak_accum;  /* peak |error_accum| for ground truth B */
+    int32_t zone_ratio;         /* zone_a_peak / max(zone_b_peak, 1) */
 } TrackingScore;
 
 static TrackingScore run_tracking(int n_adapt_cycles) {
@@ -254,11 +257,38 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
      * This is where N matters: how many observations does the engine get
      * to detect and resolve the contradiction? */
     int32_t peak_ge = 0, peak_accum = 0;
+    /* Per-zone SPRT accumulators — track differential resolution rates */
+    int32_t zone_a_accum = 0, zone_b_accum = 0;
+    int32_t zone_a_prev = 0, zone_b_prev = 0;
+    int32_t zone_a_peak = 0, zone_b_peak = 0;
+
     for (int t = 0; t < (int)SUBSTRATE_INT * n_adapt_cycles; t++) {
         engine_tick(&eng);
         if (eng.graph_error > peak_ge) peak_ge = eng.graph_error;
         int32_t aa = g0->error_accum < 0 ? -g0->error_accum : g0->error_accum;
         if (aa > peak_accum) peak_accum = aa;
+
+        if (t > 0 && t % (int)SUBSTRATE_INT == 0) {
+            int ga_alive = 0, gb_alive = 0;
+            int ga_incoh = graph_zone_coherence(g0, ids.ground_a, CORPUS_SIZE, &ga_alive);
+            int gb_incoh = graph_zone_coherence(g0, ids.ground_b, CORPUS_SIZE, &gb_alive);
+
+            int32_t ga_err = (ga_alive > 0) ? (ga_incoh * 100 / ga_alive) : 0;
+            int32_t ga_delta = ga_err - zone_a_prev;
+            zone_a_accum += ga_delta;
+            zone_a_accum = zone_a_accum * 7 / 8;
+            zone_a_prev = ga_err;
+            int32_t abs_a = zone_a_accum < 0 ? -zone_a_accum : zone_a_accum;
+            if (abs_a > zone_a_peak) zone_a_peak = abs_a;
+
+            int32_t gb_err = (gb_alive > 0) ? (gb_incoh * 100 / gb_alive) : 0;
+            int32_t gb_delta = gb_err - zone_b_prev;
+            zone_b_accum += gb_delta;
+            zone_b_accum = zone_b_accum * 7 / 8;
+            zone_b_prev = gb_err;
+            int32_t abs_b = zone_b_accum < 0 ? -zone_b_accum : zone_b_accum;
+            if (abs_b > zone_b_peak) zone_b_peak = abs_b;
+        }
     }
 
     /* ── Phase 3: Inject contradiction wave 2 (attacks cluster B)
@@ -271,6 +301,28 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
         if (eng.graph_error > peak_ge) peak_ge = eng.graph_error;
         int32_t aa = g0->error_accum < 0 ? -g0->error_accum : g0->error_accum;
         if (aa > peak_accum) peak_accum = aa;
+
+        if (t > 0 && t % (int)SUBSTRATE_INT == 0) {
+            int ga_alive = 0, gb_alive = 0;
+            int ga_incoh = graph_zone_coherence(g0, ids.ground_a, CORPUS_SIZE, &ga_alive);
+            int gb_incoh = graph_zone_coherence(g0, ids.ground_b, CORPUS_SIZE, &gb_alive);
+
+            int32_t ga_err = (ga_alive > 0) ? (ga_incoh * 100 / ga_alive) : 0;
+            int32_t ga_delta = ga_err - zone_a_prev;
+            zone_a_accum += ga_delta;
+            zone_a_accum = zone_a_accum * 7 / 8;
+            zone_a_prev = ga_err;
+            int32_t abs_a = zone_a_accum < 0 ? -zone_a_accum : zone_a_accum;
+            if (abs_a > zone_a_peak) zone_a_peak = abs_a;
+
+            int32_t gb_err = (gb_alive > 0) ? (gb_incoh * 100 / gb_alive) : 0;
+            int32_t gb_delta = gb_err - zone_b_prev;
+            zone_b_accum += gb_delta;
+            zone_b_accum = zone_b_accum * 7 / 8;
+            zone_b_prev = gb_err;
+            int32_t abs_b = zone_b_accum < 0 ? -zone_b_accum : zone_b_accum;
+            if (abs_b > zone_b_peak) zone_b_peak = abs_b;
+        }
     }
 
     /* ── Phase 4: Score ── */
@@ -357,6 +409,9 @@ static TrackingScore run_tracking(int n_adapt_cycles) {
     sc.total_cleaved = eng.total_cleaved;
     sc.peak_ge = peak_ge;
     sc.peak_accum = peak_accum;
+    sc.zone_a_peak_accum = zone_a_peak;
+    sc.zone_b_peak_accum = zone_b_peak;
+    sc.zone_ratio = zone_a_peak / (zone_b_peak > 0 ? zone_b_peak : 1);
 
     engine_destroy(&eng);
     return sc;
@@ -367,7 +422,7 @@ void run_tracking_sweep(void) {
     printf("N\tscore\trecall\tspec\tga_dis\tgb_dis\tca_sur\tcb_sur\t"
            "ga_cry\tgb_cry\tca_cry\tcb_cry\talive\tcrystal\tedges\t"
            "grow_int\tprune_int\terr_acc\theartbeats\tdrive\tcleaved\t"
-           "peak_ge\tpeak_acc\n");
+           "peak_ge\tpeak_acc\tza_pk\tzb_pk\tz_ratio\n");
 
     /* The test gives each N the same number of adaptation CYCLES (not ticks).
      * 3 cycles per wave = 6 total. That's enough for frustration to fire
@@ -397,7 +452,7 @@ void run_tracking_sweep(void) {
 
         printf("%u\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t"
                "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t"
-               "%d\t%d\t%d\t%d\t%d\t%d\n",
+               "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
                SUBSTRATE_INT,
                sc.score, sc.recall, sc.spec,
                sc.ga_dissolved, sc.gb_dissolved,
@@ -407,7 +462,8 @@ void run_tracking_sweep(void) {
                sc.total_alive, sc.total_crystal, sc.total_edges,
                sc.grow_interval, sc.prune_interval,
                sc.error_accum, sc.heartbeats, sc.drive, sc.total_cleaved,
-               sc.peak_ge, sc.peak_accum);
+               sc.peak_ge, sc.peak_accum,
+               sc.zone_a_peak_accum, sc.zone_b_peak_accum, sc.zone_ratio);
 
         break;  /* Only one run per compilation. Sweep script handles iteration. */
     }

@@ -92,15 +92,15 @@ def main():
     # Print summary table
     if rows:
         print(f"\n{'N':>5} {'score':>7} {'recall':>7} {'spec':>7} "
-              f"{'err_acc':>8} {'hb':>5} {'drv':>4} {'cleaved':>8} "
-              f"{'pk_ge':>6} {'pk_acc':>7}")
-        print("-" * 75)
+              f"{'err_acc':>8} {'pk_ge':>6} {'pk_acc':>7} "
+              f"{'za_pk':>6} {'zb_pk':>6} {'z_rat':>6}")
+        print("-" * 72)
         for row in rows:
             cols = row.split("\t")
-            if len(cols) >= 23:
+            if len(cols) >= 26:
                 print(f"{cols[0]:>5} {cols[1]:>7} {cols[2]:>7} {cols[3]:>7} "
-                      f"{cols[17]:>8} {cols[18]:>5} {cols[19]:>4} {cols[20]:>8} "
-                      f"{cols[21]:>6} {cols[22]:>7}")
+                      f"{cols[17]:>8} {cols[21]:>6} {cols[22]:>7} "
+                      f"{cols[23]:>6} {cols[24]:>6} {cols[25]:>6}")
 
 
 if __name__ == "__main__":

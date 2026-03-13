@@ -710,6 +710,20 @@ int graph_compute_topology(Graph *g, int z_depth) {
     return max_y;
 }
 
+int graph_zone_coherence(const Graph *g, const int *node_ids, int n_ids, int *n_alive) {
+    int alive = 0, incoh = 0;
+    for (int k = 0; k < n_ids; k++) {
+        int i = node_ids[k];
+        if (i < 0 || i >= g->n_nodes) continue;
+        const Node *n = &g->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        alive++;
+        if (n->coherent < 0) incoh++;
+    }
+    if (n_alive) *n_alive = alive;
+    return incoh;
+}
+
 /* ══════════════════════════════════════════════════════════════
  * NESTING — systems containing systems
  * ══════════════════════════════════════════════════════════════ */

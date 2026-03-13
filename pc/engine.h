@@ -482,6 +482,7 @@ int  graph_find_edge(Graph *g, int a, int b, int d);
 int  graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter);
 int  graph_learn(Graph *g, int32_t structural_match);
 int  graph_compute_topology(Graph *g, int z_depth);
+int  graph_zone_coherence(const Graph *g, const int *node_ids, int n_ids, int *n_alive);
 
 /* Engine lifecycle */
 int  child_tick_once(Graph *g);
