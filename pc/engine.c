@@ -729,18 +729,28 @@ int child_tick_once(Graph *g) {
             Node *b = &g->nodes[j];
             if (!b->alive || b->val < 128) continue;
 
-            int e_idx = graph_find_edge(g, i, j, 0);
-            if (e_idx >= 0) {
-                /* Edge exists: strengthen */
-                int nw = g->edges[e_idx].weight + 2;
-                g->edges[e_idx].weight = (nw > 255) ? 255 : (uint8_t)nw;
-                
-                if (a->valence < 255) a->valence++;
-                if (b->valence < 255) b->valence++;
-            } else {
-                /* No edge: grow new connection (limit per tick) */
-                if (new_edges_grown < 10) {
-                    graph_wire(g, i, j, 0, 16, 0); 
+            /* Find a hidden node as destination (same logic as grow block).
+             * Retina nodes (0-7) are inputs — never wire TO them.
+             * Hidden nodes are 8..out-1, output is last. */
+            int out = g->n_nodes - 1;
+            int dst = -1;
+            for (int h = 8; h < out; h++) {
+                if (h == i || h == j) continue;
+                if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
+            }
+            if (dst < 0 && graph_find_edge(g, i, j, out) < 0)
+                dst = out;
+
+            if (dst >= 0) {
+                int e_idx = graph_find_edge(g, i, j, dst);
+                if (e_idx >= 0) {
+                    /* Edge exists to this dst: strengthen */
+                    int nw = g->edges[e_idx].weight + 2;
+                    g->edges[e_idx].weight = (nw > 255) ? 255 : (uint8_t)nw;
+                    if (a->valence < 255) a->valence++;
+                    if (b->valence < 255) b->valence++;
+                } else if (new_edges_grown < 10) {
+                    graph_wire(g, i, j, dst, 16, 0);
                     new_edges_grown++;
                 }
             }
