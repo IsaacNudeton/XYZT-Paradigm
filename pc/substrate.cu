@@ -462,6 +462,20 @@ extern "C" int substrate_inject_gateways(int n_cubes) {
     return (err == cudaSuccess) ? 0 : -1;
 }
 
+extern "C" int substrate_seed_gateway_lane(int cube_id, int direction, uint8_t value) {
+    /* Seed a single gateway lane directly (for testing).
+     * direction: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+     */
+    if (!d_gateways || cube_id >= d_allocated || direction < 0 || direction >= N_DIRS) return -1;
+
+    GatewayState3D h_gw;
+    cudaMemcpy(&h_gw, &d_gateways[cube_id], sizeof(GatewayState3D), cudaMemcpyDeviceToHost);
+    h_gw.lane[direction] = value;
+    cudaMemcpy(&d_gateways[cube_id], &h_gw, sizeof(GatewayState3D), cudaMemcpyHostToDevice);
+
+    return 0;
+}
+
 extern "C" int substrate_seed_gateways(const Engine *eng, int n_cubes) {
     /* Seed gateway lanes from CPU engine nodes at cube boundaries.
      * Nodes at cube faces send signals into neighboring cubes via gateway routing.

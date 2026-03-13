@@ -148,6 +148,10 @@ int substrate_inject_gateways(int n_cubes);
  * Call before substrate_tick, after wire_engine_to_gpu. */
 int substrate_seed_gateways(const Engine *eng, int n_cubes);
 
+/* Seed a single gateway lane directly (for testing).
+ * direction: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z */
+int substrate_seed_gateway_lane(int cube_id, int direction, uint8_t value);
+
 /* Update substrate weights (Hebbian, called from CPU) */
 void substrate_hebbian_update(CubeState *cubes, int n_cubes);
 
