@@ -729,7 +729,7 @@ int child_tick_once(Graph *g) {
             Node *b = &g->nodes[j];
             if (!b->alive || b->val < 128) continue;
 
-            int e_idx = graph_find_edge(g, a->id, b->id, 0);
+            int e_idx = graph_find_edge(g, i, j, 0);
             if (e_idx >= 0) {
                 /* Edge exists: strengthen */
                 int nw = g->edges[e_idx].weight + 2;
@@ -740,7 +740,7 @@ int child_tick_once(Graph *g) {
             } else {
                 /* No edge: grow new connection (limit per tick) */
                 if (new_edges_grown < 10) {
-                    graph_wire(g, a->id, b->id, 0, 16, 0); 
+                    graph_wire(g, i, j, 0, 16, 0); 
                     new_edges_grown++;
                 }
             }
