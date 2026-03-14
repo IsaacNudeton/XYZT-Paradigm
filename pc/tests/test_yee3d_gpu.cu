@@ -265,6 +265,52 @@ static void test_injection(void) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+ * TEST 7: Leaky integrator bridge (acc → uint8_t substrate)
+ *
+ * Drive a voxel continuously. After enough ticks, acc should be
+ * high (~200). Quiet voxels should be near 0. This is the bridge
+ * to the old substrate[] interface.
+ * ══════════════════════════════════════════════════════════════ */
+static void test_bridge(void) {
+    printf("\n=== TEST 7: Leaky integrator bridge (acc → substrate) ===\n");
+    yee_clear_fields();
+    yee_set_L_region(0, 0, 0, YEE_GX, YEE_GY, YEE_GZ, YEE_L_WIRE);
+
+    int driven = yee_idx(YEE_GX/2, YEE_GY/2, YEE_GZ/2);
+    int quiet = yee_idx(5, 5, 5);
+    YeeSource src = { driven, 1.0f, 1.0f };
+
+    /* Drive for 200 ticks (well past the ~50 tick window) */
+    for (int t = 0; t < 200; t++) {
+        yee_inject(&src, 1);
+        yee_tick();
+    }
+
+    /* Download as uint8_t bridge */
+    uint8_t *h_sub = (uint8_t *)calloc(YEE_N, 1);
+    yee_download_acc(h_sub, YEE_N);
+
+    int val_driven = h_sub[driven];
+    int val_quiet = h_sub[quiet];
+
+    /* Download raw float V for diagnostics */
+    float *h_V = (float *)calloc(YEE_N, sizeof(float));
+    yee_download_V(h_V, YEE_N);
+
+    printf("  Driven voxel |V|: %.6f\n", fabsf(h_V[driven]));
+    printf("  Driven voxel substrate: %d\n", val_driven);
+    printf("  Quiet voxel substrate: %d\n", val_quiet);
+    free(h_V);
+    printf("  Driven > SUB_ALIVE(64): %s\n", val_driven >= 64 ? "yes" : "no");
+
+    check("Bridge: driven voxel > SUB_ALIVE(64)", val_driven >= 64);
+    check("Bridge: quiet voxel < SUB_ALIVE(64)", val_quiet < 64);
+    check("Bridge: driven >> quiet", val_driven > val_quiet + 20);
+
+    free(h_sub);
+}
+
+/* ══════════════════════════════════════════════════════════════
  * MAIN
  * ══════════════════════════════════════════════════════════════ */
 
@@ -285,6 +331,7 @@ int main(void) {
     test_reflection();
     test_isotropy();
     test_injection();
+    test_bridge();
 
     printf("\n══════════════════════════════════════════════════════\n");
     printf("  Results: %d passed, %d failed, %d total\n",

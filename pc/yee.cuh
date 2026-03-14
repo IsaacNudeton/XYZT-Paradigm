@@ -129,6 +129,11 @@ int yee_download_V(float *h_V, int n);
 /* Download L array to host */
 int yee_download_L(float *h_L, int n);
 
+/* Bridge: download leaky accumulator as uint8_t (0-255).
+ * Replaces old substrate[] interface. Normalized so sustained
+ * drive → ~200, quiet → 0. CPU engine reads this. */
+int yee_download_acc(uint8_t *h_substrate, int n);
+
 /* Total energy on GPU (reduction) */
 double yee_energy(void);
 

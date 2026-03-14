@@ -29,7 +29,6 @@ static float *d_L  = NULL;   /* inductance per voxel (learnable) */
 
 /* Accumulator for Hebbian: tracks |V| integrated over time */
 static float *d_V_accum = NULL;
-static int    yee_accum_ticks = 0;
 
 /* Host-side scratch for reductions */
 static float *h_scratch = NULL;
@@ -136,17 +135,28 @@ __global__ void kernel_yee_inject(float *V, const YeeSource *sources, int n_src)
 }
 
 /* ══════════════════════════════════════════════════════════════
- * KERNEL 4: HEBBIAN — ACCUMULATE |V| AND UPDATE L
+ * KERNEL 4: LEAKY INTEGRATOR + HEBBIAN
  *
- * Phase A (every tick): V_accum[p] += |V[p]|
- * Phase B (periodic): where V_accum is high, lower L (strengthen).
- *   Where V_accum is low, raise L (weaken). Then reset accum.
+ * Every tick: acc[p] = acc[p] * decay + |V[p]|
+ *
+ * Decay = 63/64 ≈ 0.984375. After 137 ticks: 0.984^137 ≈ 0.12.
+ * Effective window ≈ 50 ticks — smooths wave oscillations,
+ * tracks which paths are actually active.
+ *
+ * This replaces the old substrate[] (0-255 Hebbian weight).
+ * CPU reads acc via yee_download_acc(), normalized to 0-255.
+ *
+ * Hebbian (periodic): where acc is high, lower L (strengthen).
+ *   Where acc is low, raise L (weaken).
  * ══════════════════════════════════════════════════════════════ */
+
+#define YEE_ACC_DECAY  (63.0f / 64.0f)   /* ~1.6% per tick, 50-tick window */
+#define YEE_ACC_SCALE  256.0f            /* calibrated: acc_ss~0.7 at V=0.01, *256→~180 */
 
 __global__ void kernel_yee_accum(float *V_accum, const float *V, int n) {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= n) return;
-    V_accum[p] += fabsf(V[p]);
+    V_accum[p] = V_accum[p] * YEE_ACC_DECAY + fabsf(V[p]);
 }
 
 __global__ void kernel_yee_hebbian(float *L, const float *V_accum,
@@ -229,7 +239,7 @@ extern "C" int yee_init(void) {
     free(h_L);
 
     h_scratch = (float *)malloc(YEE_GRID * sizeof(float));
-    yee_accum_ticks = 0;
+    /* leaky integrator — no tick counter needed */
 
     printf("  Yee grid: %dx%dx%d = %d voxels\n", YEE_GX, YEE_GY, YEE_GZ, YEE_N);
     printf("  Memory: %.1f MB (5 arrays × %d × 4B)\n",
@@ -264,7 +274,7 @@ extern "C" int yee_tick(void) {
     /* Accumulate |V| for Hebbian */
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
     YEE_CHECK(cudaGetLastError());
-    yee_accum_ticks++;
+    /* accum_ticks not needed — leaky integrator is self-regulating */
 
     return 0;
 }
@@ -288,19 +298,47 @@ extern "C" int yee_inject(const YeeSource *sources, int n_sources) {
 }
 
 extern "C" int yee_hebbian(float strengthen_rate, float weaken_rate) {
-    if (yee_accum_ticks == 0) return 0;
-
-    /* Threshold: average |V| accumulated. Scale by tick count. */
-    float threshold = 0.1f * yee_accum_ticks;
+    /* Accumulator is leaky (63/64 decay per tick), self-regulating.
+     * Threshold: acc > this means "active path, strengthen."
+     * With YEE_ACC_SCALE=4.0, sustained drive at amp=1.0 saturates ~200.
+     * Threshold at ~SUB_ALIVE equivalent: 64/YEE_ACC_SCALE = 16.0 in acc space. */
+    float threshold = 16.0f;
 
     kernel_yee_hebbian<<<YEE_GRID, YEE_BLOCK>>>(
         d_L, d_V_accum, strengthen_rate, weaken_rate, threshold, YEE_N);
     YEE_CHECK(cudaGetLastError());
+    YEE_CHECK(cudaDeviceSynchronize());
 
-    /* Reset accumulator */
-    YEE_CHECK(cudaMemset(d_V_accum, 0, YEE_N * sizeof(float)));
-    yee_accum_ticks = 0;
+    /* No reset — leaky integrator decays naturally */
+    return 0;
+}
 
+/* ══════════════════════════════════════════════════════════════
+ * BRIDGE: Download accumulator as uint8_t (0-255)
+ *
+ * CPU engine reads this instead of old substrate[].
+ * Normalized: acc * YEE_ACC_SCALE, clamped to [0, 255].
+ * Sustained drive → ~200. Quiet → 0. Same range as old interface.
+ * ══════════════════════════════════════════════════════════════ */
+
+extern "C" int yee_download_acc(uint8_t *h_substrate, int n) {
+    if (n > YEE_N) n = YEE_N;
+
+    /* Download raw float accumulator */
+    float *h_acc = (float *)malloc(YEE_N * sizeof(float));
+    if (!h_acc) return -1;
+    YEE_CHECK(cudaMemcpy(h_acc, d_V_accum, YEE_N * sizeof(float),
+                          cudaMemcpyDeviceToHost));
+
+    /* Normalize to 0-255 */
+    for (int i = 0; i < n; i++) {
+        float val = h_acc[i] * YEE_ACC_SCALE;
+        if (val < 0) val = 0;
+        if (val > 255.0f) val = 255.0f;
+        h_substrate[i] = (uint8_t)val;
+    }
+
+    free(h_acc);
     return 0;
 }
 
@@ -396,6 +434,6 @@ extern "C" int yee_clear_fields(void) {
     YEE_CHECK(cudaMemset(d_Iy, 0, sz));
     YEE_CHECK(cudaMemset(d_Iz, 0, sz));
     YEE_CHECK(cudaMemset(d_V_accum, 0, sz));
-    yee_accum_ticks = 0;
+    /* leaky integrator — no tick counter needed */
     return 0;
 }
