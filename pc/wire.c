@@ -8,6 +8,19 @@
 
 #include "wire.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+/* Yee API — declared in yee.cuh but we can't include it from C.
+ * These are extern "C" functions in yee.cu. */
+typedef struct { int voxel_id; float amplitude; float strength; } YeeSource;
+#define YEE_GX 64
+#define YEE_GY 64
+#define YEE_GZ 64
+#define YEE_N  (YEE_GX * YEE_GY * YEE_GZ)
+#define YEE_MAX_SOURCES 512
+int yee_inject(const YeeSource *sources, int n_sources);
+int yee_download_acc(uint8_t *h_substrate, int n);
 
 void wire_local_3d(CubeState *cubes, int n_cubes) {
     /* Wire each position to its 6 face-neighbors within same cube.
@@ -242,4 +255,108 @@ void wire_gpu_to_engine(Engine *eng, const CubeState *cubes, int n_cubes) {
         n->accum += gpu_signal;
         if (gpu_signal > 0) n->n_incoming++;
     }
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * YEE SUBSTRATE WIRING — Wave physics replaces CA
+ * ══════════════════════════════════════════════════════════════ */
+
+static inline int yee_voxel(int gx, int gy, int gz) {
+    return gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
+}
+
+int wire_engine_to_yee(const Engine *eng) {
+    /* Create YeeSource for each active node.
+     * amplitude = val / VAL_CEILING (signal content)
+     * strength = valence / 255.0 (injection strength)
+     * Crystallized nodes drive hard. Plastic nodes barely perturb. */
+    const Graph *g0 = &eng->shells[0].g;
+    YeeSource sources[YEE_MAX_SOURCES];
+    int n_src = 0;
+
+    for (int i = 0; i < g0->n_nodes && n_src < YEE_MAX_SOURCES; i++) {
+        const Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        if (n->identity.len < 1) continue;
+
+        int gx = coord_x(n->coord) % YEE_GX;
+        int gy = coord_y(n->coord) % YEE_GY;
+        int gz = coord_z(n->coord) % YEE_GZ;
+
+        sources[n_src].voxel_id = yee_voxel(gx, gy, gz);
+        sources[n_src].amplitude = (float)n->val / (float)VAL_CEILING;
+        sources[n_src].strength = (float)n->valence / 255.0f;
+        n_src++;
+    }
+
+    if (n_src > 0)
+        return yee_inject(sources, n_src);
+    return 0;
+}
+
+int wire_yee_to_engine(Engine *eng) {
+    /* Download Yee accumulator as uint8_t (0-255), same as old substrate[].
+     * Read at each node's voxel position. */
+    uint8_t *yee_sub = (uint8_t *)calloc(YEE_N, 1);
+    if (!yee_sub) return -1;
+
+    if (yee_download_acc(yee_sub, YEE_N) != 0) {
+        free(yee_sub);
+        return -1;
+    }
+
+    Graph *g0 = &eng->shells[0].g;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+
+        int gx = coord_x(n->coord) % YEE_GX;
+        int gy = coord_y(n->coord) % YEE_GY;
+        int gz = coord_z(n->coord) % YEE_GZ;
+        int vid = yee_voxel(gx, gy, gz);
+
+        /* Substrate value at this node's position → accumulation signal.
+         * Normalize to same scale as old co-presence count (0-64). */
+        int32_t gpu_signal = (int32_t)yee_sub[vid] / 4;
+        n->accum += gpu_signal;
+        if (gpu_signal > 0) n->n_incoming++;
+    }
+
+    free(yee_sub);
+    return 0;
+}
+
+int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
+    /* Gather each child's parent cube voxels into a contiguous buffer.
+     * The Yee flat array is 64x64x64 row-major — a 4x4x4 cube's voxels
+     * are scattered (stride 64 in Y, 4096 in Z). We gather into
+     * retina_bufs[c][0..63] so child retina sees 64 contiguous bytes. */
+    static uint8_t retina_bufs[MAX_CHILDREN][CUBE_SIZE];
+
+    for (int c = 0; c < MAX_CHILDREN; c++) {
+        if (eng->child_owner[c] < 0) continue;
+        int owner_id = eng->child_owner[c];
+        if (owner_id >= eng->shells[0].g.n_nodes) continue;
+        Node *owner = &eng->shells[0].g.nodes[owner_id];
+
+        int gx = coord_x(owner->coord) % YEE_GX;
+        int gy = coord_y(owner->coord) % YEE_GY;
+        int gz = coord_z(owner->coord) % YEE_GZ;
+
+        int cx = gx / CUBE_DIM, cy = gy / CUBE_DIM, cz = gz / CUBE_DIM;
+        int bx = cx * CUBE_DIM, by = cy * CUBE_DIM, bz = cz * CUBE_DIM;
+
+        /* Gather 4x4x4 voxels from flat Yee array into contiguous buffer */
+        int lp = 0;
+        for (int lz = 0; lz < CUBE_DIM; lz++)
+            for (int ly = 0; ly < CUBE_DIM; ly++)
+                for (int lx = 0; lx < CUBE_DIM; lx++) {
+                    int vid = (bx+lx) + (by+ly)*YEE_GX + (bz+lz)*YEE_GX*YEE_GY;
+                    retina_bufs[c][lp++] = yee_substrate[vid];
+                }
+
+        eng->child_pool[c].retina = retina_bufs[c];
+        eng->child_pool[c].retina_len = CUBE_SIZE;
+    }
+    return 0;
 }

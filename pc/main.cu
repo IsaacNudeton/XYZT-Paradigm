@@ -30,6 +30,7 @@ extern "C" {
 #include "sense.h"
 }
 #include "substrate.cuh"
+#include "yee.cuh"
 
 /* Forward declarations from reporter.c */
 extern "C" {
@@ -612,16 +613,15 @@ static void cmd_t3(int argc, char *argv[]) {
     Engine eng;
     engine_init(&eng);
 
-    /* GPU setup */
-    int n_cubes = 4096;
-    CubeState *h_cubes = (CubeState *)calloc(n_cubes, sizeof(CubeState));
-    int gpu_ok = (substrate_init(n_cubes) == 0);
+    /* Yee substrate setup */
+    int gpu_ok = (yee_init() == 0);
+    uint8_t *yee_substrate = NULL;
     if (gpu_ok) {
-        substrate_download(h_cubes, n_cubes);
-        hookup_retinas(&eng, h_cubes, n_cubes);
-        printf("GPU: %d cubes (%d voxels) initialized.\n\n", n_cubes, n_cubes * CUBE_SIZE);
+        yee_substrate = (uint8_t *)calloc(YEE_N, 1);
+        wire_yee_retinas(&eng, yee_substrate);
+        printf("Yee substrate: 64x64x64 (%d voxels) initialized.\n\n", YEE_N);
     } else {
-        printf("WARNING: GPU init failed. Running CPU-only (retina will use fallback).\n\n");
+        printf("WARNING: Yee init failed. Running CPU-only (retina will use fallback).\n\n");
     }
 
     /* ── PHASE 1: Ingest structurally different inputs ─────────── */
@@ -695,11 +695,9 @@ static void cmd_t3(int argc, char *argv[]) {
         printf("  [%s] ingested embedded prose -> node %d\n", labels[2], ids[2]);
     }
 
-    /* Sync to GPU */
+    /* Initial injection into Yee substrate */
     if (gpu_ok) {
-        wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-        substrate_seed_gateways(&eng, n_cubes);  /* Seed gateway lanes from CPU nodes at cube faces */
-        substrate_upload(h_cubes, n_cubes);
+        wire_engine_to_yee(&eng);
     }
 
     /* Report spatial separation */
@@ -725,20 +723,17 @@ static void cmd_t3(int argc, char *argv[]) {
 
     for (tick = 0; tick < max_phase2; tick++) {
         if (gpu_ok) {
-            substrate_route_step(n_cubes);
-            substrate_inject_gateways(n_cubes);
-            substrate_tick(n_cubes);
+            wire_engine_to_yee(&eng);
+            yee_tick();
         }
         engine_tick(&eng);
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-            substrate_download(h_cubes, n_cubes);
-            hookup_retinas(&eng, h_cubes, n_cubes);
-            wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+            yee_download_acc(yee_substrate, YEE_N);
+            wire_yee_retinas(&eng, yee_substrate);
+            wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
-            wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
-            wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-            substrate_upload(h_cubes, n_cubes);
+            yee_hebbian(0.001f, 0.0005f);
         }
 
         /* Check spawn progress */
@@ -773,8 +768,8 @@ static void cmd_t3(int argc, char *argv[]) {
             printf("    [%s] node %d: valence=%d crystal=%d\n",
                    labels[i], ids[i], n->valence, crystal_strength(n));
         }
-        free(h_cubes);
-        if (gpu_ok) substrate_destroy();
+        free(yee_substrate);
+        if (gpu_ok) yee_destroy();
         engine_destroy(&eng);
         return;
     }
@@ -792,20 +787,17 @@ static void cmd_t3(int argc, char *argv[]) {
     int evolve_ticks = 10000;
     for (int t = 0; t < evolve_ticks; t++) {
         if (gpu_ok) {
-            substrate_route_step(n_cubes);
-            substrate_inject_gateways(n_cubes);
-            substrate_tick(n_cubes);
+            wire_engine_to_yee(&eng);
+            yee_tick();
         }
         engine_tick(&eng);
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-            substrate_download(h_cubes, n_cubes);
-            hookup_retinas(&eng, h_cubes, n_cubes);
-            wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+            yee_download_acc(yee_substrate, YEE_N);
+            wire_yee_retinas(&eng, yee_substrate);
+            wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
-            wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
-            wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-            substrate_upload(h_cubes, n_cubes);
+            yee_hebbian(0.001f, 0.0005f);
         }
 
         if (eng.n_children > spawned) {
@@ -814,11 +806,11 @@ static void cmd_t3(int argc, char *argv[]) {
         }
     }
 
-    /* Final GPU sync */
+    /* Final Yee sync */
     if (gpu_ok) {
-        substrate_download(h_cubes, n_cubes);
-        hookup_retinas(&eng, h_cubes, n_cubes);
-        wire_gpu_to_engine(&eng, h_cubes, n_cubes);
+        yee_download_acc(yee_substrate, YEE_N);
+        wire_yee_retinas(&eng, yee_substrate);
+        wire_yee_to_engine(&eng);
     }
 
     /* Snapshot children after evolution */
@@ -923,14 +915,11 @@ static void cmd_t3(int argc, char *argv[]) {
     }
     printf("\n═══════════════════════════════════════════════════════\n\n");
 
-    /* Full engine report */
-    if (gpu_ok)
-        report_full(&eng, h_cubes, n_cubes);
-    else
-        report_full(&eng, NULL, 0);
+    /* Full engine report (no CubeState in Yee path) */
+    report_full(&eng, NULL, 0);
 
-    free(h_cubes);
-    if (gpu_ok) substrate_destroy();
+    free(yee_substrate);
+    if (gpu_ok) yee_destroy();
     engine_destroy(&eng);
 }
 
@@ -971,17 +960,14 @@ static void cmd_run(void) {
     Engine eng;
     engine_init(&eng);
 
-    int n_cubes = 4096; /* Full 16^3 volume = 262144 voxels.
-                           GPU proven at this scale (9.5B voxel-ticks/s, ~8MB VRAM) */
-    CubeState *h_cubes = (CubeState *)calloc(n_cubes, sizeof(CubeState));
-    int gpu_ok = (substrate_init(n_cubes) == 0);
+    int gpu_ok = (yee_init() == 0);
+    uint8_t *yee_substrate = NULL;
     if (gpu_ok) {
-        /* Download auto-wired state so h_cubes has reads[]/active[] from kernel_auto_wire_local */
-        substrate_download(h_cubes, n_cubes);
-        hookup_retinas(&eng, h_cubes, n_cubes);
-        printf("GPU substrate initialized: %d cubes (%d voxels)\n\n", n_cubes, n_cubes * CUBE_SIZE);
+        yee_substrate = (uint8_t *)calloc(YEE_N, 1);
+        wire_yee_retinas(&eng, yee_substrate);
+        printf("Yee substrate: 64x64x64 (%d voxels)\n\n", YEE_N);
     } else {
-        printf("GPU init failed, running CPU-only\n\n");
+        printf("Yee init failed, running CPU-only\n\n");
     }
 
     char line[4096];
@@ -999,12 +985,10 @@ static void cmd_run(void) {
 
         if (strcmp(line, "status") == 0) {
             if (gpu_ok) {
-                substrate_download(h_cubes, n_cubes);
-                hookup_retinas(&eng, h_cubes, n_cubes);
-                report_full(&eng, h_cubes, n_cubes);
-            } else {
-                report_full(&eng, NULL, 0);
+                yee_download_acc(yee_substrate, YEE_N);
+                wire_yee_retinas(&eng, yee_substrate);
             }
+            report_full(&eng, NULL, 0);
         }
         else if (strncmp(line, "ingest ", 7) == 0) {
             const char *text = line + 7;
@@ -1022,10 +1006,9 @@ static void cmd_run(void) {
                 printf("Ingested text -> node %d '%s'\n", id, name);
             }
 
-            /* Sync to GPU */
+            /* Inject into Yee */
             if (gpu_ok) {
-                wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-                substrate_upload(h_cubes, n_cubes);
+                wire_engine_to_yee(&eng);
             }
         }
         else if (strncmp(line, "tick", 4) == 0) {
@@ -1035,36 +1018,25 @@ static void cmd_run(void) {
             if (n > 100000) n = 100000;
 
             for (int i = 0; i < n; i++) {
-                /* GPU tick: route → inject gateways → threshold tap → co-presence */
                 if (gpu_ok) {
-                    substrate_route_step(n_cubes);
-                    substrate_inject_gateways(n_cubes);
-                    substrate_tick(n_cubes);
+                    wire_engine_to_yee(&eng);
+                    yee_tick();
                 }
-                /* CPU tick */
                 engine_tick(&eng);
 
-                /* Periodic GPU↔CPU sync every SUBSTRATE_INT ticks.
-                 * Without this, the bridge is open-loop during batches —
-                 * GPU evolves without CPU feedback and vice versa.
-                 * Cost: ~1ms per sync (6MB PCIe download). */
                 if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-                    substrate_download(h_cubes, n_cubes);
-                    hookup_retinas(&eng, h_cubes, n_cubes);
-                    wire_gpu_to_engine(&eng, h_cubes, n_cubes);
-                    wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
-                    wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-                    substrate_seed_gateways(&eng, n_cubes);  /* Seed gateway lanes from CPU nodes at cube faces */
-                    substrate_upload(h_cubes, n_cubes);
+                    yee_download_acc(yee_substrate, YEE_N);
+                    wire_yee_retinas(&eng, yee_substrate);
+                    wire_yee_to_engine(&eng);
+                    yee_hebbian(0.001f, 0.0005f);
                 }
             }
 
             /* Final sync at end of batch */
             if (gpu_ok) {
-                substrate_download(h_cubes, n_cubes);
-                hookup_retinas(&eng, h_cubes, n_cubes);
-                wire_gpu_to_engine(&eng, h_cubes, n_cubes);
-                wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
+                yee_download_acc(yee_substrate, YEE_N);
+                wire_yee_retinas(&eng, yee_substrate);
+                wire_yee_to_engine(&eng);
             }
 
             printf("Ticked %d times (total: %llu)\n", n, (unsigned long long)eng.total_ticks);
@@ -1114,8 +1086,8 @@ static void cmd_run(void) {
         }
     }
 
-    free(h_cubes);
-    if (gpu_ok) substrate_destroy();
+    free(yee_substrate);
+    if (gpu_ok) yee_destroy();
     engine_destroy(&eng);
 }
 
