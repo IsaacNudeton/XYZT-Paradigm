@@ -306,7 +306,9 @@ int wire_engine_to_yee(const Engine *eng) {
 
 int wire_yee_to_engine(Engine *eng) {
     /* Download Yee accumulator as uint8_t (0-255), same as old substrate[].
-     * Read at each node's voxel position. */
+     * Read at each node's voxel position. Includes Hebbian feedback
+     * (replaces wire_hebbian_from_gpu): wave activity → valence++ and
+     * strengthen incoming edges. Uses dst-indexed lookup: O(V+E). */
     uint8_t *yee_sub = (uint8_t *)calloc(YEE_N, 1);
     if (!yee_sub) return -1;
 
@@ -316,6 +318,28 @@ int wire_yee_to_engine(Engine *eng) {
     }
 
     Graph *g0 = &eng->shells[0].g;
+
+    /* Build dst adjacency index: O(V+E) Hebbian edge strengthening.
+     * Same pattern as wire_hebbian_from_gpu. */
+    int *dst_off = (int *)calloc(g0->n_nodes + 1, sizeof(int));
+    int *dst_idx = (int *)malloc(g0->n_edges * sizeof(int));
+
+    for (int e = 0; e < g0->n_edges; e++) {
+        int d = g0->edges[e].dst;
+        if (d < g0->n_nodes) dst_off[d + 1]++;
+    }
+    for (int i = 1; i <= g0->n_nodes; i++)
+        dst_off[i] += dst_off[i - 1];
+    int *cursor = (int *)calloc(g0->n_nodes, sizeof(int));
+    for (int e = 0; e < g0->n_edges; e++) {
+        int d = g0->edges[e].dst;
+        if (d < g0->n_nodes) {
+            dst_idx[dst_off[d] + cursor[d]] = e;
+            cursor[d]++;
+        }
+    }
+    free(cursor);
+
     for (int i = 0; i < g0->n_nodes; i++) {
         Node *n = &g0->nodes[i];
         if (!n->alive || n->layer_zero) continue;
@@ -325,27 +349,23 @@ int wire_yee_to_engine(Engine *eng) {
         int gz = coord_z(n->coord) % YEE_GZ;
         int vid = yee_voxel(gx, gy, gz);
 
-        /* Substrate value at this node's position → accumulation signal.
-         * Yee acc values are already calibrated (0-255). Use directly. */
         int32_t gpu_signal = (int32_t)yee_sub[vid];
         n->accum += gpu_signal;
         if (gpu_signal > 0) n->n_incoming++;
 
-        /* Hebbian feedback: replaces wire_hebbian_from_gpu.
-         * Wave activity at this position → strengthen incoming edges + boost valence.
-         * Old substrate used co_present popcnt > 0 (any neighbor activity).
-         * Yee equivalent: any wave energy at this position. */
+        /* Hebbian: wave activity → strengthen incoming edges + valence++ */
         if (gpu_signal > 0) {
             if (n->valence < 255) n->valence++;
-            /* Strengthen edges targeting this node */
-            for (int e = 0; e < g0->n_edges; e++) {
-                if (g0->edges[e].dst == i && g0->edges[e].weight < 255)
+            for (int j = dst_off[i]; j < dst_off[i + 1]; j++) {
+                int e = dst_idx[j];
+                if (g0->edges[e].weight < 255)
                     g0->edges[e].weight++;
             }
         }
-
     }
 
+    free(dst_off);
+    free(dst_idx);
     free(yee_sub);
     return 0;
 }

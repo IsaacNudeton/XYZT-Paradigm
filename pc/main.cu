@@ -487,8 +487,7 @@ static void cmd_test(void) {
  * Isaac Oravec & Claude, February 2026
  * ══════════════════════════════════════════════════════════════ */
 
-/* Forward declaration — defined below */
-static void hookup_retinas(Engine *eng, CubeState *h_cubes, int n_cubes);
+
 
 typedef struct {
     int   slot;             /* child_pool index */
@@ -903,7 +902,7 @@ static void cmd_t3(int argc, char *argv[]) {
         printf("  Retina mechanism transmits spatial information to children.\n");
     } else if (!retina_ok) {
         printf("\n  ▓▓ T3 BLOCKED: Retina nodes not receiving substrate data. ▓▓\n");
-        printf("  Check: hookup_retinas(), substrate values at parent coords,\n");
+        printf("  Check: wire_yee_retinas(), substrate values at parent coords,\n");
         printf("  SUB_ALIVE threshold, and GPU sync timing.\n");
     } else if (!evolved_ok) {
         printf("\n  ▓▓ T3 BLOCKED: Children not evolving (child_tick_once dead?). ▓▓\n");
@@ -921,32 +920,6 @@ static void cmd_t3(int argc, char *argv[]) {
     free(yee_substrate);
     if (gpu_ok) yee_destroy();
     engine_destroy(&eng);
-}
-
-/* ══════════════════════════════════════════════════════════════
- * RETINA HOOKUP — zero-copy pointer entanglement
- * ══════════════════════════════════════════════════════════════ */
-
-static void hookup_retinas(Engine *eng, CubeState *h_cubes, int n_cubes) {
-    /* For each child graph, point its retina at the parent's substrate slice.
-     * The child reads 64 substrate bytes directly — no copy, no attenuation.
-     * Different parents at different spatial locations → different retina
-     * patterns → distinct child topologies. */
-    for (int c = 0; c < MAX_CHILDREN; c++) {
-        if (eng->child_owner[c] < 0) continue;
-        int owner_id = eng->child_owner[c];
-        if (owner_id >= eng->shells[0].g.n_nodes) continue;
-        Node *owner = &eng->shells[0].g.nodes[owner_id];
-        int x = coord_x(owner->coord) % (VOL_X * CUBE_DIM);
-        int y = coord_y(owner->coord) % (VOL_Y * CUBE_DIM);
-        int z = coord_z(owner->coord) % (VOL_Z * CUBE_DIM);
-        int cx = x / CUBE_DIM, cy = y / CUBE_DIM, cz = z / CUBE_DIM;
-        int cube_id = cube_id_from(cx, cy, cz);
-        if (cube_id >= 0 && cube_id < n_cubes) {
-            eng->child_pool[c].retina = h_cubes[cube_id].substrate;
-            eng->child_pool[c].retina_len = CUBE_SIZE;
-        }
-    }
 }
 
 /* ══════════════════════════════════════════════════════════════
