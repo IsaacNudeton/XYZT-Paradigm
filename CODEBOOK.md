@@ -1,6 +1,6 @@
-# XYZT v9 — Codebook
+# XYZT — Codebook
 
-Isaac Oravec & Claude — February 2026
+Isaac Oravec & Claude — February–March 2026
 
 ## Five Principles
 
@@ -102,6 +102,19 @@ Math = Distinction = the language (symbols, 0/1, true/false)
 Physics = D(∅) → {2,3} = the structure (two things + substrate)
 Observer = where they collide = where computation happens
 
+## Wave Substrate (v0.14)
+
+The GPU substrate evolved from a cellular automaton (mark/read/co-presence) to a 3D Yee FDTD grid. Same paradigm, real physics.
+
+- **V** (scalar) at cell centers, **I** (vector, 3 components) on cell faces
+- **L** (inductance) per voxel — the single learnable parameter
+- Low L = wire (signal propagates fast). High L = vacuum (signal reflects).
+- The impedance field IS the wiring diagram. Same concept as the old reads[] bitmask, different encoding.
+- Hebbian: lower L where waves are active (strengthen), raise L where quiet (weaken).
+- CFL stability: `alpha <= sqrt(L*C/3)` in 3D. Natural floor on how strong a wire can get (L >= 0.75).
+
+Key files: `yee.cu`, `yee.cuh`, `tests/test_yee3d.cu`, `tests/test_yee3d_gpu.cu`
+
 ## What's Proven
 
 - One operation (`accum += v`) + observers = universal computation (v5)
@@ -112,6 +125,7 @@ Observer = where they collide = where computation happens
 - Intershell: shell 0 and shell 1 confirm each other (xyzt.c T7)
 - Agent memory: self-reinforcing nodes hold state without registers (tested Feb 26)
 - Local topology mirrors global (independently discovered by Tesla patent US20260050706A1)
+- 3D Yee wave substrate produces same computational behaviors as CA (v0.14, T3 PASS)
 
 ## The Loop (Closed)
 

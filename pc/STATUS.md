@@ -1,9 +1,10 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 12, 2026
-**Tests:** 258/258 passing (+ 15/15 standalone tline = 273 total)
-**Branch:** `feature/onetwo-feedback` (ready to merge to `tline-edges`)
-**Tracking:** 0.949 (contradiction detection via destructive interference, 5/5 TP, 0 FP)
+**Date:** March 15, 2026
+**Version:** v0.14-yee
+**Tests:** 256/256 engine + 16/16 Yee GPU + 12/12 Yee CPU = 284 total
+**Branch:** `master` (merged from `feature/yee-substrate`)
+**Tag:** `v0.14-yee`
 
 ## What It Is
 
@@ -17,85 +18,66 @@ Merges three XYZT engine versions:
 
 ---
 
-## TYXZT DIMENSIONAL STACK — GROUNDED ✅
+## NEW — v0.14: 3D Yee Wave Substrate
 
-| Dimension | Source | Meaning | Status |
-|-----------|--------|---------|--------|
-| **T** | `SubstrateT` | Outer clock (tick count) | ✅ |
-| **T_inner** | `Graph.error_accum`, `local_heartbeat` | Child inner time (SPRT accumulation) | ✅ |
-| **X** | `graph_compute_topology` | Parallel lane (inherited from root) | ✅ |
-| **Y** | `graph_compute_topology` | Sequence depth (hops from root) | ✅ |
-| **Z** | `graph_compute_topology(z_depth)` | Abstraction level (shell nesting) | ✅ |
+The GPU substrate has been replaced from a cellular automaton (mark/read/co-presence) to a **3D FDTD electromagnetic grid** (Yee method).
 
-**Position IS Meaning** — Node coordinates are deterministically derived from graph topology, not string hash.
+### What changed
+- **yee.cu/yee.cuh**: 64×64×64 Yee grid with V (scalar voltage at cell centers) and I (3-component current on cell faces). 5 GPU arrays: V, Ix, Iy, Iz, L (inductance per voxel).
+- **Leapfrog stagger**: Update V from I divergence, sync, update I from new V gradient. CFL-stable at alpha=0.5 with L >= 0.75.
+- **Leaky integrator**: `acc = acc * 63/64 + |V|` every tick. Effective window ~50 ticks. Bridges continuous wave dynamics to uint8_t (0-255) for CPU readback.
+- **Impedance as the learnable parameter**: L per voxel. Low L = wire (fast propagation, low impedance). High L = vacuum (reflects signal). Hebbian lowers L where waves are active, raises L where quiet.
+- **Identity-based injection**: Every node with identity injects at base amplitude 0.5 + val modulation. Strength always 1.0 (not valence-gated). Matches old substrate's identity-hash stamping.
+- **Hebbian feedback in wire_yee_to_engine**: Wave activity at node position → valence++ and strengthen incoming edges (O(V+E) dst-indexed lookup). This replaces wire_hebbian_from_gpu.
+- **Retina gather**: wire_yee_retinas gathers scattered 4×4×4 voxels into contiguous 64-byte buffers for child retinas.
+
+### Key numbers
+- Grid: 64×64×64 = 262,144 voxels
+- Memory: 5.0 MB (5 arrays × 262K × 4B)
+- L range: [0.75, 16.0], init = 1.0 (wire)
+- Alpha: 0.5, C: 1.0
+- Accumulator: decay 63/64, scale 256.0
+- Hebbian threshold: 0.1 (raw acc space)
+
+### T3 result on Yee substrate
+- 3 children spawned (tick 136, 27673)
+- Retina: 24/24 alive
+- Mean pairwise distance: 3631
+- All criteria PASS: retina alive, children evolved, children diverged
+
+### Old substrate
+The cellular automaton (substrate.cu) is still linked for regression testing (run_gpu_tests). It is no longer called from cmd_t3 or cmd_run. hookup_retinas has been removed.
+
+---
+
+## TYXZT DIMENSIONAL STACK — GROUNDED
+
+| Dimension | Source | Meaning |
+|-----------|--------|---------|
+| **T** | `SubstrateT` | Outer clock (tick count) |
+| **T_inner** | `Graph.error_accum`, `local_heartbeat` | Child inner time (SPRT accumulation) |
+| **X** | `graph_compute_topology` | Parallel lane (inherited from root) |
+| **Y** | `graph_compute_topology` | Sequence depth (hops from root) |
+| **Z** | `graph_compute_topology(z_depth)` | Abstraction level (shell nesting) |
 
 ---
 
 ## What Works (Proven)
 
-### NEW — March 2026
-
-- ✓ **TYXZT coordinates** — `graph_compute_topology()` computes X (parallel lane), Y (sequence depth), Z (shell level). Roots identified by `n_in == 0`, Y propagates via iterative relaxation. T3 Full: nodes at (60,272,0), (61,271,0), (62,0,0) — deep chains from Hebbian growth.
-
-- ✓ **ONETWO feedback → topology gating** — `graph_learn(g, structural_match)` applies thermodynamic clutch: `match_gate = structural_match / 100.0` clamped to [0.1, 2.0]. Low match (<30) → near freeze (0.1-0.3x), high match (>150) → accelerated (1.5-2.0x). Temporal filter naturally solves behavioral homogenization: noisy processes starve themselves, coherent processes feed themselves.
-
-- ✓ **GPU gateway seeding** — `substrate_seed_gateways()` populates gateway lanes from CPU nodes at cube faces. Nodes with valence > 50 seed directional lanes (±X, ±Y, ±Z). Inter-cube routing now functional — signals propagate across 4096-cube volume.
-
-### ORIGINAL — Still Working
-
-- **Full cascade:** ingest → ONETWO fingerprint → GPU co-presence → Hebbian → stabilize → crystallize → nest
-- **Closed feedback loop:** `graph_error` = incoherence percentage (0-100). Dual thresholds: fp_thresh=34 (fingerprint delta), ge_thresh=14% (graph_error, derived from mismatch tax). Floor at 30 nodes — below that, fingerprint-only. Frustration erodes worst incoherent crystal, boredom hardens coherent nodes.
-- **T3 Stage 1 (process isolation):** 50 nodes, 3 zones (conflict/stable/boundary), 30 cycles continuous re-injection. Zone B recovers in 5 cycles, holds 15/15 crystallized. AC edges starved to weight 53, BB stays at 123. Conservation isolates the sick process.
-- **Bus collision test:** 15 raw packets, 3 groups, continuous re-injection. Structural differentiation via topology. Protocol-agnostic.
-- **Conservation:** `MAX_NODE_WEIGHT=1024` budget per node. Competitive S3: at capacity, active edges steal from weakest. Sense decay to zero — silence = understanding.
-- **Directed edges:** `bs_contain` replaces `bs_mutual_contain` at all 6 grow/learn/boundary sites. Single-wire grow (reverse forms naturally in peer's grow cycle). Child tick fix ensures crystallized parents with only outgoing edges still resolve.
-- **Contradiction detection:** negation-aware edge inversion + destructive interference. Score 0.900 (recall=1.0, specificity=0.9). Down from 0.949 — asymmetric containment changes the denominator.
-- **Pure observer:** per-node invert ratio predicts contradictions. 0 FP, 5/5 TP.
-- **Pass-aware sense:** windowed feature extraction per state_buf region. Pass 4 inversion byte now visible (21 burst features in contradiction vs 15 normal)
-- **GPU substrate:** 4096 cubes (262K voxels), 9.5B voxel-ticks/sec benchmark
-- **3 shells:** carbon (Z=1.0), silicon (Z=1.5), verifier (Z=2.25) with Fresnel boundary propagation
-- **Crystallization:** valence >= 200 triggers nesting. All ingested nodes crystallize.
-- **Retina entanglement:** child graphs read parent's substrate via zero-copy pointer
-- **Z-depth observers:** obs_and (Z=1), obs_freq (Z=3), obs_corr (Z=4), obs_xor (energy collision)
-- **Lysis:** automatic valence decay + apoptosis under contradiction
-- **T3 Full (production load):** 200 nodes, 5 zones (conflict/stable/telemetry/ASCII/boundary), 30 cycles continuous re-injection. All zones survive. B/C/D crystallize 40/40. Falsifiable Lc variance check: zone A var > zone B var. 8872 edges at 14% capacity. No zone collapsed.
-- **Inner T (child learning):** `child_tick_once` has Hebbian (co-active strengthen, inactive weaken), edge growth (co-active pairs → output node), and local heartbeat at `SUBSTRATE_INT/4` with SPRT error accumulator. Independent drive state: frustration accelerates growth, boredom crystallizes edges. Diagnostic: 73K learns, 36 edges (from 4), 61 heartbeats, drive=1.
-- **Save/load v13:** full engine persistence — children, inner T state, OneTwoSystem, SubstrateT, all graph params (15 params), per-node plasticity. v12/v11/v10/v9 backward compatible.
-- **Per-node plasticity (temperature gradient):** `float plasticity` on every Node (0.5..2.0). Frustration heats incoherent nodes (+0.01/tick), boredom cools coherent nodes (-0.005/tick). Scales graph_learn Lc rate, S7 decay, boredom strengthen. Zone A (conflict) Lc_var=0.065 vs Zone B (stable) Lc_var=0.005 — 14x differentiation. Hot nodes resolve incoherence faster.
-- **Structural cleaving:** Phase transition at PLASTICITY_MAX — node that stays incoherent long enough severs its worst incoming edge (highest Lc). Heat consumed to break bond, plasticity resets to 1.0. 587 edges cleaved in T3 Full. S6 prune compacts away severed edges; counter tracks total.
-- **Fractal thermodynamics:** Child graphs run the same heat/cleave/cool physics as parent. Frustration heats child nodes, cleaving severs worst edge (with survival floor: won't sever last incoming edge), boredom cools and strengthens scaled by plasticity. Currently children are too stable (drive=2, err_accum=0, 36/36 edges) — mechanism planted, awaiting conflict injection.
-- **Child conflict test:** Standalone test wires fake substrate with differentiated L/R pattern, injects retina, stabilizes (30 cycles → 36 edges grown from 4), flips pattern to induce conflict, runs 50 more cycles. Child adapts: 32 edges grown total, max_plasticity=0.975. Cleaving didn't fire — flip wasn't sustained enough to push past PLASTICITY_MAX. Proves retina wiring + child learning work; cleaving needs stronger/longer contradiction to trigger.
-- **Per-node grow threshold (MDL-style):** dense nodes (n_in≥4) demand higher correlation. Incoherent nodes get 2/3 threshold. Replaced flat global `grow_mean`. Recovered tracking from 0.900 to 0.949.
-- **Transmission line edges (shift-register):** TLine embedded in every Edge. Shift-register delay line with per-cell loss and exponential smoothing (TLINE_ALPHA=0.5). Replaces FDTD (unstable on short 4-8 cell edges due to Mur boundary ringing). All 3 propagation sites (S2 boundary, S3 per-shell, child_tick_once) use tline inject/step/read. graph_learn drives Lc from bs_contain correlation. 15 standalone tests + 252 engine tests all pass.
-
----
-
-## What's Broken / Incomplete
-
-### HIGH priority — ALL RESOLVED ✅
-
-| Issue | Status |
-|-------|--------|
-| ~~Z axis still 0~~ | ✅ RESOLVED — TYXZT coordinates replace old Z model. Y=sequence depth, X=parallel lane, Z=shell nesting. |
-| ~~feedback → topology~~ | ✅ RESOLVED — `graph_learn` now gated by `feedback[0]` (structural_match) via thermodynamic clutch. |
-| ~~Gateway seeding~~ | ✅ RESOLVED — `substrate_seed_gateways()` populates gateway lanes from CPU nodes at cube faces. |
-
-### MEDIUM priority
-
-| Issue | Details |
-|-------|---------|
-| ~~Child pruning~~ | ✅ DONE — Fractal thermodynamics: child frustration cleaves worst edge (survival floor: keeps last incoming). Currently children are stable (drive=2), so mechanism dormant. |
-| **No child-to-child communication** | Children of different parents don't interact. No substrate-level connection between child graphs. |
-| **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. Canonical scripts: build.bat, rebuild.bat. |
-
-### LOW priority (dead code / API bloat)
-
-| Issue | Details |
-|-------|---------|
-| substrate_hebbian_update() | Declared in substrate.cuh, implemented in substrate.cu, never called. GPU kernel does Hebbian internally. |
-| wire_gateways() | Implemented in wire.c, never called. GPU routing subsumes it. |
-| transducer_ingest(), transducer_stdin() | Declared, never called. Future interactive modes. |
-| onetwo_generate() | Inverse parse (bitstream → bytes). Declared, not used. |
+- **3D Yee wave substrate** (v0.14) — FDTD replaces CA. Wave propagation, impedance confinement, Hebbian on L. T3 passes.
+- **TYXZT coordinates** — Position IS meaning. X=lane, Y=depth, Z=shell. Derived from topology.
+- **ONETWO feedback → topology gating** — Thermodynamic clutch: structural_match gates Hebbian learning rate.
+- **Full cascade:** ingest → ONETWO fingerprint → Yee wave injection → Hebbian → stabilize → crystallize → nest
+- **Closed feedback loop:** graph_error = incoherence %. Frustration erodes, boredom hardens. Conservation caps edge weight at 1024.
+- **T3 Stage 1 (process isolation):** 50 nodes, 3 zones, 30 cycles. Conservation isolates damage.
+- **T3 Full (production load):** 200 nodes, 5 zones, 30 cycles. All zones survive.
+- **Contradiction detection:** 0.949 (5/5 TP, 0 FP).
+- **Inner T (child learning):** Hebbian, edge growth, SPRT error accumulation, independent drive.
+- **Save/load v13:** Full persistence with backward compat to v12/v11/v10/v9.
+- **Transmission line edges (shift-register):** Per-edge delay line with loss. All propagation sites use tline inject/step/read.
+- **Per-node plasticity:** Temperature gradient — frustration heats, boredom cools, cleaving severs worst edge.
+- **Directed edges:** bs_contain at all 6 grow/learn/boundary sites.
+- **Conservation + competitive S3:** Scarcity drives graph physics.
 
 ---
 
@@ -108,14 +90,18 @@ Merges three XYZT engine versions:
 │          CPU ENGINE (engine.c/h)            │  v9 shells + ONETWO + nesting
 │  ingest → wire → tick → learn → crystallize │  retina entanglement for children
 │  ONETWO feedback: delta error → stability   │  TYXZT coordinates (X,Y,Z)
-│  Close-loop: frustration / boredom drives   │  graph_error: direct incoherent node count
+│  Close-loop: frustration / boredom drives   │  graph_error: direct node count
 │  Thermodynamic clutch: feedback[0] → gate   │
 ├──────────────┬──────────────────────────────┤
-│   WIRE BRIDGE│     GPU SUBSTRATE (3D)       │  v6 cubes + v3 spatial coords
-│  (wire.c/h)  │  substrate.cu/cuh            │  262K voxels, shift registers
-│  Hebbian CPU │  CUDA kernels: tick, route   │  threshold tap, co-presence
-│  ↔GPU sync   │  observe, auto-wire, inject  │  Gateway routing (inter-cube)
-│              │  gateway seed (from CPU)     │  RTX 2080 Super
+│   WIRE BRIDGE│     3D YEE SUBSTRATE         │  64³ FDTD grid
+│  (wire.c/h)  │  yee.cu/yee.cuh             │  V + I[3] + L per voxel
+│  Yee Hebbian │  CUDA kernels: V, I, accum   │  leaky integrator bridge
+│  ↔GPU sync   │  inject, hebbian, energy     │  impedance = wiring diagram
+│  Identity-   │  Leapfrog stagger (CFL)      │  RTX 2080 Super
+│  based inject│                              │
+├──────────────┼──────────────────────────────┤
+│  (old CA)    │  substrate.cu/cuh            │  kept for regression tests
+│              │  mark/read/co-present        │  not used in run loops
 ├──────────────┴──────────────────────────────┤
 │           SENSE (sense.c/h)                 │  windowed feature extraction
 │  per-pass analysis, decay, Hebbian wiring   │  7 feature types (ARDCSBP)
@@ -129,156 +115,43 @@ Merges three XYZT engine versions:
 
 ---
 
-## Potential Issues / Concerns
+## What's Broken / Incomplete
 
-### 1. Gateway Seeding — Performance Impact
+### MEDIUM priority
 
-**Concern:** `substrate_seed_gateways()` downloads gateway state, iterates all CPU nodes, uploads result. Called every `SUBSTRATE_INT` ticks.
+| Issue | Details |
+|-------|---------|
+| **No child-to-child communication** | Children of different parents don't interact directly. Indirect via shared Yee substrate. |
+| **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. |
+| **Old substrate dead code** | substrate_hebbian_update(), wire_gateways(), wire_hebbian_from_gpu() — still compiled but never called from run loops. |
 
-**Current cost:** ~1ms per sync (6MB PCIe transfer + iteration).
+### LOW priority
 
-**Watch for:** If gateway seeding becomes a bottleneck, consider:
-- Incremental updates (only seed changed nodes)
-- Asynchronous PCIe transfers
-- Reducing sync frequency
-
-### 2. Thermodynamic Clutch — Tuning Required
-
-**Concern:** `match_gate = structural_match / 100.0` assumes baseline match ≈ 100. If ONETWO baseline drifts, gating will be misaligned.
-
-**Current observation:** T3 Full shows `match=96` (close to 100 baseline).
-
-**Watch for:** If learning rate seems off, adjust baseline divisor or add adaptive calibration.
-
-### 3. TYXZT Coordinates — Iterative Relaxation Cost
-
-**Concern:** `graph_compute_topology()` runs iterative relaxation up to `g->n_nodes` iterations. Deep chains (Y=272) require many iterations.
-
-**Current cost:** Noticeable slowdown on large graphs (136+ nodes).
-
-**Watch for:** If topology computation becomes a bottleneck, consider:
-- BFS-based single-pass computation
-- Caching topology between ticks
-- Limiting max Y depth
-
-### 4. PCIe Sync Overhead — Gemini's Reality Check ✅
-
-**Claim verified:** GPU ticks independently, syncs with CPU every `SUBSTRATE_INT` (137) ticks. Each sync:
-- Downloads 4096 cubes × ~1.6KB = **6.3 MB** over PCIe
-- CPU processes (retina hookup, wire bridge, Hebbian)
-- Uploads back to GPU
-
-**Current impact:** ~1ms per sync. At 137-tick intervals, this is manageable.
-
-**Bottleneck threshold:** If tick rate exceeds ~10K ticks/sec, PCIe latency will dominate. For batch runs (100K+ ticks), sync overhead is amortized.
-
-**Mitigation if needed:**
-- Increase `SUBSTRATE_INT` interval (less frequent sync)
-- Asynchronous PCIe transfers (overlap compute + transfer)
-- Partial syncs (only download active cubes)
-
-### 5. Child Learning Gap — The Real Frontier
-
-**Current state:** Children see parent substrate via retina (zero-copy read), but `child_tick_once` has **no Hebbian learning**. Children cannot grow edges between co-firing retina nodes.
-
-**Impact:** Children are "dead mirrors" — they reflect parent activity but cannot develop distinct internal topology based on what they observe.
-
-**This is NOT child-to-child communication** — children already communicate indirectly through the shared parent substrate. The gap is **child learning**, not child communication.
-
-**Next step:** Add Hebbian growth to `child_tick_once` so children can wire co-active retina nodes into their own topology.
-
----
-
-## Child-to-Child Communication — Clarification
-
-**We already have it** — mediated through the parent substrate:
-
-```
-Parent Engine (Shell 0, 1, 2)
-    │
-    ├── Child[0] ← reads Parent substrate via retina
-    ├── Child[1] ← reads Parent substrate via retina
-    └── Child[2] ← reads Parent substrate via retina
-```
-
-All children share the same 262K voxel GPU substrate. If Child[0] activates nodes that change the substrate, Child[1] sees it through its retina. This is **exactly how brains work** — neurons influence each other through the shared neuropil.
-
-**What we DON'T have:** Child Hebbian learning. Children can't wire their own internal topology based on retinal co-activity. That's the actual gap.
+| Issue | Details |
+|-------|---------|
+| transducer_stdin(), onetwo_generate() | Declared, never called. Future interactive modes. |
+| Gateway seeding (old CA) | substrate_seed_gateways() is dead code now that Yee replaced the CA. |
 
 ---
 
 ## Next Steps (by impact)
 
-1. **Merge to `tline-edges`** — All three architectural gaps closed. Ready for integration.
-
-2. **Child Hebbian learning** — Add growth to `child_tick_once` so children can wire co-active retina nodes. This is the real gap, not child-to-child communication (which already exists via shared substrate).
-
-3. **Gateway diagnostics** — Add logging to verify inter-cube signal propagation is actually occurring (not just seeded).
-
-4. **Clutch calibration** — Monitor `match_gate` distribution across runs, tune baseline if needed.
-
-5. **Build cleanup** — Remove dead code (`wire_gateways()`, `transducer_ingest()`, etc.)
+1. **Yee substrate tuning** — Current injection/Hebbian params are first-pass calibration. Run extended workloads to verify stability.
+2. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. The wave field provides richer spatial information than the old CA.
+3. **Performance profiling** — wire_engine_to_yee runs every tick (creates YeeSource array + kernel launch). May need caching for large node counts.
+4. **Dead code cleanup** — Remove old CA functions that are no longer called (wire_hebbian_from_gpu, substrate_seed_gateways, etc.).
 
 ---
 
-## What's Done (completed work)
+## Version History
 
-- ✓ **TYXZT coordinates** (1156717) — Position IS meaning. X=lane, Y=depth, Z=shell. T3 Full verified.
-- ✓ **ONETWO feedback gating** (85df552) — Thermodynamic clutch: `match_gate = structural_match / 100.0`. Edge weights: reinforce zone 64 vs conflict zone 59. Temporal filter solves homogenization.
-- ✓ **GPU gateway seeding** (11eb932) — `substrate_seed_gateways()` populates lanes from CPU nodes at cube faces. Inter-cube routing functional.
-- ✓ **PCIe sync analysis** — Gemini's reality check verified: 6.3MB every 137 ticks, ~1ms per sync. Manageable at current rates, bottleneck threshold at ~10K ticks/sec.
-- ✓ **Child-to-child clarification** — Already exists via shared parent substrate. Real gap is child Hebbian learning, not communication.
-- ✓ **Fractal thermodynamics** — Child graphs run heat/cleave/cool. 253/253+15/15 all pass. Children stable (36/36 edges, drive=2) — mechanism planted.
-- ✓ **Structural cleaving** — Phase transition at PLASTICITY_MAX severs worst edge. 587 cleaves in T3 Full.
-- ✓ **Per-node plasticity** — Temperature gradient: frustration heats, boredom cools. Zone A Lc variance 14x zone B. Save/load v13 with v12 backward compat.
-- ✓ **Shift-register edges** (f045a46) — FDTD→shift-register, 251/251+15/15 all pass. FDTD was unstable on short edges; shift-register gives propagation delay + frequency filtering + exact weight roundtrip.
-- ✓ **TLine Phase 1** (e5ebc5f) — TLine library + 9 standalone proof tests.
-- ✓ **Per-node grow threshold** (f978520) — MDL-style local threshold. Dense nodes demand higher correlation. Tracking recovered 0.900→0.949.
-- ✓ **Inner T** (1c81194) — children learn, grow, accumulate error, drive independently.
-- ✓ **Directed edges** (2249226) — `bs_contain` at all 6 sites, single-wire grow.
-- ✓ **v12 save/load** — 15 graph params (inner T fields), v11 backward compatible.
-- ✗ **Directional popcount filter** — tested, no effect (delta stayed at 5). Reverted.
-- ✗ **Hebbian stability hack** — abandoned. TLine provides filtering through physics instead.
+| Version | Tag | Key change |
+|---------|-----|------------|
+| v0.14 | `v0.14-yee` | 3D Yee wave substrate replaces CA. 256/256 + T3 PASS. |
+| v0.13 | `v0.13-sprt` | Coupled V/I shift register, per-zone coherence, TLine Phase 2. |
 
 ---
 
-## Reflection: Where We Are
+## How this was built
 
-**Three architectural gaps closed in one session:**
-
-1. **TYXZT Coordinates** — Replaced broken "Z from TLine propagation" model with correct TYXZT: Y=sequence (from graph topology), X=lane (parallel distinction), Z=abstraction (shell nesting). Position is now deterministically derived from structure, not string hash.
-
-2. **ONETWO Feedback → Topology** — Closed the loop from observation to action. `feedback[0]` (structural_match) now gates Hebbian learning via thermodynamic clutch. This naturally solves behavioral homogenization without spatial impedance hacks: noisy processes starve themselves, coherent processes feed themselves.
-
-3. **GPU Gateway Seeding** — Connected the 4096 isolated GPU cubes. CPU nodes at cube faces now seed gateway lanes, enabling inter-cube signal propagation. Long-range spatial associations are now possible.
-
-**The system is now:**
-- ✅ **Spatially grounded** — TYXZT coordinates derived from topology, not hash
-- ✅ **Self-regulating** — Thermodynamic clutch gates learning based on structural match
-- ✅ **Fully connected** — 4096 GPU cubes can now communicate via gateway routing
-
-**What remains:**
-- Child Hebbian learning (not child-to-child communication — that already exists via shared substrate)
-- Gateway propagation diagnostics
-- Performance optimization (gateway seeding cost, topology computation)
-- Dead code cleanup
-
-**Branch status:** `feature/onetwo-feedback` ready to merge to `tline-edges`.
-
----
-
-## Gemini's Reality Check — Verified ✅
-
-**Claim:** "The GPU ticks independently and syncs with the CPU every SUBSTRATE_INT (137) ticks. Every sync requires pulling the state across the PCIe bus (substrate_download), updating the CPU, and pushing it back. While 6MB isn't massive, doing it constantly will eventually let the PCIe latency dominate your compute time."
-
-**Verification:**
-- **Data size:** 4096 cubes × ~1.6KB = 6.3 MB per sync ✅
-- **Sync frequency:** Every 137 ticks ✅
-- **Current cost:** ~1ms per sync ✅
-- **Bottleneck threshold:** ~10K ticks/sec (PCIe latency dominates above this) ✅
-
-**Assessment:** Claim is **accurate**. Current design is well-balanced — sync interval is long enough that PCIe overhead is amortized. For extreme tick rates (>10K/sec), would need async transfers or partial syncs.
-
-**What works (also verified):**
-- Shift-register replacement for FDTD — smart move, avoids ringing on short grids ✅
-- GPU memory mapping (64 threads/cube) — maps to warp size, keeps occupancy high ✅
+Isaac Oravec, Claude (CC), and Gemini. Three perspectives — Isaac holds architecture, CC holds implementation, Gemini traces signal chains. We disagree, we argue, we build.
