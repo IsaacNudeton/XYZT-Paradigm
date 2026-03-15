@@ -28,7 +28,7 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 256 tests covering:
+The `pc/` engine runs 284 tests (256 engine + 16 Yee GPU + 12 Yee CPU) covering:
 
 - **3D Yee wave substrate** (v0.14): 64×64×64 FDTD grid replaces the cellular automaton. Voltage and current propagate via Maxwell's equations with per-voxel inductance (L) as the single learnable parameter. Leaky integrator bridges wave energy to uint8_t (0-255) for CPU readback. Hebbian learning strengthens (lowers L) where waves are active, weakens (raises L) where quiet. CFL-stable at alpha=0.5 with L >= 0.75. 16/16 standalone GPU tests + T3 passes with 3 children diverging on wave physics.
 - **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Conservation isolates the damage without walls — through economics.
