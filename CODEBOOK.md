@@ -140,12 +140,23 @@ ONETWO feedback drives topology changes. The loop is closed:
 
 Bus collision test: 15 raw packets, 3 groups, continuous re-injection — 2604 frustration ticks from pure bitstream collision. No English, no keywords. The engine reads its own immune response.
 
+## Save/Load (v0.14-yee-persist)
+
+YEE1 block appended after v13 graph data:
+- Magic: 0x59454531 ("YEE1")
+- Dimensions: gx, gy, gz (uint16 × 3)
+- L[262144] (float, ~1MB)
+- acc[262144] (float, ~1MB)
+
+Backward compatible — old v13 files load fine (L defaults to L_WIRE). Only written/read when Yee is initialized (`yee_is_initialized()`).
+
 ## Constants (imposed vs emerged — open question)
 
-- `137` as SUBSTRATE_INT — imposed (α⁻¹ ≈ 137, but is this physical or convenient?)
+- `155` as SUBSTRATE_INT — empirically tuned for Yee cavity settlement (was 137 for CA). N-sweep showed peak shift tracks wave propagation delay, not integrator bandwidth. Decay rate independence confirmed across 31/32, 63/64, 127/128.
 - `81/2251` as mismatch tax — imposed
 - Shell impedances `{1.0, 1.5, 2.25}` — imposed (K=3/2 ratio)
 - Fresnel coefficients — emerged from impedance ratios (physics)
 - Valence thresholds — emerged from boundary crossings
 - ONETWO structural fingerprints — emerged from data
 - Self-wired topology — emerged from residue minimization
+- **Resonance structure** — emerged. The phase transition in contradiction-resolution quality is topology-level, not substrate-dependent. Survived CA→Yee swap.

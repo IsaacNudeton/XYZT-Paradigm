@@ -28,14 +28,16 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 284 tests (256 engine + 16 Yee GPU + 12 Yee CPU) covering:
+The `pc/` engine runs 262 tests covering:
 
-- **3D Yee wave substrate** (v0.14): 64×64×64 FDTD grid replaces the cellular automaton. Voltage and current propagate via Maxwell's equations with per-voxel inductance (L) as the single learnable parameter. Leaky integrator bridges wave energy to uint8_t (0-255) for CPU readback. Hebbian learning strengthens (lowers L) where waves are active, weakens (raises L) where quiet. CFL-stable at alpha=0.5 with L >= 0.75. 16/16 standalone GPU tests + T3 passes with 3 children diverging on wave physics.
+- **3D Yee wave substrate** (v0.14): 64×64×64 FDTD grid replaces the cellular automaton. Voltage and current propagate via Maxwell's equations with per-voxel inductance (L) as the single learnable parameter. Leaky integrator bridges wave energy to uint8_t (0-255) for CPU readback. Hebbian learning strengthens (lowers L) where waves are active, weakens (raises L) where quiet. CFL-stable at alpha=0.5 with L >= 0.75. T3 passes with 3 children diverging on wave physics.
+- **Yee persistence** (v0.14.1): L-field and accumulator survive save/load via YEE1 block. The learned impedance topology — the physical wiring diagram — persists across restarts.
+- **SUBSTRATE_INT = 155** (retuned from 137): N-sweep proved the resonance is structural (topology-level), not substrate-dependent. Decay sweep across 3 accumulator rates (31/32, 63/64, 127/128) produced identical results — the peak tracks wave propagation delay, not integrator bandwidth.
 - **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Conservation isolates the damage without walls — through economics.
 - **Production load** (T3 Full): 200 nodes across 5 zones, 30 cycles. All zones survive. Healthy zones crystallize 40/40. 7888 edges at 12% of capacity — no explosion.
 - **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.949 (5/5 true positives, 0 false positives).
 - **Inner T** (child learning): children run Hebbian learning, edge growth, and SPRT-style error accumulation with independent drive states.
-- **Full persistence** (v13 save/load): the entire engine state survives shutdown and reload. v12/v11 backward compatible.
+- **Full persistence** (v13 save/load + YEE1): the entire engine state — graph, params, children, and Yee L-field — survives shutdown and reload.
 - **Transmission line edges**: shift-register delay lines with per-cell loss and exponential smoothing on every graph edge. All 3 propagation sites use tline inject/step/read.
 - **Formal proofs**: 10 Lean4 proofs (zero `sorry`, zero axiom) covering basic properties, duality, gain, IO, lattice structure, physics correspondence, sequential composition, substrate invariants, and topology.
 
@@ -74,7 +76,7 @@ See [CODEBOOK.md](CODEBOOK.md) for paradigm reference, [pc/STATUS.md](pc/STATUS.
 
 Current computing is 80 years of the same idea: move numbers, do math on them, store the result. XYZT asks what happens if you remove the math entirely. If computation is "things next to things influencing each other" — which is what physics already does — then arithmetic is a convention, not a requirement. You need a grid, propagation rules, and someone watching.
 
-The proof chain: single-accumulator universality (v5) showed one operation + observers = all computation. Self-wiring (onetwo.c) showed the system discovers its own topology from examples. The 3D Yee substrate (v0.14) showed wave physics produces the same computational behaviors as the cellular automaton — children diverge, retinas transmit spatial information, Hebbian learning strengthens active paths — but now through real electromagnetic propagation instead of mark/read rules. The formal proofs in Lean4 showed the properties hold without escape hatches.
+The proof chain: single-accumulator universality (v5) showed one operation + observers = all computation. Self-wiring (onetwo.c) showed the system discovers its own topology from examples. The 3D Yee substrate (v0.14) showed wave physics produces the same computational behaviors as the cellular automaton — children diverge, retinas transmit spatial information, Hebbian learning strengthens active paths — but now through real electromagnetic propagation instead of mark/read rules. The N-sweep (v0.14.1) proved the resonance is structural — it survived a complete substrate swap and a decay-rate independence test. The formal proofs in Lean4 showed the properties hold without escape hatches.
 
 The next step is physical hardware — dedicated silicon running co-presence natively.
 

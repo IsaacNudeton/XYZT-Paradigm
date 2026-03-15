@@ -1,10 +1,10 @@
 # XYZT Unified PC Engine — Status
 
 **Date:** March 15, 2026
-**Version:** v0.14-yee
-**Tests:** 256/256 engine + 16/16 Yee GPU + 12/12 Yee CPU = 284 total
-**Branch:** `master` (merged from `feature/yee-substrate`)
-**Tag:** `v0.14-yee`
+**Version:** v0.14-yee-persist
+**Tests:** 262/262 engine (256 core + 6 Yee save/load)
+**Branch:** `master`
+**Tag:** `v0.14-yee-persist`
 
 ## What It Is
 
@@ -45,6 +45,19 @@ The GPU substrate has been replaced from a cellular automaton (mark/read/co-pres
 - Mean pairwise distance: 3631
 - All criteria PASS: retina alive, children evolved, children diverged
 
+### Save/Load persistence (YEE1 block)
+L-field and accumulator persist across save/load. YEE1 block (magic 0x59454531 + gx/gy/gz + L[262144] + acc[262144], ~2MB) is appended after v13 graph data. Backward compatible — v13 files without YEE1 load fine (L defaults to L_WIRE). New Yee API: `yee_upload_L`, `yee_upload_acc`, `yee_download_acc_raw`, `yee_is_initialized`.
+
+### SUBSTRATE_INT retuned: 137 → 155
+N-sweep (run_sweep.py) across 24 values showed the Yee substrate shifts the optimal SUBSTRATE_INT from 137 to 155 due to wave propagation delay (cavity settlement time). Decay sweep (run_decay_sweep.py) across 3 accumulator decay rates (31/32, 63/64, 127/128) produced **identical results** — proving the peak position is determined by wave transit time, not integrator bandwidth. The resonance is structural (topology-level), not substrate-dependent.
+
+Key sweep data:
+- N=137: score=0.704, recall=0.550 (old CA peak, now a local minimum)
+- N=143: score=0.900, recall=0.900 (transition)
+- N=155: score=0.925, recall=0.950 (new default)
+- N=180+: score=0.949, recall=1.000 (plateau)
+- Specificity constant at 0.900 across all N values
+
 ### Old substrate
 The cellular automaton (substrate.cu) is still linked for regression testing (run_gpu_tests). It is no longer called from cmd_t3 or cmd_run. hookup_retinas has been removed.
 
@@ -73,7 +86,7 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 - **T3 Full (production load):** 200 nodes, 5 zones, 30 cycles. All zones survive.
 - **Contradiction detection:** 0.949 (5/5 TP, 0 FP).
 - **Inner T (child learning):** Hebbian, edge growth, SPRT error accumulation, independent drive.
-- **Save/load v13:** Full persistence with backward compat to v12/v11/v10/v9.
+- **Save/load v13 + YEE1:** Full persistence with backward compat. Yee L-field + accumulator persist via YEE1 block.
 - **Transmission line edges (shift-register):** Per-edge delay line with loss. All propagation sites use tline inject/step/read.
 - **Per-node plasticity:** Temperature gradient — frustration heats, boredom cools, cleaving severs worst edge.
 - **Directed edges:** bs_contain at all 6 grow/learn/boundary sites.
@@ -136,10 +149,11 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 ## Next Steps (by impact)
 
-1. **Yee substrate tuning** — Current injection/Hebbian params are first-pass calibration. Run extended workloads to verify stability.
-2. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. The wave field provides richer spatial information than the old CA.
-3. **Performance profiling** — wire_engine_to_yee runs every tick (creates YeeSource array + kernel launch). May need caching for large node counts.
-4. **Dead code cleanup** — Remove old CA functions that are no longer called (wire_hebbian_from_gpu, substrate_seed_gateways, etc.).
+1. **L-field differentiation test** — Does Hebbian carve distinct waveguides for distinct identities? Run diverse workloads and visualize the L-field topology.
+2. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. Do children need their own Yee sub-grids for independent learning?
+3. **Scaling beyond 64³** — Memory and compute profiling for 128³ or 256³ grids. Current: 5MB VRAM for 64³.
+4. **Performance profiling** — wire_engine_to_yee runs every tick (creates YeeSource array + kernel launch). May need caching for large node counts.
+5. **Dead code cleanup** — Remove old CA functions that are no longer called (wire_hebbian_from_gpu, substrate_seed_gateways, etc.).
 
 ---
 
@@ -147,6 +161,7 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 | Version | Tag | Key change |
 |---------|-----|------------|
+| v0.14.1 | `v0.14-yee-persist` | YEE1 save/load, SUBSTRATE_INT 137→155, decay sweep. 262/262. |
 | v0.14 | `v0.14-yee` | 3D Yee wave substrate replaces CA. 256/256 + T3 PASS. |
 | v0.13 | `v0.13-sprt` | Coupled V/I shift register, per-zone coherence, TLine Phase 2. |
 

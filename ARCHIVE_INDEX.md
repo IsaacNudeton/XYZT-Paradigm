@@ -137,7 +137,7 @@
 | `test_collision.c` | ~10 | Bus collision tests |
 | `test_t3_stage1.c` | ~15 | T3 Stage 1 process isolation |
 | `test_t3_full.c` | ~20 | T3 Full production load (200 nodes, 5 zones) |
-| `test_save_load.c` | ~10 | Save/load v13 round-trip |
+| `test_save_load.c` | ~16 | Save/load v13 round-trip + Yee L-field persistence |
 | `test_tline.c` | ~15 | Transmission line standalone tests |
 | `test_child_conflict.c` | ~10 | Child conflict adaptation |
 
