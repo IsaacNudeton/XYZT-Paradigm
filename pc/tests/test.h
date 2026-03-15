@@ -32,6 +32,7 @@ void run_collision_tests(void);
 void run_t3_stage1_tests(void);
 void run_t3_full_tests(void);
 void run_save_load_tests(void);
+void run_yee_save_load_tests(void);
 void run_tline_tests(void);
 void run_child_conflict_tests(void);
 

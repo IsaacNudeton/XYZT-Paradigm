@@ -13,6 +13,19 @@
 #include "sense.h"
 #include <math.h>
 
+/* Yee GPU functions — engine.c is pure C, can't include yee.cuh */
+#define YEE_GX 64
+#define YEE_GY 64
+#define YEE_GZ 64
+#define YEE_N_VOXELS (YEE_GX * YEE_GY * YEE_GZ)
+extern int yee_download_L(float *h_L, int n);
+extern int yee_download_acc_raw(float *h_acc, int n);
+extern int yee_upload_L(const float *h_L, int n);
+extern int yee_upload_acc(const float *h_acc, int n);
+extern int yee_is_initialized(void);
+
+#define YEE1_MAGIC 0x59454531  /* "YEE1" */
+
 /* ══════════════════════════════════════════════════════════════
  * ENCODERS
  * ══════════════════════════════════════════════════════════════ */
@@ -2643,6 +2656,27 @@ int engine_save(const Engine *eng, const char *path) {
         save_graph(f, &eng->child_pool[i]);
     }
 
+    /* ── YEE1 block: L-field + accumulator persistence ── */
+    if (yee_is_initialized()) {
+        uint32_t yee_magic = YEE1_MAGIC;
+        uint16_t gx = YEE_GX, gy = YEE_GY, gz = YEE_GZ;
+        float *h_buf = (float *)malloc(YEE_N_VOXELS * sizeof(float));
+        if (h_buf) {
+            fwrite(&yee_magic, 4, 1, f);
+            fwrite(&gx, 2, 1, f);
+            fwrite(&gy, 2, 1, f);
+            fwrite(&gz, 2, 1, f);
+
+            yee_download_L(h_buf, YEE_N_VOXELS);
+            fwrite(h_buf, sizeof(float), YEE_N_VOXELS, f);
+
+            yee_download_acc_raw(h_buf, YEE_N_VOXELS);
+            fwrite(h_buf, sizeof(float), YEE_N_VOXELS, f);
+
+            free(h_buf);
+        }
+    }
+
     fclose(f);
     return 0;
 }
@@ -2813,6 +2847,30 @@ int engine_load(Engine *eng, const char *path) {
         fprintf(stderr, "Unknown .xyzt version %u\n", version);
         fclose(f);
         return -1;
+    }
+
+    /* ── Try reading optional YEE1 block (appended after v13 data) ── */
+    if (yee_is_initialized()) {
+        uint32_t yee_magic = 0;
+        if (fread(&yee_magic, 4, 1, f) == 1 && yee_magic == YEE1_MAGIC) {
+            uint16_t gx, gy, gz;
+            fread(&gx, 2, 1, f);
+            fread(&gy, 2, 1, f);
+            fread(&gz, 2, 1, f);
+            int n = (int)gx * (int)gy * (int)gz;
+            if (n == YEE_N_VOXELS) {
+                float *h_buf = (float *)malloc(n * sizeof(float));
+                if (h_buf) {
+                    if (fread(h_buf, sizeof(float), n, f) == (size_t)n)
+                        yee_upload_L(h_buf, n);
+                    if (fread(h_buf, sizeof(float), n, f) == (size_t)n)
+                        yee_upload_acc(h_buf, n);
+                    free(h_buf);
+                }
+            }
+            /* dimension mismatch: skip, L stays at init default */
+        }
+        /* no YEE1 magic: backward compat, L stays at init default */
     }
 
     fclose(f);

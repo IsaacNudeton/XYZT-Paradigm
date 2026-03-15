@@ -78,7 +78,7 @@ static inline int xyzt_ctzll(uint64_t x) {
  * {2,3} SUBSTRATE CONSTANTS — from Lean proofs
  * ══════════════════════════════════════════════════════════════ */
 #ifndef SUBSTRATE_INT
-#define SUBSTRATE_INT      137u    /* 2^7 + 3^2 */
+#define SUBSTRATE_INT      155u    /* Yee cavity settlement — see decay_sweep_results.tsv */
 #endif
 #define MISMATCH_TAX_NUM    81u    /* 81/2251 ≈ 0.035982 */
 #define MISMATCH_TAX_DEN  2251u

@@ -140,6 +140,18 @@ double yee_energy(void);
 /* Energy in a rectangular region */
 double yee_region_energy(int x0, int y0, int z0, int x1, int y1, int z1);
 
+/* Upload L array from host to GPU */
+int yee_upload_L(const float *h_L, int n);
+
+/* Upload raw float accumulator from host to GPU */
+int yee_upload_acc(const float *h_acc, int n);
+
+/* Download raw float accumulator (lossless, for save/load) */
+int yee_download_acc_raw(float *h_acc, int n);
+
+/* Check if Yee grid is initialized */
+int yee_is_initialized(void);
+
 /* Reset all fields to zero (V, I). Keep L. */
 int yee_clear_fields(void);
 

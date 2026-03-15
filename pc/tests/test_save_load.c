@@ -1,14 +1,23 @@
 /*
- * test_save_load.c — v12 Save/Load Roundtrip
+ * test_save_load.c — v12 Save/Load Roundtrip + Yee L-field Persistence
  *
  * Verifies full engine persistence: topology, params, stats,
- * OneTwoSystem, SubstrateT, children. Loaded engine must
- * continue running without crash.
+ * OneTwoSystem, SubstrateT, children, Yee L-field + accumulator.
+ * Loaded engine must continue running without crash.
  *
  * Isaac Oravec & Claude, March 2026
  */
 
 #include "test.h"
+
+/* Yee GPU functions — pure C, can't include yee.cuh */
+extern int yee_init(void);
+extern void yee_destroy(void);
+extern int yee_set_L(int voxel_id, float L_val);
+extern int yee_download_L(float *h_L, int n);
+extern int yee_clear_fields(void);
+
+#define YEE_TEST_N (64 * 64 * 64)
 
 void run_save_load_tests(void) {
     printf("\n=== Save/Load v12 Roundtrip ===\n");
@@ -140,5 +149,72 @@ void run_save_load_tests(void) {
     /* Cleanup */
     engine_destroy(&eng_a);
     engine_destroy(&eng_b);
+    remove(path);
+}
+
+void run_yee_save_load_tests(void) {
+    printf("\n=== Yee L-field Save/Load Roundtrip ===\n");
+
+    /* Phase 1: Init Yee and set non-default L values */
+    yee_init();
+
+    /* Carve some known non-default L values */
+    yee_set_L(0, 2.5f);           /* corner */
+    yee_set_L(1000, 5.0f);        /* middle-ish */
+    yee_set_L(262143, 0.75f);     /* last voxel, L_MIN */
+
+    /* Record pre-save L */
+    float *h_L_pre = (float *)malloc(YEE_TEST_N * sizeof(float));
+    yee_download_L(h_L_pre, YEE_TEST_N);
+
+    /* Phase 2: Save engine (appends YEE1 block) */
+    Engine eng;
+    engine_init(&eng);
+    const char *path = "test_yee_roundtrip.xyzt";
+    int save_rc = engine_save(&eng, path);
+    check("yee_sl: save succeeded", 0, save_rc);
+
+    /* Phase 3: Reset L to uniform (simulates reboot) */
+    yee_clear_fields();
+    float *h_L_reset = (float *)malloc(YEE_TEST_N * sizeof(float));
+    yee_download_L(h_L_reset, YEE_TEST_N);
+    /* After clear_fields, L is untouched (it only clears V/I/acc).
+     * Re-init to get uniform L=1.0 */
+    yee_destroy();
+    yee_init();
+
+    /* Verify L is now uniform (default L_WIRE = 1.0) */
+    float *h_L_uniform = (float *)malloc(YEE_TEST_N * sizeof(float));
+    yee_download_L(h_L_uniform, YEE_TEST_N);
+    int uniform_ok = (h_L_uniform[0] == 1.0f && h_L_uniform[1000] == 1.0f &&
+                      h_L_uniform[262143] == 1.0f);
+    check("yee_sl: L uniform after re-init", 1, uniform_ok);
+    free(h_L_uniform);
+
+    /* Phase 4: Load — should restore the carved L */
+    Engine eng_b;
+    engine_init(&eng_b);
+    int load_rc = engine_load(&eng_b, path);
+    check("yee_sl: load succeeded", 0, load_rc);
+
+    /* Phase 5: Verify L values survived round-trip */
+    float *h_L_post = (float *)malloc(YEE_TEST_N * sizeof(float));
+    yee_download_L(h_L_post, YEE_TEST_N);
+
+    check("yee_sl: L[0] survived", (int)(h_L_pre[0] * 1000), (int)(h_L_post[0] * 1000));
+    check("yee_sl: L[1000] survived", (int)(h_L_pre[1000] * 1000), (int)(h_L_post[1000] * 1000));
+    check("yee_sl: L[262143] survived", (int)(h_L_pre[262143] * 1000), (int)(h_L_post[262143] * 1000));
+
+    printf("  L[0]: pre=%.3f post=%.3f\n", h_L_pre[0], h_L_post[0]);
+    printf("  L[1000]: pre=%.3f post=%.3f\n", h_L_pre[1000], h_L_post[1000]);
+    printf("  L[262143]: pre=%.3f post=%.3f\n", h_L_pre[262143], h_L_post[262143]);
+
+    /* Cleanup */
+    free(h_L_pre);
+    free(h_L_reset);
+    free(h_L_post);
+    engine_destroy(&eng);
+    engine_destroy(&eng_b);
+    yee_destroy();
     remove(path);
 }

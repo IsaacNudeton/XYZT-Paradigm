@@ -7,7 +7,7 @@ Usage: python run_sweep.py [--quick]
 import subprocess, sys, os, time
 
 SRCFILES = (
-    "main.cu substrate.cu tests/test_gpu.cu engine.c onetwo.c wire.c "
+    "main.cu substrate.cu yee.cu tests/test_gpu.cu engine.c onetwo.c wire.c "
     "transducer.c reporter.c sense.c tline.c tests/test_core.c "
     "tests/test_lifecycle.c tests/test_observer.c tests/test_stress.c "
     "tests/test_sense.c tests/test_collision.c tests/test_t3_stage1.c "

@@ -150,7 +150,9 @@ __global__ void kernel_yee_inject(float *V, const YeeSource *sources, int n_src)
  *   Where acc is low, raise L (weaken).
  * ══════════════════════════════════════════════════════════════ */
 
+#ifndef YEE_ACC_DECAY
 #define YEE_ACC_DECAY  (63.0f / 64.0f)   /* ~1.6% per tick, 50-tick window */
+#endif
 #define YEE_ACC_SCALE  256.0f            /* calibrated: acc_ss~0.7 at V=0.01, *256→~180 */
 
 __global__ void kernel_yee_accum(float *V_accum, const float *V, int n) {
@@ -427,6 +429,28 @@ extern "C" double yee_region_energy(int x0, int y0, int z0,
 
     free(h_V); free(h_Ix); free(h_Iy); free(h_Iz); free(h_L);
     return e * 0.5;
+}
+
+extern "C" int yee_upload_L(const float *h_L, int n) {
+    if (n > YEE_N) n = YEE_N;
+    YEE_CHECK(cudaMemcpy(d_L, h_L, n * sizeof(float), cudaMemcpyHostToDevice));
+    return 0;
+}
+
+extern "C" int yee_upload_acc(const float *h_acc, int n) {
+    if (n > YEE_N) n = YEE_N;
+    YEE_CHECK(cudaMemcpy(d_V_accum, h_acc, n * sizeof(float), cudaMemcpyHostToDevice));
+    return 0;
+}
+
+extern "C" int yee_download_acc_raw(float *h_acc, int n) {
+    if (n > YEE_N) n = YEE_N;
+    YEE_CHECK(cudaMemcpy(h_acc, d_V_accum, n * sizeof(float), cudaMemcpyDeviceToHost));
+    return 0;
+}
+
+extern "C" int yee_is_initialized(void) {
+    return (d_V != NULL) ? 1 : 0;
 }
 
 extern "C" int yee_clear_fields(void) {
