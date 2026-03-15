@@ -267,9 +267,10 @@ static inline int yee_voxel(int gx, int gy, int gz) {
 
 int wire_engine_to_yee(const Engine *eng) {
     /* Create YeeSource for each active node.
-     * amplitude = val / VAL_CEILING (signal content)
-     * strength = valence / 255.0 (injection strength)
-     * Crystallized nodes drive hard. Plastic nodes barely perturb. */
+     * Identity presence → base injection (0.15). Val modulates on top.
+     * Valence floors at 0.1 so cold nodes still participate.
+     * Old substrate used identity fingerprint to seed — this matches
+     * by ensuring every node with identity injects at a base level. */
     const Graph *g0 = &eng->shells[0].g;
     YeeSource sources[YEE_MAX_SOURCES];
     int n_src = 0;
@@ -283,9 +284,18 @@ int wire_engine_to_yee(const Engine *eng) {
         int gy = coord_y(n->coord) % YEE_GY;
         int gz = coord_z(n->coord) % YEE_GZ;
 
+        /* Identity-based injection: matches old substrate behavior.
+         * Old substrate stamped identity hash (50-200) at full strength
+         * regardless of valence. Yee equivalent: base 0.5 always present
+         * for nodes with identity, val modulates on top. Strength 1.0
+         * (spatial presence doesn't depend on valence — that deadlocked). */
+        float base = (n->identity.len >= 64) ? 0.5f : 0.0f;
+        float amp = base + fabsf((float)n->val / (float)VAL_CEILING) * 0.5f;
+        float strength = 1.0f;
+
         sources[n_src].voxel_id = yee_voxel(gx, gy, gz);
-        sources[n_src].amplitude = (float)n->val / (float)VAL_CEILING;
-        sources[n_src].strength = (float)n->valence / 255.0f;
+        sources[n_src].amplitude = amp;
+        sources[n_src].strength = strength;
         n_src++;
     }
 
@@ -316,10 +326,24 @@ int wire_yee_to_engine(Engine *eng) {
         int vid = yee_voxel(gx, gy, gz);
 
         /* Substrate value at this node's position → accumulation signal.
-         * Normalize to same scale as old co-presence count (0-64). */
-        int32_t gpu_signal = (int32_t)yee_sub[vid] / 4;
+         * Yee acc values are already calibrated (0-255). Use directly. */
+        int32_t gpu_signal = (int32_t)yee_sub[vid];
         n->accum += gpu_signal;
         if (gpu_signal > 0) n->n_incoming++;
+
+        /* Hebbian feedback: replaces wire_hebbian_from_gpu.
+         * Wave activity at this position → strengthen incoming edges + boost valence.
+         * Old substrate used co_present popcnt > 0 (any neighbor activity).
+         * Yee equivalent: any wave energy at this position. */
+        if (gpu_signal > 0) {
+            if (n->valence < 255) n->valence++;
+            /* Strengthen edges targeting this node */
+            for (int e = 0; e < g0->n_edges; e++) {
+                if (g0->edges[e].dst == i && g0->edges[e].weight < 255)
+                    g0->edges[e].weight++;
+            }
+        }
+
     }
 
     free(yee_sub);

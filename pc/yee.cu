@@ -231,10 +231,12 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMemset(d_Iz, 0, sz));
     YEE_CHECK(cudaMemset(d_V_accum, 0, sz));
 
-    /* Initialize L to vacuum (high impedance everywhere) */
+    /* Initialize L to wire (low impedance — fully conductive).
+     * Hebbian will RAISE L where there's no activity (creating vacuum).
+     * Starting from vacuum deadlocks: no signal → no Hebbian → no wires. */
     float *h_L = (float *)malloc(sz);
     if (!h_L) return -1;
-    for (int i = 0; i < YEE_N; i++) h_L[i] = YEE_L_VAC;
+    for (int i = 0; i < YEE_N; i++) h_L[i] = YEE_L_WIRE;
     YEE_CHECK(cudaMemcpy(d_L, h_L, sz, cudaMemcpyHostToDevice));
     free(h_L);
 
@@ -300,9 +302,9 @@ extern "C" int yee_inject(const YeeSource *sources, int n_sources) {
 extern "C" int yee_hebbian(float strengthen_rate, float weaken_rate) {
     /* Accumulator is leaky (63/64 decay per tick), self-regulating.
      * Threshold: acc > this means "active path, strengthen."
-     * With YEE_ACC_SCALE=4.0, sustained drive at amp=1.0 saturates ~200.
-     * Threshold at ~SUB_ALIVE equivalent: 64/YEE_ACC_SCALE = 16.0 in acc space. */
-    float threshold = 16.0f;
+     * With continuous drive, acc_ss at driven voxel ≈ 0.7 (V≈0.01).
+     * Threshold 0.1 catches actively driven paths while ignoring noise. */
+    float threshold = 0.1f;
 
     kernel_yee_hebbian<<<YEE_GRID, YEE_BLOCK>>>(
         d_L, d_V_accum, strengthen_rate, weaken_rate, threshold, YEE_N);
