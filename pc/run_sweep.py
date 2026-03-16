@@ -12,7 +12,7 @@ SRCFILES = (
     "tests/test_lifecycle.c tests/test_observer.c tests/test_stress.c "
     "tests/test_sense.c tests/test_collision.c tests/test_t3_stage1.c "
     "tests/test_t3_full.c tests/test_save_load.c tests/test_tline.c "
-    "tests/test_child_conflict.c sweep_tracking.c"
+    "tests/test_child_conflict.c tests/test_external.c sweep_tracking.c"
 )
 
 FULL_VALS = [
