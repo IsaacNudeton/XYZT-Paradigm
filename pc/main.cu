@@ -1157,43 +1157,20 @@ int main(int argc, char *argv[]) {
         Engine eng;
         engine_init(&eng);
 
-        int n_cubes = 4096;
-        CubeState *h_cubes = (CubeState *)calloc(n_cubes, sizeof(CubeState));
-        int gpu_ok = (substrate_init(n_cubes) == 0);
-        if (gpu_ok) substrate_download(h_cubes, n_cubes);
+        int gpu_ok = (yee_init() == 0);
 
         int imp = engine_wire_import(&eng, wpath);
         if (imp <= 0) {
             printf("Import failed (%d)\n", imp);
-            free(h_cubes);
-            if (gpu_ok) substrate_destroy();
+            if (gpu_ok) yee_destroy();
             engine_destroy(&eng);
             return 1;
         }
 
-        /* Sync to GPU and run SUBSTRATE_INT ticks */
-        if (gpu_ok) {
-            wire_engine_to_gpu(&eng, h_cubes, n_cubes);
-            substrate_upload(h_cubes, n_cubes);
-        }
-
+        /* Run SUBSTRATE_INT ticks on Yee substrate */
         printf("Running %u ticks...\n", SUBSTRATE_INT);
-        for (uint32_t i = 0; i < SUBSTRATE_INT; i++) {
-            if (gpu_ok) {
-                substrate_route_step(n_cubes);
-                substrate_inject_gateways(n_cubes);
-                substrate_tick(n_cubes);
-            }
+        for (uint32_t i = 0; i < SUBSTRATE_INT; i++)
             engine_tick(&eng);
-        }
-
-        /* Final sync */
-        if (gpu_ok) {
-            substrate_download(h_cubes, n_cubes);
-            wire_gpu_to_engine(&eng, h_cubes, n_cubes);
-            sense_feedback(&eng, &eng.last_sense);
-            wire_hebbian_from_gpu(&eng, h_cubes, n_cubes);
-        }
 
         engine_status(&eng);
 
@@ -1203,8 +1180,7 @@ int main(int argc, char *argv[]) {
         engine_wire_export(&eng, out_path);
         printf("Enriched graph written to: %s\n", out_path);
 
-        free(h_cubes);
-        if (gpu_ok) substrate_destroy();
+        if (gpu_ok) yee_destroy();
         engine_destroy(&eng);
     } else {
         printf("Usage: xyzt_pc [run|test|bench|ingest <file>|t3|exec <file.xyzt>|wire_import <path>|wire_export <path>|bridge [wire.bin]]\n");
