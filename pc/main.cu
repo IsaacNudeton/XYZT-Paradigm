@@ -28,6 +28,7 @@ extern "C" {
 #include "wire.h"
 #include "transducer.h"
 #include "sense.h"
+#include "io.h"
 }
 #include "substrate.cuh"
 #include "yee.cuh"
@@ -1095,6 +1096,135 @@ static void cmd_ingest(const char *path) {
     engine_destroy(&eng);
 }
 
+/* ══════════════════════════════════════════════════════════════
+ * STREAM MODE — continuous stdin ingestion + Yee visualization
+ * ══════════════════════════════════════════════════════════════ */
+
+static int g_is_console = 0;  /* set once in cmd_stream */
+
+static void viz_yee_slice(void) {
+    /* 64x32 character grid: z=32 slice, y stepped by 2 for aspect ratio */
+    static float *h_V = NULL;
+    if (!h_V) h_V = (float *)malloc(YEE_N * sizeof(float));
+    if (!h_V) return;
+    yee_download_V(h_V, YEE_N);
+
+    int gz = 32;
+    if (g_is_console) printf("\033[H");  /* ANSI home — overwrite in place */
+    for (int gy = 0; gy < YEE_GY; gy += 2) {
+        for (int gx = 0; gx < YEE_GX; gx++) {
+            float v = h_V[gx + gy * YEE_GX + gz * YEE_GX * YEE_GY];
+            char c = ' ';
+            if (v > 0.5f)       c = '@';
+            else if (v > 0.1f)  c = '+';
+            else if (v < -0.5f) c = '#';
+            else if (v < -0.1f) c = '-';
+            putchar(c);
+        }
+        putchar('\n');
+    }
+}
+
+static void cmd_stream(int binary_mode) {
+    Engine eng;
+    engine_init(&eng);
+
+    if (yee_init() != 0) {
+        printf("Yee init failed\n");
+        engine_destroy(&eng);
+        return;
+    }
+
+    StreamContext sctx;
+    if (io_init(&sctx) != 0) {
+        printf("IO init failed\n");
+        yee_destroy();
+        engine_destroy(&eng);
+        return;
+    }
+
+    g_is_console = io_stdout_is_console();
+    if (g_is_console) printf("\033[2J");  /* clear screen */
+    printf("=== STREAM MODE (%s) ===\n", binary_mode ? "binary" : "text");
+
+    char line_buf[STREAM_WINDOW + 1];
+    uint64_t obs_count = 0;
+    uint64_t viz_interval = 50;
+
+    while (!io_eof(&sctx)) {
+        int n_read = 0;
+
+        if (binary_mode) {
+            /* Binary: overwrite one persistent node */
+            if (io_has_data(&sctx)) {
+                n_read = io_read_raw(&sctx, line_buf, STREAM_WINDOW);
+                if (n_read > 0) {
+                    BitStream bs;
+                    encode_bytes(&bs, (uint8_t *)line_buf, n_read);
+                    engine_ingest(&eng, "stream_0", &bs);
+                    obs_count++;
+                }
+            }
+        } else {
+            /* Text: each line becomes a new node */
+            if (io_has_data(&sctx)) {
+                n_read = io_read_line(&sctx, line_buf, STREAM_WINDOW);
+                if (n_read > 0) {
+                    line_buf[n_read] = '\0';
+                    char name[64];
+                    snprintf(name, sizeof(name), "s_%06llu",
+                             (unsigned long long)eng.total_ticks);
+                    BitStream bs;
+                    encode_bytes(&bs, (uint8_t *)line_buf, n_read);
+                    engine_ingest(&eng, name, &bs);
+                    obs_count++;
+                }
+            }
+        }
+
+        engine_tick(&eng);
+
+        /* Visualization every viz_interval ticks */
+        if (eng.total_ticks % viz_interval == 0) {
+            viz_yee_slice();
+            Graph *g0 = &eng.shells[0].g;
+            printf("tick=%llu  obs=%llu  nodes=%d  edges=%d  children=%d  error=%d\n",
+                   (unsigned long long)eng.total_ticks,
+                   (unsigned long long)obs_count,
+                   g0->n_nodes, g0->n_edges,
+                   eng.n_children, eng.graph_error);
+        }
+
+        /* Small yield when idle to avoid busy-wait */
+        if (!io_has_data(&sctx) && !io_eof(&sctx))
+            io_sleep_ms(1);
+    }
+
+    /* Drain remaining ticks after EOF */
+    for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+        engine_tick(&eng);
+        if (eng.total_ticks % viz_interval == 0)
+            viz_yee_slice();
+    }
+
+    Graph *g0 = &eng.shells[0].g;
+    printf("\n=== STREAM COMPLETE ===\n");
+    printf("  observations: %llu\n", (unsigned long long)obs_count);
+    printf("  total ticks:  %llu\n", (unsigned long long)eng.total_ticks);
+    printf("  nodes: %d  edges: %d  children: %d\n",
+           g0->n_nodes, g0->n_edges, eng.n_children);
+
+    /* Save if anything was ingested */
+    if (obs_count > 0) {
+        engine_save(&eng, "stream_output.xyzt");
+        printf("  saved: stream_output.xyzt\n");
+    }
+
+    io_destroy(&sctx);
+    yee_destroy();
+    engine_destroy(&eng);
+}
+
 /* ══════════════════════════════════════════════════════════════ */
 
 int main(int argc, char *argv[]) {
@@ -1137,6 +1267,9 @@ int main(int argc, char *argv[]) {
         engine_init(&eng);
         engine_wire_export(&eng, argv[2]);
         engine_destroy(&eng);
+    } else if (strcmp(argv[1], "stream") == 0) {
+        int binary = (argc >= 3 && strcmp(argv[2], "-b") == 0);
+        cmd_stream(binary);
     } else if (strcmp(argv[1], "bridge") == 0) {
         const char *wpath = argc >= 3 ? argv[2] : NULL;
         if (!wpath) {
@@ -1183,7 +1316,7 @@ int main(int argc, char *argv[]) {
         if (gpu_ok) yee_destroy();
         engine_destroy(&eng);
     } else {
-        printf("Usage: xyzt_pc [run|test|bench|ingest <file>|t3|exec <file.xyzt>|wire_import <path>|wire_export <path>|bridge [wire.bin]]\n");
+        printf("Usage: xyzt_pc [run|test|bench|ingest <file>|t3|stream [-b]|exec <file.xyzt>|wire_import <path>|wire_export <path>|bridge [wire.bin]]\n");
         return 1;
     }
 
