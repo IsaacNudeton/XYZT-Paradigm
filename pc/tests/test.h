@@ -36,5 +36,6 @@ void run_yee_save_load_tests(void);
 void run_tline_tests(void);
 void run_child_conflict_tests(void);
 void run_external_tests(void);
+void run_lfield_test(void);
 
 #endif /* XYZT_TEST_H */

@@ -301,13 +301,35 @@ extern "C" int yee_inject(const YeeSource *sources, int n_sources) {
     return 0;
 }
 
-extern "C" int yee_hebbian(float strengthen_rate, float weaken_rate) {
-    /* Accumulator is leaky (63/64 decay per tick), self-regulating.
-     * Threshold: acc > this means "active path, strengthen."
-     * With continuous drive, acc_ss at driven voxel ≈ 0.7 (V≈0.01).
-     * Threshold 0.1 catches actively driven paths while ignoring noise. */
-    float threshold = 0.1f;
+extern "C" int yee_hebbian_adaptive(float strengthen_rate, float weaken_rate) {
+    /* Download raw accumulator, compute mean and max, set threshold
+     * at midpoint. Voxels near injection sites (acc > threshold) get
+     * strengthened. Diffuse background (acc < threshold) gets weakened.
+     * Threshold emerges from the data every cycle. */
+    float *h_acc = (float *)malloc(YEE_N * sizeof(float));
+    if (!h_acc) return -1;
+    YEE_CHECK(cudaMemcpy(h_acc, d_V_accum, YEE_N * sizeof(float),
+                          cudaMemcpyDeviceToHost));
 
+    float acc_mean = 0, acc_max = 0;
+    for (int i = 0; i < YEE_N; i++) {
+        acc_mean += h_acc[i];
+        if (h_acc[i] > acc_max) acc_max = h_acc[i];
+    }
+    acc_mean /= YEE_N;
+    free(h_acc);
+
+    float threshold = (acc_mean + acc_max) * 0.5f;
+    if (threshold < 0.01f) threshold = 0.01f;  /* floor: don't divide on silence */
+
+    return yee_hebbian_ex(strengthen_rate, weaken_rate, threshold);
+}
+
+extern "C" int yee_hebbian(float strengthen_rate, float weaken_rate) {
+    return yee_hebbian_adaptive(strengthen_rate, weaken_rate);
+}
+
+extern "C" int yee_hebbian_ex(float strengthen_rate, float weaken_rate, float threshold) {
     kernel_yee_hebbian<<<YEE_GRID, YEE_BLOCK>>>(
         d_L, d_V_accum, strengthen_rate, weaken_rate, threshold, YEE_N);
     YEE_CHECK(cudaGetLastError());

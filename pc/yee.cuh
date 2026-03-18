@@ -116,6 +116,8 @@ int yee_inject(const YeeSource *sources, int n_sources);
 /* Hebbian update: lower L where |V| has been consistently high.
  * Runs periodically (not every tick). */
 int yee_hebbian(float strengthen_rate, float weaken_rate);
+int yee_hebbian_adaptive(float strengthen_rate, float weaken_rate);
+int yee_hebbian_ex(float strengthen_rate, float weaken_rate, float threshold);
 
 /* Set L at a specific voxel (for testing / manual wiring) */
 int yee_set_L(int voxel_id, float L_val);
