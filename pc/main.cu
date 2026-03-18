@@ -739,7 +739,7 @@ static void cmd_t3(int argc, char *argv[]) {
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
-            yee_hebbian(0.001f, 0.0005f);
+            yee_hebbian(0.01f, 0.005f);
         }
 
         /* Check spawn progress */
@@ -803,7 +803,7 @@ static void cmd_t3(int argc, char *argv[]) {
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
-            yee_hebbian(0.001f, 0.0005f);
+            yee_hebbian(0.01f, 0.005f);
         }
 
         if (eng.n_children > spawned) {
@@ -1008,7 +1008,7 @@ static void cmd_run(void) {
                     yee_download_acc(yee_substrate, YEE_N);
                     wire_yee_retinas(&eng, yee_substrate);
                     wire_yee_to_engine(&eng);
-                    yee_hebbian(0.001f, 0.0005f);
+                    yee_hebbian(0.01f, 0.005f);
                 }
             }
 
@@ -1202,10 +1202,25 @@ static void cmd_stream(int binary_mode) {
             io_sleep_ms(1);
     }
 
-    /* Drain remaining ticks after EOF */
-    for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
-        engine_tick(&eng);
-        if (eng.total_ticks % viz_interval == 0)
+    /* Drain: run 10 full SUBSTRATE_INT cycles after EOF
+     * to let Hebbian carve the L-field from accumulated activity */
+    printf("\n  Post-EOF: running %d Hebbian cycles...\n", 10);
+    for (int cycle = 0; cycle < 10; cycle++) {
+        for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+            wire_engine_to_yee(&eng);
+            yee_tick();
+            engine_tick(&eng);
+        }
+        /* Hebbian fires at end of each cycle */
+        {
+            uint8_t *drain_sub = (uint8_t *)calloc(YEE_N, 1);
+            yee_download_acc(drain_sub, YEE_N);
+            wire_yee_retinas(&eng, drain_sub);
+            wire_yee_to_engine(&eng);
+            yee_hebbian(0.01f, 0.005f);
+            free(drain_sub);
+        }
+        if (g_is_console && eng.total_ticks % viz_interval == 0)
             viz_yee_slice();
     }
 
