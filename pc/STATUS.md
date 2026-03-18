@@ -1,10 +1,9 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 15, 2026
-**Version:** v0.14-yee-persist
-**Tests:** 262/262 engine (256 core + 6 Yee save/load)
+**Date:** March 18, 2026
+**Version:** v0.15-adaptive-hebbian
+**Tests:** 284/284 (256 core + 6 Yee save/load + 21 external benchmarks + 1 L-field differentiation)
 **Branch:** `master`
-**Tag:** `v0.14-yee-persist`
 
 ## What It Is
 
@@ -58,8 +57,20 @@ Key sweep data:
 - N=180+: score=0.949, recall=1.000 (plateau)
 - Specificity constant at 0.900 across all N values
 
+### Adaptive Hebbian threshold (v0.15)
+Old fixed threshold (0.1) was below all voxels — uniform strengthen, no spatial differentiation. New: `yee_hebbian()` computes `threshold = (acc_mean + acc_max) / 2` from the live accumulator distribution every SUBSTRATE_INT cycle. Source neighborhoods get strengthened (L↓), diffuse background gets weakened (L↑). Result: L range [0.82, 1.10], 25% wire, 68% vacuum. Different corpora create measurably different impedance patterns.
+
+### Streaming input (io.c)
+Ring buffer + stdin reader thread. Text mode: each line creates a new node. Binary mode: one persistent node for sensor data. ANSI terminal visualization of Yee V-field. `xyzt_pc.exe stream [-b]`.
+
+### External benchmarks (test_external.c)
+6 correctness + 4 throughput baselines. Zero catastrophic forgetting (10/10 Set A alive after Set B). Noise robustness: correlation 68%→55% from 10%→50% noise. Throughput: 472 tick/s, 2591 ingest/s, 6ms save, 9560 Yee/s.
+
+### Dead code removed
+wire_gateways, wire_hebbian_from_gpu, wire_engine_to_gpu, wire_gpu_to_engine removed. Bridge command converted to Yee. tline-edges branch deleted.
+
 ### Old substrate
-The cellular automaton (substrate.cu) is still linked for regression testing (run_gpu_tests). It is no longer called from cmd_t3 or cmd_run. hookup_retinas has been removed.
+The cellular automaton (substrate.cu) is still linked for regression testing (run_gpu_tests). It is no longer called from cmd_t3 or cmd_run.
 
 ---
 
@@ -149,11 +160,12 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 ## Next Steps (by impact)
 
-1. **L-field differentiation test** — Does Hebbian carve distinct waveguides for distinct identities? Run diverse workloads and visualize the L-field topology.
-2. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. Do children need their own Yee sub-grids for independent learning?
-3. **Scaling beyond 64³** — Memory and compute profiling for 128³ or 256³ grids. Current: 5MB VRAM for 64³.
-4. **Performance profiling** — wire_engine_to_yee runs every tick (creates YeeSource array + kernel launch). May need caching for large node counts.
-5. **Dead code cleanup** — Remove old CA functions that are no longer called (wire_hebbian_from_gpu, substrate_seed_gateways, etc.).
+1. **Strengthen the differentiation** — L-field differentiates (proven) but the separation is subtle (mean_diff=0.005). More aggressive rates, longer runs, or spatial seeding of initial L variation could sharpen it.
+2. **Stream mode validation** — Feed real-world data (log files, sensor streams) through `xyzt_pc.exe stream` and observe whether the L-field carves meaningful topology from open-ended input.
+3. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. Do children need their own Yee sub-grids for independent learning?
+4. **Sense→Act loop** — The engine ingests but doesn't actuate. Close the loop: engine state → output bytes → world changes → new input. Simplest: stdin/stdout feedback, or Pico GPIO over serial.
+5. **Scaling beyond 64³** — Memory and compute profiling for 128³ or 256³ grids. Current: 5MB VRAM for 64³.
+6. **FPGA port (Zynq 7020)** — The FPGA fabric IS the substrate. No GPU driver needed. L-field compiles into LUT configurations. Real non-von-Neumann hardware.
 
 ---
 
@@ -161,6 +173,7 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 | Version | Tag | Key change |
 |---------|-----|------------|
+| v0.15 | — | Adaptive Hebbian, L-field differentiates, streaming I/O, external benchmarks. 284/284. |
 | v0.14.1 | `v0.14-yee-persist` | YEE1 save/load, SUBSTRATE_INT 137→155, decay sweep. 262/262. |
 | v0.14 | `v0.14-yee` | 3D Yee wave substrate replaces CA. 256/256 + T3 PASS. |
 | v0.13 | `v0.13-sprt` | Coupled V/I shift register, per-zone coherence, TLine Phase 2. |

@@ -28,11 +28,14 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 262 tests covering:
+The `pc/` engine runs 284 tests covering:
 
 - **3D Yee wave substrate** (v0.14): 64×64×64 FDTD grid replaces the cellular automaton. Voltage and current propagate via Maxwell's equations with per-voxel inductance (L) as the single learnable parameter. Leaky integrator bridges wave energy to uint8_t (0-255) for CPU readback. Hebbian learning strengthens (lowers L) where waves are active, weakens (raises L) where quiet. CFL-stable at alpha=0.5 with L >= 0.75. T3 passes with 3 children diverging on wave physics.
 - **Yee persistence** (v0.14.1): L-field and accumulator survive save/load via YEE1 block. The learned impedance topology — the physical wiring diagram — persists across restarts.
 - **SUBSTRATE_INT = 155** (retuned from 137): N-sweep proved the resonance is structural (topology-level), not substrate-dependent. Decay sweep across 3 accumulator rates (31/32, 63/64, 127/128) produced identical results — the peak tracks wave propagation delay, not integrator bandwidth.
+- **L-field differentiation** (v0.15): Adaptive Hebbian threshold = (acc_mean + acc_max) / 2, computed from live data every cycle. Different corpora carve distinct impedance patterns. L range [0.82, 1.10], 25% wire, 68% vacuum. The substrate does real spatial computation.
+- **Zero catastrophic forgetting**: 10/10 Set A nodes alive after learning unrelated Set B. Conservation economics prevents overwrite without replay buffers.
+- **Streaming I/O**: `xyzt_pc.exe stream` reads stdin continuously, creates one node per line, with real-time Yee V-field visualization.
 - **Process isolation** (T3 Stage 1): 50 nodes in 3 zones — a "sick" zone with conflicting data, a "healthy" zone, and a boundary. After 30 cycles of continuous re-injection, the healthy zone recovers in 5 cycles and holds all 15 crystals. Conservation isolates the damage without walls — through economics.
 - **Production load** (T3 Full): 200 nodes across 5 zones, 30 cycles. All zones survive. Healthy zones crystallize 40/40. 7888 edges at 12% of capacity — no explosion.
 - **Contradiction detection**: negation-aware edge inversion + destructive interference scores 0.949 (5/5 true positives, 0 false positives).
