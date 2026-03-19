@@ -1215,16 +1215,22 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         g0->z_cache_n_nodes = -1;
     }
 
-    /* Auto-wire: top-K by mutual containment */
+    /* Auto-wire: top-K by mutual containment.
+     * Spatial locality: only check nodes at same X coordinate (same type prefix).
+     * O(n/k) instead of O(n) where k = number of type clusters. */
     if (g0->auto_grow) {
         int thresh = temp_grow;
+        int new_x = coord_x(g0->nodes[id0].coord) % 64;
         int top_j[GROW_K], top_c[GROW_K], n_top = 0;
         for (int i = 0; i < g0->n_nodes; i++) {
             if (i == id0 || !g0->nodes[i].alive || g0->nodes[i].identity.len < 16) continue;
+            /* Spatial filter: same X-plane (same type prefix) or adjacent */
+            int ix = coord_x(g0->nodes[i].coord) % 64;
+            int dx = ix - new_x;
+            if (dx < 0) dx = -dx;
+            if (dx > 2 && dx < 62) continue;  /* allow wrap-around adjacency */
             int corr = bs_contain(data, &g0->nodes[i].identity);
             if (corr <= thresh) continue;
-            /* Directional gate: only wire if asymmetry exceeds margin.
-             * Creates unidirectional edges for Z-depth layering. */
             int rev_corr = bs_contain(&g0->nodes[i].identity, data);
             if (rev_corr > corr + Z_ASYM_MARGIN) continue;
             if (n_top < GROW_K) {
@@ -1681,8 +1687,14 @@ void engine_tick(Engine *eng) {
                     local_thresh = local_thresh * 2 / 3;
                 }
                 int top_j[GROW_K], top_c[GROW_K], top_raw[GROW_K], n_top = 0;
+                int grow_x = coord_x(g->nodes[i].coord) % 64;
                 for (int j = 0; j < g->n_nodes; j++) {
                     if (i == j || id_pop[j] < 0) continue;
+                    /* Spatial filter: same type prefix (X-plane) or adjacent */
+                    int jx = coord_x(g->nodes[j].coord) % 64;
+                    int gdx = jx - grow_x;
+                    if (gdx < 0) gdx = -gdx;
+                    if (gdx > 2 && gdx < 62) continue;
                     /* Popcount ratio filter: mutual_contain bounded by min/max */
                     int mn = id_pop[i] < id_pop[j] ? id_pop[i] : id_pop[j];
                     int mx = id_pop[i] > id_pop[j] ? id_pop[i] : id_pop[j];

@@ -1350,15 +1350,32 @@ static void cmd_stream(int binary_mode) {
 
         engine_tick(&eng);
 
-        /* Visualization every viz_interval ticks */
+        /* Visualization + output signal every viz_interval ticks */
         if (eng.total_ticks % viz_interval == 0) {
             viz_yee_slice();
             Graph *g0 = &eng.shells[0].g;
-            printf("tick=%llu  obs=%llu  nodes=%d  edges=%d  children=%d  error=%d\n",
+
+            /* Find the strongest node — what's resonating most right now */
+            int best_id = -1;
+            int best_score = 0;
+            for (int i = 0; i < g0->n_nodes; i++) {
+                Node *n = &g0->nodes[i];
+                if (!n->alive || n->layer_zero) continue;
+                int score = abs(n->val) + (int)n->valence * 4 +
+                            crystal_strength(n) * 2;
+                if (score > best_score) { best_score = score; best_id = i; }
+            }
+
+            printf("tick=%llu  obs=%llu  nodes=%d  edges=%d  err=%d",
                    (unsigned long long)eng.total_ticks,
                    (unsigned long long)obs_count,
-                   g0->n_nodes, g0->n_edges,
-                   eng.n_children, eng.graph_error);
+                   g0->n_nodes, g0->n_edges, eng.graph_error);
+            if (best_id >= 0)
+                printf("  >> '%s' (val=%d cryst=%d)",
+                       g0->nodes[best_id].name,
+                       g0->nodes[best_id].val,
+                       crystal_strength(&g0->nodes[best_id]));
+            printf("\n");
         }
 
         /* Small yield when idle to avoid busy-wait */
@@ -1385,8 +1402,21 @@ static void cmd_stream(int binary_mode) {
             yee_hebbian(0.01f, 0.005f);
             free(drain_sub);
         }
-        if (g_is_console && eng.total_ticks % viz_interval == 0)
-            viz_yee_slice();
+        /* Report strongest node each cycle */
+        {
+            Graph *gc = &eng.shells[0].g;
+            int best_id = -1; int best_score = 0;
+            for (int i = 0; i < gc->n_nodes; i++) {
+                Node *n = &gc->nodes[i];
+                if (!n->alive || n->layer_zero) continue;
+                int score = abs(n->val) + (int)n->valence * 4 + crystal_strength(n) * 2;
+                if (score > best_score) { best_score = score; best_id = i; }
+            }
+            if (best_id >= 0)
+                printf("  cycle %d: >> '%s' (val=%d cryst=%d)\n",
+                       cycle + 1, gc->nodes[best_id].name,
+                       gc->nodes[best_id].val, crystal_strength(&gc->nodes[best_id]));
+        }
     }
 
     Graph *g0 = &eng.shells[0].g;
