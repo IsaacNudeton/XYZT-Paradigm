@@ -54,11 +54,19 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     yee_clear_fields();
 
     /* ── Step 2: EXCITE — inject query as voltage spike ──
-     * Hash the first 12 bytes of query to 3D coordinates.
+     * Encode query as BitStream, hash w[0] (first 8 bytes).
      * Same hash as engine_ingest uses for content-aware coords.
-     * Similar query text → same position as similar stored nodes. */
-    int prefix_len = len < 12 ? len : 12;
-    uint32_t hx = hash32(data, prefix_len);
+     * Query lands at the same voxel as stored nodes with same prefix. */
+    BitStream qbs;
+    bs_init(&qbs);
+    {
+        int max = BS_MAXBITS / 8;
+        int elen = len < max ? len : max;
+        for (int i = 0; i < elen; i++)
+            for (int b = 0; b < 8; b++)
+                bs_push(&qbs, (data[i] >> b) & 1);
+    }
+    uint32_t hx = hash32((const uint8_t *)&qbs.w[0], 8);
     uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
     uint32_t hz = hash32((const uint8_t *)&hy, sizeof(hy));
     int qx = hx % YEE_GX;

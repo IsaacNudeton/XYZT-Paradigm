@@ -1190,19 +1190,17 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
     g0->nodes[id0].last_active = (uint32_t)T_now(&eng->T);
     g0->nodes[id0].val = onetwo_val;
 
-    /* Content-aware coordinates: hash the first 12 bytes of identity
-     * instead of the node name. Similar content → same voxel position.
-     * "Date: 2025-10-27..." and "Date: 2025-10-28..." share prefix →
-     * same hash → same spatial position → inference waves start on target. */
-    if (data->len >= 96) {  /* at least 12 bytes (96 bits) */
-        int prefix_len = 12;
-        if (data->len / 8 < 12) prefix_len = data->len / 8;
-        uint32_t chx = hash32((const uint8_t *)data->w, prefix_len);
-        uint32_t chy = hash32((const uint8_t *)&chx, sizeof(chx));
-        uint32_t chz = hash32((const uint8_t *)&chy, sizeof(chy));
+    /* Content-aware coordinates: hash first 8 bytes of identity (w[0]).
+     * On little-endian x86, w[0] IS the first 8 raw bytes verbatim.
+     * All "  Date: ..." lines share w[0] → same hash → same voxel.
+     * All "  Source: ..." lines share w[0] → same voxel.
+     * The 64³ grid becomes a content-addressed spatial map. */
+    if (data->len >= 64) {  /* at least 8 bytes */
+        uint32_t chx = hash32((const uint8_t *)&data->w[0], 8);
+        uint32_t chy = hash32((const uint8_t *)&chx, 4);
+        uint32_t chz = hash32((const uint8_t *)&chy, 4);
         g0->nodes[id0].coord = coord_pack(chx % 64, chy % 64, chz % 64);
-        /* Invalidate z-bucket cache since coords changed */
-        g0->z_cache_n_nodes = -1;
+        g0->z_cache_n_nodes = -1;  /* invalidate z-bucket cache */
     }
 
     /* Auto-wire: top-K by mutual containment */
