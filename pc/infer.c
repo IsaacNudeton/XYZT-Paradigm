@@ -54,10 +54,11 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     yee_clear_fields();
 
     /* ── Step 2: EXCITE — inject query as voltage spike ──
-     * Hash the query bytes to a 3D coordinate (same hash as node creation).
-     * Inject a strong voltage pulse at that position.
-     * This "plucks the web" at the query's natural position. */
-    uint32_t hx = hash32(data, len);
+     * Hash the first 12 bytes of query to 3D coordinates.
+     * Same hash as engine_ingest uses for content-aware coords.
+     * Similar query text → same position as similar stored nodes. */
+    int prefix_len = len < 12 ? len : 12;
+    uint32_t hx = hash32(data, prefix_len);
     uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
     uint32_t hz = hash32((const uint8_t *)&hy, sizeof(hy));
     int qx = hx % YEE_GX;
