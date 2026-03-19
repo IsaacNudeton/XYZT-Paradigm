@@ -29,6 +29,7 @@ extern "C" {
 #include "transducer.h"
 #include "sense.h"
 #include "io.h"
+#include "infer.h"
 }
 #include "substrate.cuh"
 #include "yee.cuh"
@@ -1446,6 +1447,49 @@ int main(int argc, char *argv[]) {
         Engine eng;
         engine_init(&eng);
         engine_wire_export(&eng, argv[2]);
+        engine_destroy(&eng);
+    } else if (strcmp(argv[1], "infer") == 0 && argc >= 3) {
+        /* Load saved state and run wave-based inference queries */
+        Engine eng;
+        engine_init(&eng);
+        if (yee_init() != 0) { printf("Yee init failed\n"); engine_destroy(&eng); return 1; }
+        if (engine_load(&eng, argv[2]) != 0) {
+            printf("Load failed: %s\n", argv[2]);
+            yee_destroy(); engine_destroy(&eng); return 1;
+        }
+        printf("=== XYZT INFERENCE — %s ===\n", argv[2]);
+        printf("  nodes=%d edges=%d children=%d\n",
+               eng.shells[0].g.n_nodes, eng.shells[0].g.n_edges, eng.n_children);
+        printf("  Commands: type a query, press enter. 'quit' to exit.\n\n");
+
+        char qline[4096];
+        while (1) {
+            printf("infer> ");
+            fflush(stdout);
+            if (!fgets(qline, sizeof(qline), stdin)) break;
+            int qlen = (int)strlen(qline);
+            while (qlen > 0 && (qline[qlen-1] == '\n' || qline[qlen-1] == '\r')) qline[--qlen] = 0;
+            if (qlen == 0) continue;
+            if (strcmp(qline, "quit") == 0) break;
+
+            InferResult results[INFER_MAX_RESULTS];
+            int n = infer_query(&eng, qline, results, 10);
+
+            if (n == 0) {
+                printf("  No resonance. Query didn't reach any carved waveguides.\n\n");
+            } else {
+                printf("  %d nodes resonated:\n", n);
+                for (int i = 0; i < n; i++) {
+                    printf("  [%d] %-25s energy=%.4f val=%.4f crystal=%d z3=%d z4=%d\n",
+                           results[i].node_id, results[i].name,
+                           results[i].energy, results[i].val,
+                           results[i].crystal, results[i].z3_freq, results[i].z4_corr);
+                }
+                printf("\n");
+            }
+        }
+
+        yee_destroy();
         engine_destroy(&eng);
     } else if (strcmp(argv[1], "inspect") == 0 && argc >= 3) {
         cmd_inspect(argv[2]);
