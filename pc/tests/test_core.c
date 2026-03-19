@@ -19,9 +19,9 @@ static void test_engine_basic(void) {
     for (int i = 0; i < 10; i++) engine_tick(&eng);
     check("engine ticked", 10, (int)eng.total_ticks);
 
-    /* Query */
+    /* Query — same raw encoding as ingest */
     BitStream bs;
-    onetwo_parse((const uint8_t *)"hello world", 11, &bs);
+    encode_bytes(&bs, (const uint8_t *)"hello world", 11);
     QueryResult results[5];
     int n = engine_query(&eng, &bs, results, 5);
     check("query finds result", 1, n > 0 ? 1 : 0);

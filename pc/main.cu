@@ -1036,9 +1036,9 @@ static void cmd_run(void) {
                 /* Short query: name substring search (ONETWO can't discriminate <64 bytes) */
                 n = engine_query_name(&eng, qtext, results, 10);
             } else {
-                /* Long query: structural ONETWO containment */
+                /* Long query: raw byte containment (same encoding as ingest) */
                 BitStream bs;
-                onetwo_parse((const uint8_t *)qtext, qlen, &bs);
+                encode_bytes(&bs, (const uint8_t *)qtext, qlen);
                 n = engine_query(&eng, &bs, results, 10);
             }
 

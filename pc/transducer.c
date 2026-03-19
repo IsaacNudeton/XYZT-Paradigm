@@ -131,8 +131,8 @@ int transducer_file(const char *path, BitStream *out) {
     int n = (int)fread(buf, 1, sz, f);
     fclose(f);
 
-    /* Use ONETWO encoding for file content */
-    onetwo_parse(buf, n, out);
+    /* Raw bytes — let the field find structure, not the encoder */
+    encode_bytes(out, buf, n);
     free(buf);
     return n;
 }
@@ -144,6 +144,6 @@ int transducer_stdin(BitStream *out) {
     /* Strip trailing newline */
     while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) len--;
 
-    onetwo_parse((const uint8_t *)line, len, out);
+    encode_bytes(out, (const uint8_t *)line, len);
     return len;
 }

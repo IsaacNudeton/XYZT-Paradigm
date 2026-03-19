@@ -1321,7 +1321,7 @@ int engine_ingest_text(Engine *eng, const char *name, const char *text) {
     int kw_vote = text_has_negation(text);
 
     BitStream bs;
-    onetwo_parse((const uint8_t *)text, strlen(text), &bs);
+    encode_bytes(&bs, (const uint8_t *)text, (int)strlen(text));
     /* Pre-create the node so has_negation is set BEFORE engine_ingest auto-wires.
      * engine_ingest's graph_add will find the existing node and skip creation. */
     int pre_id = graph_add(&eng->shells[0].g, name, 0, &eng->T);
