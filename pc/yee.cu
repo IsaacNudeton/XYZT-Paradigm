@@ -485,6 +485,45 @@ extern "C" double yee_region_energy(int x0, int y0, int z0,
     return e * 0.5;
 }
 
+/* ══════════════════════════════════════════════════════════════
+ * KERNEL 6: SPONGE LAYER (absorbing boundaries for inference)
+ *
+ * Voxels within `width` cells of any face get V damped.
+ * Damping ramps linearly from 0 at the inner edge to `rate` at the wall.
+ * Energy that reaches the boundary disappears instead of reflecting.
+ * Only used during inference — learning keeps reflective boundaries.
+ * ══════════════════════════════════════════════════════════════ */
+
+__global__ void kernel_yee_sponge(float *V, float *Ix, float *Iy,
+                                   float *Iz, int width, float rate, int n) {
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    if (p >= n) return;
+
+    int gx, gy, gz;
+    yee_coords(p, &gx, &gy, &gz);
+
+    /* Distance to nearest face */
+    int dx = gx < YEE_GX - 1 - gx ? gx : YEE_GX - 1 - gx;
+    int dy = gy < YEE_GY - 1 - gy ? gy : YEE_GY - 1 - gy;
+    int dz = gz < YEE_GZ - 1 - gz ? gz : YEE_GZ - 1 - gz;
+    int d = dx < dy ? dx : dy;
+    if (dz < d) d = dz;
+
+    if (d < width) {
+        float damp = 1.0f - rate * (float)(width - d) / (float)width;
+        V[p] *= damp;
+        Ix[p] *= damp;
+        Iy[p] *= damp;
+        Iz[p] *= damp;
+    }
+}
+
+extern "C" int yee_apply_sponge(int width, float rate) {
+    kernel_yee_sponge<<<YEE_GRID, YEE_BLOCK>>>(
+        d_V, d_Ix, d_Iy, d_Iz, width, rate, YEE_N);
+    return 0;
+}
+
 extern "C" int yee_upload_L(const float *h_L, int n) {
     if (n > YEE_N) n = YEE_N;
     YEE_CHECK(cudaMemcpy(d_L, h_L, n * sizeof(float), cudaMemcpyHostToDevice));

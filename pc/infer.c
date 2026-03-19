@@ -30,6 +30,7 @@ extern int yee_inject(const YeeSource *sources, int n_sources);
 extern int yee_download_V(float *h_V, int n);
 extern int yee_download_acc_raw(float *h_acc, int n);
 extern int yee_clear_fields(void);
+extern int yee_apply_sponge(int width, float rate);
 
 #define YEE_GX 64
 #define YEE_GY 64
@@ -88,24 +89,39 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     src.amplitude = 1.0f;   /* full-strength pulse */
     src.strength = 1.0f;
 
-    /* ── Step 3: RING — propagate for N heartbeats ──
-     * The pulse travels through low-L corridors (carved waveguides).
-     * At junctions, waves interfere. Constructive = aligned knowledge.
-     * Destructive = contradiction. The physics IS the computation. */
+    /* ── Step 3: RING — propagate with absorbing boundaries ──
+     * Sponge layer (8 cells deep, 0.3 damping rate) absorbs outgoing waves.
+     * Without it, the grid is a torus — energy fills uniformly.
+     * With it, only energy trapped in carved waveguides persists.
+     *
+     * Drive the query for 15 ticks (short pulse), then let it ring.
+     * Read the EARLY accumulator (tick 25) for sharp spatial locality,
+     * then continue to full ring for resonant cavity detection. */
+    #define SPONGE_WIDTH  4
+    #define SPONGE_RATE   0.15f
+    #define DRIVE_TICKS   30
+    #define EARLY_READ    40
+
+    float *h_acc_early = (float *)malloc(YEE_TOTAL * sizeof(float));
+
     for (int t = 0; t < INFER_RING_TICKS; t++) {
-        /* Re-inject every tick to sustain the query drive */
-        if (t < INFER_RING_TICKS / 2)
+        if (t < DRIVE_TICKS)
             yee_inject(&src, 1);
         yee_tick();
+        yee_apply_sponge(SPONGE_WIDTH, SPONGE_RATE);
+
+        /* Early snapshot — sharpest spatial locality */
+        if (t == EARLY_READ && h_acc_early)
+            yee_download_acc_raw(h_acc_early, YEE_TOTAL);
     }
 
-    /* ── Step 4: READ — find which nodes resonated ──
-     * Download the accumulator (integrated |V| over the ring period).
-     * Map each node's voxel position to its accumulated energy.
-     * The nodes with highest energy are the answer. */
-    float *h_acc = (float *)malloc(YEE_TOTAL * sizeof(float));
+    /* ── Step 4: READ — use early accumulator for scoring ──
+     * Early read (tick 25) captures spatial locality.
+     * Energy near the query position and along waveguides is high.
+     * Energy in distant/unconnected regions hasn't arrived yet. */
+    float *h_acc = h_acc_early;  /* use early snapshot */
     float *h_V = (float *)malloc(YEE_TOTAL * sizeof(float));
-    if (!h_acc || !h_V) { free(h_acc); free(h_V); return 0; }
+    if (!h_acc || !h_V) { free(h_acc_early); free(h_V); return 0; }
 
     yee_download_acc_raw(h_acc, YEE_TOTAL);
     yee_download_V(h_V, YEE_TOTAL);

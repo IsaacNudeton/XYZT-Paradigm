@@ -153,6 +153,9 @@ int yee_upload_acc(const float *h_acc, int n);
 /* Download raw float accumulator (lossless, for save/load) */
 int yee_download_acc_raw(float *h_acc, int n);
 
+/* Sponge layer: damp V/I at boundary voxels (absorbing BC for inference) */
+int yee_apply_sponge(int width, float rate);
+
 /* Check if Yee grid is initialized */
 int yee_is_initialized(void);
 
