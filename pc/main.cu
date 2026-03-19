@@ -30,6 +30,7 @@ extern "C" {
 #include "sense.h"
 #include "io.h"
 #include "infer.h"
+#include "cortex.h"
 }
 #include "substrate.cuh"
 #include "yee.cuh"
@@ -1448,6 +1449,61 @@ int main(int argc, char *argv[]) {
         engine_init(&eng);
         engine_wire_export(&eng, argv[2]);
         engine_destroy(&eng);
+    } else if (strcmp(argv[1], "cortex") == 0) {
+        /* Clean REPL: ingest → tick → query → print */
+        Cortex ctx;
+        if (cortex_init(&ctx) != 0) { printf("Cortex init failed\n"); return 1; }
+
+        /* Load saved state if provided */
+        if (argc >= 3) {
+            if (cortex_load(&ctx, argv[2]) == 0)
+                printf("Loaded: %s\n", argv[2]);
+        }
+
+        printf("=== CORTEX ===\n");
+        printf("Commands: ingest <text>, tick [N], query <text>, save <path>, load <path>, quit\n\n");
+
+        char line[4096];
+        while (1) {
+            printf("cortex> "); fflush(stdout);
+            if (!fgets(line, sizeof(line), stdin)) break;
+            int len = (int)strlen(line);
+            while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = 0;
+            if (len == 0) continue;
+            if (strcmp(line, "quit") == 0) break;
+
+            if (strncmp(line, "ingest ", 7) == 0) {
+                char name[64];
+                snprintf(name, 64, "c_%06llu", (unsigned long long)ctx.n_ingested);
+                int id = cortex_ingest(&ctx, name, (const uint8_t *)(line + 7), len - 7);
+                printf("  node %d '%s'\n", id, name);
+            } else if (strncmp(line, "tick", 4) == 0) {
+                int n = 1;
+                if (len > 5) n = atoi(line + 5);
+                if (n < 1) n = 1; if (n > 100) n = 100;
+                cortex_tick(&ctx, n);
+                Graph *g = &ctx.eng.shells[0].g;
+                printf("  %d cycles. nodes=%d edges=%d children=%d\n",
+                       n, g->n_nodes, g->n_edges, ctx.eng.n_children);
+            } else if (strncmp(line, "query ", 6) == 0) {
+                InferResult res[10];
+                int n = cortex_query(&ctx, line + 6, res, 10);
+                if (n == 0) printf("  No resonance.\n");
+                for (int i = 0; i < n; i++)
+                    printf("  [%d] %-25s energy=%.4f crystal=%d z3=%d z4=%d\n",
+                           res[i].node_id, res[i].name, res[i].energy,
+                           res[i].crystal, res[i].z3_freq, res[i].z4_corr);
+            } else if (strncmp(line, "save ", 5) == 0) {
+                cortex_save(&ctx, line + 5);
+                printf("  Saved.\n");
+            } else if (strncmp(line, "load ", 5) == 0) {
+                cortex_load(&ctx, line + 5);
+                printf("  Loaded.\n");
+            } else {
+                printf("  Unknown. Try: ingest, tick, query, save, load, quit\n");
+            }
+        }
+        cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "infer") == 0 && argc >= 3) {
         /* Load saved state and run wave-based inference queries */
         Engine eng;

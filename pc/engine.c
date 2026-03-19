@@ -1223,6 +1223,10 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
             if (i == id0 || !g0->nodes[i].alive || g0->nodes[i].identity.len < 16) continue;
             int corr = bs_contain(data, &g0->nodes[i].identity);
             if (corr <= thresh) continue;
+            /* Directional gate: only wire if asymmetry exceeds margin.
+             * Creates unidirectional edges for Z-depth layering. */
+            int rev_corr = bs_contain(&g0->nodes[i].identity, data);
+            if (rev_corr > corr + Z_ASYM_MARGIN) continue;
             if (n_top < GROW_K) {
                 top_j[n_top] = i; top_c[n_top] = corr; n_top++;
             } else {
@@ -1288,6 +1292,8 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
                 if (i == id1 || !g1->nodes[i].alive || g1->nodes[i].identity.len < 16) continue;
                 int corr = bs_contain(data, &g1->nodes[i].identity);
                 if (corr <= g1->grow_mean) continue;
+                int rev_corr = bs_contain(&g1->nodes[i].identity, data);
+                if (rev_corr > corr + Z_ASYM_MARGIN) continue;
                 if (n_top1 < GROW_K) {
                     top_j1[n_top1] = i; top_c1[n_top1] = corr; n_top1++;
                 } else {
@@ -1682,6 +1688,9 @@ void engine_tick(Engine *eng) {
                     int mx = id_pop[i] > id_pop[j] ? id_pop[i] : id_pop[j];
                     if (mx > 0 && mn * 100 / mx < local_thresh) continue;
                     int corr = bs_contain(&g->nodes[i].identity, &g->nodes[j].identity);
+                    /* Directional gate: skip if reverse containment dominates */
+                    int rev_corr = bs_contain(&g->nodes[j].identity, &g->nodes[i].identity);
+                    if (rev_corr > corr + Z_ASYM_MARGIN) continue;
                     mc_sum += corr; mc_count++;
                     /* Opportunity scoring: prefer creating collision points.
                      * relay→collision is highest leverage edge. */

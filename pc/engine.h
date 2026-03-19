@@ -87,6 +87,7 @@ static inline int xyzt_ctzll(uint64_t x) {
 #define VAL_CEILING        1000000 /* hard ceiling on node values (±1M) */
 #define LYSIS_THRESHOLD    100     /* valence below this -> kill child (apoptosis) */
 #define VALENCE_DECAY_RATE   2     /* per SUBSTRATE_INT cycle under high error */
+#define Z_ASYM_MARGIN        3     /* directional gate: only wire i→j if contain(i,j) > contain(j,i) + margin */
 #define PLASTICITY_DEFAULT  1.0f
 #define PLASTICITY_MIN      0.5f
 #define PLASTICITY_MAX      2.0f
