@@ -33,6 +33,10 @@ static float *d_V_accum = NULL;
 /* Host-side scratch for reductions */
 static float *h_scratch = NULL;
 
+/* Pre-allocated inject buffer (avoids cudaMalloc/Free per tick) */
+static YeeSource *d_inject_buf = NULL;
+static YeeSource *h_inject_buf = NULL;
+
 #define YEE_CHECK(call) { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
@@ -243,6 +247,11 @@ extern "C" int yee_init(void) {
     free(h_L);
 
     h_scratch = (float *)malloc(YEE_GRID * sizeof(float));
+
+    /* Pre-allocate inject buffers */
+    YEE_CHECK(cudaMalloc(&d_inject_buf, YEE_MAX_SOURCES * sizeof(YeeSource)));
+    h_inject_buf = (YeeSource *)malloc(YEE_MAX_SOURCES * sizeof(YeeSource));
+
     /* leaky integrator — no tick counter needed */
 
     printf("  Yee grid: %dx%dx%d = %d voxels\n", YEE_GX, YEE_GY, YEE_GZ, YEE_N);
@@ -258,28 +267,45 @@ extern "C" void yee_destroy(void) {
     if (d_Iy)      { cudaFree(d_Iy);      d_Iy = NULL; }
     if (d_Iz)      { cudaFree(d_Iz);      d_Iz = NULL; }
     if (d_L)       { cudaFree(d_L);       d_L = NULL; }
-    if (d_V_accum) { cudaFree(d_V_accum); d_V_accum = NULL; }
-    if (h_scratch)  { free(h_scratch);     h_scratch = NULL; }
+    if (d_V_accum)    { cudaFree(d_V_accum);    d_V_accum = NULL; }
+    if (d_inject_buf) { cudaFree(d_inject_buf); d_inject_buf = NULL; }
+    if (h_inject_buf) { free(h_inject_buf);     h_inject_buf = NULL; }
+    if (h_scratch)    { free(h_scratch);         h_scratch = NULL; }
 }
 
 extern "C" int yee_tick(void) {
     /* Step 1: Update V from I divergence */
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
-    YEE_CHECK(cudaGetLastError());
 
     /* Sync: V must be fully updated before I reads new V */
     YEE_CHECK(cudaDeviceSynchronize());
 
     /* Step 2: Update I from new V gradient */
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
-    YEE_CHECK(cudaGetLastError());
+
+    /* Step 3: Accumulate |V| for Hebbian */
+    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
+
+    /* Single sync: ensures I and accum are done before next tick */
     YEE_CHECK(cudaDeviceSynchronize());
 
-    /* Accumulate |V| for Hebbian */
-    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
-    YEE_CHECK(cudaGetLastError());
-    /* accum_ticks not needed — leaky integrator is self-regulating */
+    return 0;
+}
 
+/* Async tick: launch GPU kernels, return immediately.
+ * CPU can do work while GPU runs. Call yee_sync() before
+ * reading GPU state or injecting new sources. */
+extern "C" int yee_tick_async(void) {
+    kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
+    YEE_CHECK(cudaDeviceSynchronize());  /* V→I dependency (leapfrog) */
+    kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
+    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
+    /* I and accum still running — CPU is free to work */
+    return 0;
+}
+
+extern "C" int yee_sync(void) {
+    YEE_CHECK(cudaDeviceSynchronize());
     return 0;
 }
 
@@ -287,17 +313,14 @@ extern "C" int yee_inject(const YeeSource *sources, int n_sources) {
     if (n_sources <= 0) return 0;
     if (n_sources > YEE_MAX_SOURCES) n_sources = YEE_MAX_SOURCES;
 
-    YeeSource *d_src;
+    /* Use pre-allocated buffer — no malloc/free per call */
     size_t sz = n_sources * sizeof(YeeSource);
-    YEE_CHECK(cudaMalloc(&d_src, sz));
-    YEE_CHECK(cudaMemcpy(d_src, sources, sz, cudaMemcpyHostToDevice));
+    YEE_CHECK(cudaMemcpy(d_inject_buf, sources, sz, cudaMemcpyHostToDevice));
 
     int blocks = (n_sources + YEE_BLOCK - 1) / YEE_BLOCK;
-    kernel_yee_inject<<<blocks, YEE_BLOCK>>>(d_V, d_src, n_sources);
-    YEE_CHECK(cudaGetLastError());
-    YEE_CHECK(cudaDeviceSynchronize());
+    kernel_yee_inject<<<blocks, YEE_BLOCK>>>(d_V, d_inject_buf, n_sources);
+    /* No sync needed — next yee_tick will sync before reading V */
 
-    cudaFree(d_src);
     return 0;
 }
 

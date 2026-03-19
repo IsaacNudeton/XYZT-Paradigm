@@ -369,6 +369,15 @@ typedef struct {
     int32_t  prev_output;       /* output value at last heartbeat */
     int      local_heartbeat;   /* how many local heartbeats this child has lived */
     uint8_t  drive;             /* 0=curiosity, 1=frustration, 2=boredom */
+
+    /* Z-bucket cache for O(E+N) propagation (rebuilt when topology changes) */
+    int     *z_edge_idx;        /* edge indices sorted by dest z-level */
+    int      z_edge_off[65];    /* offsets: edges at z-level zl are [off[zl]..off[zl+1]) */
+    int     *z_node_idx;        /* node indices sorted by z-level */
+    int      z_node_off[65];    /* offsets: nodes at z-level zl are [off[zl]..off[zl+1]) */
+    int      z_max;             /* max z-level in graph */
+    int      z_cache_n_nodes;   /* n_nodes when cache was built */
+    int      z_cache_n_edges;   /* n_edges when cache was built */
 } Graph;
 
 /* Shell — graph with identity */

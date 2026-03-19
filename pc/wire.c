@@ -60,42 +60,55 @@ static inline int yee_voxel(int gx, int gy, int gz) {
     return gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
 }
 
+/* Cached source mapping: voxel IDs and base amplitudes don't change
+ * between ticks. Only val-dependent amplitude needs updating. */
+static int      wire_cache_n = 0;
+static int      wire_cache_node_ids[YEE_MAX_SOURCES];
+static int      wire_cache_voxel_ids[YEE_MAX_SOURCES];
+static float    wire_cache_base[YEE_MAX_SOURCES];
+static uint64_t wire_cache_tick = 0;     /* last tick the cache was built */
+static int      wire_cache_n_nodes = 0;  /* n_nodes when cache was built */
+
+static YeeSource wire_sources[YEE_MAX_SOURCES];
+
 int wire_engine_to_yee(const Engine *eng) {
-    /* Create YeeSource for each active node.
-     * Identity presence → base injection (0.15). Val modulates on top.
-     * Valence floors at 0.1 so cold nodes still participate.
-     * Old substrate used identity fingerprint to seed — this matches
-     * by ensuring every node with identity injects at a base level. */
     const Graph *g0 = &eng->shells[0].g;
-    YeeSource sources[YEE_MAX_SOURCES];
-    int n_src = 0;
 
-    for (int i = 0; i < g0->n_nodes && n_src < YEE_MAX_SOURCES; i++) {
-        const Node *n = &g0->nodes[i];
-        if (!n->alive || n->layer_zero) continue;
-        if (n->identity.len < 1) continue;
+    /* Rebuild cache if topology changed (nodes added/removed) */
+    if (wire_cache_n_nodes != g0->n_nodes ||
+        eng->total_ticks - wire_cache_tick > SUBSTRATE_INT) {
+        wire_cache_n = 0;
+        for (int i = 0; i < g0->n_nodes && wire_cache_n < YEE_MAX_SOURCES; i++) {
+            const Node *n = &g0->nodes[i];
+            if (!n->alive || n->layer_zero) continue;
+            if (n->identity.len < 1) continue;
 
-        int gx = coord_x(n->coord) % YEE_GX;
-        int gy = coord_y(n->coord) % YEE_GY;
-        int gz = coord_z(n->coord) % YEE_GZ;
+            int gx = coord_x(n->coord) % YEE_GX;
+            int gy = coord_y(n->coord) % YEE_GY;
+            int gz = coord_z(n->coord) % YEE_GZ;
 
-        /* Identity-based injection: matches old substrate behavior.
-         * Old substrate stamped identity hash (50-200) at full strength
-         * regardless of valence. Yee equivalent: base 0.5 always present
-         * for nodes with identity, val modulates on top. Strength 1.0
-         * (spatial presence doesn't depend on valence — that deadlocked). */
-        float base = (n->identity.len >= 64) ? 0.5f : 0.0f;
-        float amp = base + fabsf((float)n->val / (float)VAL_CEILING) * 0.5f;
-        float strength = 1.0f;
-
-        sources[n_src].voxel_id = yee_voxel(gx, gy, gz);
-        sources[n_src].amplitude = amp;
-        sources[n_src].strength = strength;
-        n_src++;
+            wire_cache_node_ids[wire_cache_n] = i;
+            wire_cache_voxel_ids[wire_cache_n] = yee_voxel(gx, gy, gz);
+            wire_cache_base[wire_cache_n] = (n->identity.len >= 64) ? 0.5f : 0.0f;
+            wire_cache_n++;
+        }
+        wire_cache_n_nodes = g0->n_nodes;
+        wire_cache_tick = eng->total_ticks;
     }
 
-    if (n_src > 0)
-        return yee_inject(sources, n_src);
+    /* Fast path: only update amplitudes from cached mapping */
+    for (int s = 0; s < wire_cache_n; s++) {
+        int nid = wire_cache_node_ids[s];
+        const Node *n = &g0->nodes[nid];
+        float amp = wire_cache_base[s] +
+                    fabsf((float)n->val / (float)VAL_CEILING) * 0.5f;
+        wire_sources[s].voxel_id = wire_cache_voxel_ids[s];
+        wire_sources[s].amplitude = amp;
+        wire_sources[s].strength = 1.0f;
+    }
+
+    if (wire_cache_n > 0)
+        return yee_inject(wire_sources, wire_cache_n);
     return 0;
 }
 

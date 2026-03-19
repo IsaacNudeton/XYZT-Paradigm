@@ -426,7 +426,9 @@ void graph_init(Graph *g) {
 
 void graph_destroy(Graph *g) {
     free(g->nodes); free(g->edges);
+    free(g->z_edge_idx); free(g->z_node_idx);
     g->nodes = NULL; g->edges = NULL;
+    g->z_edge_idx = NULL; g->z_node_idx = NULL;
 }
 
 int graph_find(Graph *g, const char *name) {
@@ -1410,34 +1412,83 @@ void engine_tick(Engine *eng) {
         Graph *g = &eng->shells[s].g;
         g->total_ticks++;
 
-        /* Z-ordered propagate + resolve */
-        int max_z = 0;
-        for (int i = 0; i < g->n_nodes; i++)
-            if (g->nodes[i].alive) {
-                int nz = coord_z(g->nodes[i].coord);
-                if (nz > max_z) max_z = nz;
-            }
+        /* Z-ordered propagate + resolve using cached buckets.
+         * O(n_edges + n_nodes) per tick. Cache rebuilt when topology changes. */
 
-        for (int zl = 0; zl <= max_z; zl++) {
-            /* Propagate: FDTD through transmission line edges */
+        /* Rebuild z-bucket cache if topology changed */
+        if (g->z_cache_n_nodes != g->n_nodes || g->z_cache_n_edges != g->n_edges) {
+            free(g->z_edge_idx); g->z_edge_idx = NULL;
+            free(g->z_node_idx); g->z_node_idx = NULL;
+
+            g->z_max = 0;
+            for (int i = 0; i < g->n_nodes; i++)
+                if (g->nodes[i].alive) {
+                    int nz = coord_z(g->nodes[i].coord);
+                    if (nz > g->z_max) g->z_max = nz;
+                }
+            if (g->z_max > 63) g->z_max = 63;
+
+            /* Edge buckets by dest z */
+            int z_edge_count[64] = {0};
             for (int i = 0; i < g->n_edges; i++) {
                 Edge *e = &g->edges[i];
                 if (e->tl.n_cells == 0 || e->weight == 0) continue;
+                int dz = coord_z(g->nodes[e->dst].coord);
+                if (dz < 64) z_edge_count[dz]++;
+            }
+            memset(g->z_edge_off, 0, sizeof(g->z_edge_off));
+            for (int z = 0; z < 64; z++) g->z_edge_off[z + 1] = g->z_edge_off[z] + z_edge_count[z];
+            g->z_edge_idx = (int *)malloc((g->z_edge_off[64] + 1) * sizeof(int));
+            int z_cur[64] = {0};
+            for (int i = 0; i < g->n_edges; i++) {
+                Edge *e = &g->edges[i];
+                if (e->tl.n_cells == 0 || e->weight == 0) continue;
+                int dz = coord_z(g->nodes[e->dst].coord);
+                if (dz < 64) {
+                    g->z_edge_idx[g->z_edge_off[dz] + z_cur[dz]] = i;
+                    z_cur[dz]++;
+                }
+            }
+
+            /* Node buckets by z */
+            int z_node_count[64] = {0};
+            for (int i = 0; i < g->n_nodes; i++)
+                if (g->nodes[i].alive) {
+                    int nz = coord_z(g->nodes[i].coord);
+                    if (nz < 64) z_node_count[nz]++;
+                }
+            memset(g->z_node_off, 0, sizeof(g->z_node_off));
+            for (int z = 0; z < 64; z++) g->z_node_off[z + 1] = g->z_node_off[z] + z_node_count[z];
+            g->z_node_idx = (int *)malloc((g->z_node_off[64] + 1) * sizeof(int));
+            memset(z_cur, 0, sizeof(z_cur));
+            for (int i = 0; i < g->n_nodes; i++)
+                if (g->nodes[i].alive) {
+                    int nz = coord_z(g->nodes[i].coord);
+                    if (nz < 64) {
+                        g->z_node_idx[g->z_node_off[nz] + z_cur[nz]] = i;
+                        z_cur[nz]++;
+                    }
+                }
+
+            g->z_cache_n_nodes = g->n_nodes;
+            g->z_cache_n_edges = g->n_edges;
+        }
+
+        for (int zl = 0; zl <= g->z_max; zl++) {
+            /* Propagate: only edges targeting this z-level */
+            for (int j = g->z_edge_off[zl]; j < g->z_edge_off[zl + 1]; j++) {
+                int i = g->z_edge_idx[j];
+                Edge *e = &g->edges[i];
                 Node *na = &g->nodes[e->src_a], *nb = &g->nodes[e->src_b], *nd = &g->nodes[e->dst];
-                if (coord_z(nd->coord) != zl) continue;
                 if (na->layer_zero || nb->layer_zero) continue;
                 if (na->identity.len < 1 || nb->identity.len < 1) continue;
 
-                /* Inject source values into TLine cell 0 */
                 int32_t va = e->invert_a ? -na->val : na->val;
                 int32_t vb = e->invert_b ? -nb->val : nb->val;
                 double input = (double)(va + vb) / (double)VAL_CEILING;
                 tline_inject(&e->tl, input);
-
-                /* Step FDTD (one step per tick — real-time propagation) */
                 tline_step(&e->tl);
 
-                /* Read output from far end */
                 double output = tline_read(&e->tl);
                 if (fabs(output) > 1e-10) {
                     int64_t out_scaled = (int64_t)(output * VAL_CEILING);
@@ -1449,10 +1500,10 @@ void engine_tick(Engine *eng) {
                 }
             }
 
-            /* ── S4: Per-shell resolve ────────────── */
-            for (int i = 0; i < g->n_nodes; i++) {
+            /* ── S4: Per-shell resolve — only nodes at this z-level ── */
+            for (int j = g->z_node_off[zl]; j < g->z_node_off[zl + 1]; j++) {
+                int i = g->z_node_idx[j];
                 Node *n = &g->nodes[i];
-                if (coord_z(n->coord) != zl) continue;
                 if (!n->alive || n->layer_zero) continue;
                 /* Nodes with children must always enter resolve so child ticks.
                  * With directed edges, a node may have only outgoing edges. */
@@ -2882,22 +2933,41 @@ int engine_load(Engine *eng, const char *path) {
  * ══════════════════════════════════════════════════════════════ */
 
 /* Toolkit wire.bin format (from tools engine wire.h v3) */
-#define TK_WIRE_MAX_NODES 512
-#define TK_WIRE_MAX_EDGES 4096
+/* v3 (legacy) toolkit limits */
+#define TK_WIRE_V3_MAX_NODES 512
+#define TK_WIRE_V3_MAX_EDGES 4096
+
+/* v4: engine-scale (matches CLI wire.h v4) */
+#define TK_WIRE_MAX_NODES 4096
+#define TK_WIRE_MAX_EDGES 65536
 #define TK_WIRE_NAME_LEN  128
 #define TK_WIRE_MAGIC     0x57495245  /* "WIRE" */
-#define TK_WIRE_VER       3
+#define TK_WIRE_VER       4
 #define TK_WIRE_ALIVE     128
 
 #pragma pack(push, 1)
+/* v3 node layout — for migration */
 typedef struct {
     char     name[TK_WIRE_NAME_LEN];
-    uint8_t  type;       /* 0=file, 1=problem, 2=concept */
+    uint8_t  type;
     uint8_t  _pad[3];
     uint32_t created;
     uint32_t last_active;
     uint32_t hit_count;
-} TkWireNode;  /* 144 bytes */
+} TkWireNodeV3;  /* 144 bytes */
+
+/* v4 node — with plasticity, valence, layer_zero */
+typedef struct {
+    char     name[TK_WIRE_NAME_LEN];
+    uint8_t  type;       /* 0=file, 1=problem, 2=concept */
+    uint8_t  layer_zero; /* all edges passes>0, fails==0 */
+    uint8_t  valence;    /* count of alive edges */
+    uint8_t  _pad;
+    uint32_t created;
+    uint32_t last_active;
+    uint32_t hit_count;
+    float    plasticity; /* learning rate multiplier (0.5..2.0) */
+} TkWireNode;  /* 148 bytes */
 
 typedef struct {
     uint16_t src;
@@ -2910,6 +2980,19 @@ typedef struct {
     uint32_t last_active;
 } TkWireEdge;  /* 16 bytes */
 
+/* v3 graph — for migration detection */
+typedef struct {
+    uint32_t     magic;
+    uint8_t      version;
+    uint8_t      _pad[3];
+    uint32_t     n_nodes;
+    uint32_t     n_edges;
+    uint32_t     total_learns;
+    TkWireNodeV3 nodes[TK_WIRE_V3_MAX_NODES];
+    TkWireEdge   edges[TK_WIRE_V3_MAX_EDGES];
+    char         node_shells[TK_WIRE_V3_MAX_NODES][32];
+} TkWireGraphV3;
+
 typedef struct {
     uint32_t   magic;
     uint8_t    version;
@@ -2920,25 +3003,62 @@ typedef struct {
     TkWireNode nodes[TK_WIRE_MAX_NODES];
     TkWireEdge edges[TK_WIRE_MAX_EDGES];
     char       node_shells[TK_WIRE_MAX_NODES][32];
-} TkWireGraph;  /* 155,668 bytes */
+} TkWireGraph;
 #pragma pack(pop)
 
 int engine_wire_import(Engine *eng, const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
 
-    TkWireGraph *wg = (TkWireGraph *)calloc(1, sizeof(TkWireGraph));
-    if (!wg) { fclose(f); return -2; }
-
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
-    size_t to_read = (size_t)fsize;
-    if (to_read > sizeof(TkWireGraph)) to_read = sizeof(TkWireGraph);
-    if (fread(wg, 1, to_read, f) < 16 || wg->magic != TK_WIRE_MAGIC) {
-        free(wg); fclose(f); return -3;
+
+    /* Detect v3 vs v4 by file size */
+    TkWireGraph *wg = NULL;
+
+    if (fsize > 0 && (size_t)fsize <= sizeof(TkWireGraphV3) + 64) {
+        /* v3 format — migrate on the fly */
+        TkWireGraphV3 *old = (TkWireGraphV3 *)calloc(1, sizeof(TkWireGraphV3));
+        if (!old) { fclose(f); return -2; }
+        size_t rd = (size_t)fsize < sizeof(TkWireGraphV3) ? (size_t)fsize : sizeof(TkWireGraphV3);
+        if (fread(old, 1, rd, f) < 16 || old->magic != TK_WIRE_MAGIC) {
+            free(old); fclose(f); return -3;
+        }
+        fclose(f);
+
+        wg = (TkWireGraph *)calloc(1, sizeof(TkWireGraph));
+        if (!wg) { free(old); return -2; }
+        wg->magic = TK_WIRE_MAGIC;
+        wg->version = TK_WIRE_VER;
+        wg->n_nodes = old->n_nodes;
+        wg->n_edges = old->n_edges;
+        wg->total_learns = old->total_learns;
+        for (uint32_t i = 0; i < old->n_nodes && i < TK_WIRE_V3_MAX_NODES; i++) {
+            strncpy(wg->nodes[i].name, old->nodes[i].name, TK_WIRE_NAME_LEN - 1);
+            wg->nodes[i].type = old->nodes[i].type;
+            wg->nodes[i].created = old->nodes[i].created;
+            wg->nodes[i].last_active = old->nodes[i].last_active;
+            wg->nodes[i].hit_count = old->nodes[i].hit_count;
+            wg->nodes[i].plasticity = 1.0f;
+            strncpy(wg->node_shells[i], old->node_shells[i], 31);
+        }
+        for (uint32_t i = 0; i < old->n_edges && i < TK_WIRE_V3_MAX_EDGES; i++) {
+            wg->edges[i] = old->edges[i];
+        }
+        free(old);
+        printf("Wire import: migrated v3 → v4\n");
+    } else {
+        /* v4 format — direct read */
+        wg = (TkWireGraph *)calloc(1, sizeof(TkWireGraph));
+        if (!wg) { fclose(f); return -2; }
+        size_t to_read = (size_t)fsize;
+        if (to_read > sizeof(TkWireGraph)) to_read = sizeof(TkWireGraph);
+        if (fread(wg, 1, to_read, f) < 16 || wg->magic != TK_WIRE_MAGIC) {
+            free(wg); fclose(f); return -3;
+        }
+        fclose(f);
     }
-    fclose(f);
 
     Graph *g = &eng->shells[0].g;
     int imported_nodes = 0;
@@ -2952,6 +3072,9 @@ int engine_wire_import(Engine *eng, const char *path) {
         if (eid < 0) continue;
         node_map[i] = eid;
         g->nodes[eid].hit_count = wg->nodes[i].hit_count;
+        /* v4: carry plasticity into engine node */
+        if (wg->nodes[i].plasticity >= 0.5f && wg->nodes[i].plasticity <= 2.0f)
+            g->nodes[eid].plasticity = wg->nodes[i].plasticity;
         imported_nodes++;
     }
 
@@ -2995,9 +3118,12 @@ int engine_wire_export(const Engine *eng, const char *path) {
         TkWireNode *wn = &wg->nodes[nn];
         strncpy(wn->name, g->nodes[i].name, TK_WIRE_NAME_LEN - 1);
         wn->type = g->nodes[i].shell_id;
+        wn->layer_zero = g->nodes[i].layer_zero;
+        wn->valence = g->nodes[i].valence;
         wn->created = g->nodes[i].created;
         wn->last_active = g->nodes[i].last_active;
         wn->hit_count = g->nodes[i].hit_count;
+        wn->plasticity = g->nodes[i].plasticity;
         strncpy(wg->node_shells[nn], "xyzt-pc", 31);
         nn++;
     }

@@ -108,6 +108,8 @@ void yee_destroy(void);
 /* One propagation tick: kernel_yee_V then kernel_yee_I.
  * Two kernel launches with sync between. */
 int yee_tick(void);
+int yee_tick_async(void);  /* launch kernels, return immediately */
+int yee_sync(void);        /* wait for async tick to complete */
 
 /* Inject sources: CPU provides array of (voxel, amplitude, strength).
  * V[voxel] += amplitude * strength. */

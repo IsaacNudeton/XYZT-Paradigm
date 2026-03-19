@@ -730,9 +730,10 @@ static void cmd_t3(int argc, char *argv[]) {
     for (tick = 0; tick < max_phase2; tick++) {
         if (gpu_ok) {
             wire_engine_to_yee(&eng);
-            yee_tick();
+            yee_tick_async();     /* launch GPU, don't wait */
         }
-        engine_tick(&eng);
+        engine_tick(&eng);        /* CPU works while GPU runs */
+        if (gpu_ok) yee_sync();   /* wait for GPU before next inject */
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
             yee_download_acc(yee_substrate, YEE_N);
@@ -794,9 +795,10 @@ static void cmd_t3(int argc, char *argv[]) {
     for (int t = 0; t < evolve_ticks; t++) {
         if (gpu_ok) {
             wire_engine_to_yee(&eng);
-            yee_tick();
+            yee_tick_async();
         }
         engine_tick(&eng);
+        if (gpu_ok) yee_sync();
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
             yee_download_acc(yee_substrate, YEE_N);
@@ -1000,9 +1002,10 @@ static void cmd_run(void) {
             for (int i = 0; i < n; i++) {
                 if (gpu_ok) {
                     wire_engine_to_yee(&eng);
-                    yee_tick();
+                    yee_tick_async();
                 }
                 engine_tick(&eng);
+                if (gpu_ok) yee_sync();
 
                 if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
                     yee_download_acc(yee_substrate, YEE_N);
@@ -1208,8 +1211,9 @@ static void cmd_stream(int binary_mode) {
     for (int cycle = 0; cycle < 10; cycle++) {
         for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
             wire_engine_to_yee(&eng);
-            yee_tick();
+            yee_tick_async();
             engine_tick(&eng);
+            yee_sync();
         }
         /* Hebbian fires at end of each cycle */
         {
