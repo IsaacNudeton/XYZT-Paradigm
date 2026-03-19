@@ -126,7 +126,40 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     yee_download_acc_raw(h_acc, YEE_TOTAL);
     yee_download_V(h_V, YEE_TOTAL);
 
-    /* Score every alive node by energy at its voxel position */
+    /* Phase 4a: Compute spatial energy per node from wave accumulator */
+    float *node_energy = (float *)calloc(g0->n_nodes, sizeof(float));
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        int gx = coord_x(n->coord) % YEE_GX;
+        int gy = coord_y(n->coord) % YEE_GY;
+        int gz = coord_z(n->coord) % YEE_GZ;
+        node_energy[i] = h_acc[yee_vid(gx, gy, gz)];
+    }
+
+    /* Phase 4b: Topological propagation — spread energy along graph edges.
+     * If node A resonated spatially and has a strong edge to node B,
+     * B gets energy even if B is at a different spatial position.
+     * This is the fuzzy matching layer. The graph learned which nodes
+     * are structurally related regardless of their 4-byte prefix. */
+    float *topo_energy = (float *)calloc(g0->n_nodes, sizeof(float));
+    for (int e = 0; e < g0->n_edges; e++) {
+        Edge *ed = &g0->edges[e];
+        if (ed->weight == 0) continue;
+        float w = (float)ed->weight / 255.0f;  /* normalize to [0,1] */
+        int src = ed->src_a, dst = ed->dst;
+        if (src < g0->n_nodes && dst < g0->n_nodes) {
+            topo_energy[dst] += node_energy[src] * w * 0.5f;
+            topo_energy[src] += node_energy[dst] * w * 0.5f;
+        }
+    }
+
+    /* Combine: spatial + topological. Topo fills in what spatial misses. */
+    for (int i = 0; i < g0->n_nodes; i++)
+        node_energy[i] += topo_energy[i];
+    free(topo_energy);
+
+    /* Score every alive node by combined energy */
     int n_results = 0;
     for (int i = 0; i < g0->n_nodes; i++) {
         Node *n = &g0->nodes[i];
@@ -135,13 +168,12 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
         int gx = coord_x(n->coord) % YEE_GX;
         int gy = coord_y(n->coord) % YEE_GY;
         int gz = coord_z(n->coord) % YEE_GZ;
-        int vid = yee_vid(gx, gy, gz);
 
-        float energy = h_acc[vid];
-        float voltage = h_V[vid];
+        float energy = node_energy[i];
+        float voltage = h_V[yee_vid(gx, gy, gz)];
 
-        /* Skip nodes with negligible energy — the wave didn't reach them */
-        if (energy < 0.001f) continue;
+        /* Skip nodes with negligible energy */
+        if (energy < 0.0005f) continue;
 
         /* Z3 observer: estimate zero-crossing frequency from V sign changes.
          * High frequency = resonant node. We approximate from final V and acc. */
@@ -183,6 +215,7 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
                 results[j] = tmp;
             }
 
+    free(node_energy);
     free(h_acc);
     free(h_V);
     return n_results;
