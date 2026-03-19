@@ -231,7 +231,7 @@ static void bench_noise_robustness(void) {
     for (int i = 0; i < 64; i++) clean[i] = (uint8_t)(i * 13 + 42);
 
     BitStream bs_clean, bs_noisy;
-    onetwo_parse(clean, 64, &bs_clean);
+    encode_bytes(&bs_clean, clean, 64);
 
     int noise_levels[] = {10, 20, 50};  /* percent */
     int corr_ok = 1;
@@ -249,7 +249,7 @@ static void bench_noise_robustness(void) {
             noisy[bit_pos / 8] ^= (1 << (bit_pos % 8));
         }
 
-        onetwo_parse(noisy, 64, &bs_noisy);
+        encode_bytes(&bs_noisy, noisy, 64);
         int corr = bs_corr(&bs_clean, &bs_noisy);
         printf("    noise=%d%%: correlation=%d\n", noise_levels[nl], corr);
 

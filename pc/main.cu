@@ -312,7 +312,7 @@ static void cmd_test(void) {
                 buf[b] = (uint8_t)(i < ZD_PER_ZONE/2
                     ? (0x40 + i + ((b - 128) & 0x3F))
                     : (0xF0 - i - ((b - 128) & 0x3F)));
-            onetwo_parse(buf, 512, &bs);
+            encode_bytes(&bs, buf, 256);
             snprintf(name, sizeof(name), "zA_%d", i);
             zone_ids[i] = engine_ingest(&eng, name, &bs);
         }
@@ -323,7 +323,7 @@ static void cmd_test(void) {
                 int p = primes[i];
                 for (int b = 0; b < 512; b++)
                     buf[b] = (uint8_t)((b % p) * (256 / p));
-                onetwo_parse(buf, 512, &bs);
+                encode_bytes(&bs, buf, 256);
                 snprintf(name, sizeof(name), "zB_%d", i);
                 zone_ids[ZD_PER_ZONE + i] = engine_ingest(&eng, name, &bs);
             }
@@ -339,7 +339,7 @@ static void cmd_test(void) {
                 buf[b] = (uint8_t)(buf[b - 486] ^ buf[b - 243]);
             buf[508] = 0xFE; buf[509] = 0xED;
             buf[510] = 0xFA; buf[511] = 0xCE;
-            onetwo_parse(buf, 512, &bs);
+            encode_bytes(&bs, buf, 256);
             snprintf(name, sizeof(name), "zC_%d", i);
             zone_ids[ZD_PER_ZONE*2 + i] = engine_ingest(&eng, name, &bs);
         }
@@ -353,7 +353,7 @@ static void cmd_test(void) {
                 if ((b % 60) == 0 && b > 0) val = 0x0A;
                 buf[b] = val;
             }
-            onetwo_parse(buf, 512, &bs);
+            encode_bytes(&bs, buf, 256);
             snprintf(name, sizeof(name), "zD_%d", i);
             zone_ids[ZD_PER_ZONE*3 + i] = engine_ingest(&eng, name, &bs);
         }
@@ -372,7 +372,7 @@ static void cmd_test(void) {
                 buf[b] = (uint8_t)(0x20 + ((seed >> 16) % 95));
                 if ((b % 7) == (int)(i % 7)) buf[b] = 0x20;
             }
-            onetwo_parse(buf, 512, &bs);
+            encode_bytes(&bs, buf, 256);
             snprintf(name, sizeof(name), "zE_%d", i);
             zone_ids[ZD_PER_ZONE*4 + i] = engine_ingest(&eng, name, &bs);
         }
@@ -445,7 +445,7 @@ static void cmd_test(void) {
         uint8_t buf[512]; BitStream bs;
         for (int i = 0; i < 8; i++) {
             for (int b = 0; b < 512; b++) buf[b] = (uint8_t)(i * 31 + b * 7);
-            onetwo_parse(buf, 512, &bs);
+            encode_bytes(&bs, buf, 256);
             char name[16]; snprintf(name, sizeof(name), "cl_%d", i);
             engine_ingest(&eng, name, &bs);
         }
@@ -680,7 +680,7 @@ static void cmd_t3(int argc, char *argv[]) {
             bin_data[i] = (uint8_t)(seed & 0xFF);
         }
         BitStream bs;
-        onetwo_parse(bin_data, 256, &bs);
+        encode_bytes(&bs, bin_data, 256);
         ids[1] = engine_ingest(&eng, "t3_binary", &bs);
         printf("  [%s] ingested embedded pseudo-binary -> node %d\n", labels[1], ids[1]);
     }

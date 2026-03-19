@@ -75,14 +75,14 @@ static void ingest_all(Engine *eng, int ids[50]) {
     /* Zone A: 15 conflicting packets */
     for (int i = 0; i < 15; i++) {
         fill_zone_a(buf, i);
-        onetwo_parse(buf, 512, &bs);
+        encode_bytes(&bs, buf, 256);
         snprintf(name, sizeof(name), "zA_%d", i);
         ids[i] = engine_ingest(eng, name, &bs);
     }
     /* Zone B: 15 periodic packets */
     for (int i = 0; i < 15; i++) {
         fill_zone_b(buf, i);
-        onetwo_parse(buf, 512, &bs);
+        encode_bytes(&bs, buf, 256);
         snprintf(name, sizeof(name), "zB_%d", i);
         ids[15 + i] = engine_ingest(eng, name, &bs);
     }
@@ -90,7 +90,7 @@ static void ingest_all(Engine *eng, int ids[50]) {
     for (int i = 0; i < 20; i++) {
         if (i < 10) fill_zone_c_a(buf, i);
         else        fill_zone_c_b(buf, i);
-        onetwo_parse(buf, 512, &bs);
+        encode_bytes(&bs, buf, 256);
         snprintf(name, sizeof(name), "zC_%d", i);
         ids[30 + i] = engine_ingest(eng, name, &bs);
     }

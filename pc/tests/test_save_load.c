@@ -32,7 +32,7 @@ void run_save_load_tests(void) {
     for (int i = 0; i < 10; i++) {
         for (int b = 0; b < 512; b++)
             buf[b] = (uint8_t)(i * 17 + b * 3);
-        onetwo_parse(buf, 512, &bs);
+        encode_bytes(&bs, buf, 256);
         char name[16];
         snprintf(name, sizeof(name), "sl_%d", i);
         engine_ingest(&eng_a, name, &bs);

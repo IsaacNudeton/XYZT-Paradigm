@@ -80,7 +80,7 @@ static void add_feature(Engine *eng, sense_result_t *result, const char *name) {
 
     /* Build identity from name so node participates in grow phase */
     if (n->identity.len == 0) {
-        onetwo_parse((const uint8_t *)name, (int)strlen(name), &n->identity);
+        encode_bytes(&n->identity, (const uint8_t *)name, (int)strlen(name));
     }
 
     result->node_ids[result->n_features++] = id;

@@ -57,8 +57,8 @@ void run_collision_tests(void) {
         Graph *g0 = &eng.shells[0].g;
 
         BitStream bs_a, bs_b;
-        onetwo_parse(buf_a, 128, &bs_a);
-        onetwo_parse(buf_b, 128, &bs_b);
+        encode_bytes(&bs_a, buf_a, 128);
+        encode_bytes(&bs_b, buf_b, 128);
 
         /* Establish pattern A with repeated exposure */
         int id_a = -1;
@@ -118,8 +118,8 @@ void run_collision_tests(void) {
         Graph *g0 = &eng.shells[0].g;
 
         BitStream bs1, bs2;
-        onetwo_parse(buf_a, 128, &bs1);
-        onetwo_parse(buf_same, 128, &bs2);
+        encode_bytes(&bs1, buf_a, 128);
+        encode_bytes(&bs2, buf_same, 128);
 
         int id1 = -1;
         for (int rep = 0; rep < 5; rep++) {
@@ -159,8 +159,8 @@ void run_collision_tests(void) {
         Graph *g0 = &eng.shells[0].g;
 
         BitStream bs_a, bs_i;
-        onetwo_parse(buf_a, 128, &bs_a);
-        onetwo_parse(buf_indep, 128, &bs_i);
+        encode_bytes(&bs_a, buf_a, 128);
+        encode_bytes(&bs_i, buf_indep, 128);
 
         int id_a = engine_ingest(&eng, "stream_a", &bs_a);
         int id_i = engine_ingest(&eng, "stream_i", &bs_i);
@@ -193,8 +193,8 @@ void run_collision_tests(void) {
         Graph *g0 = &eng.shells[0].g;
 
         BitStream bs_a, bs_b;
-        onetwo_parse(buf_a, 128, &bs_a);
-        onetwo_parse(buf_b, 128, &bs_b);
+        encode_bytes(&bs_a, buf_a, 128);
+        encode_bytes(&bs_b, buf_b, 128);
 
         /* Establish stable baseline with pattern A */
         for (int rep = 0; rep < 10; rep++) {
@@ -323,7 +323,7 @@ void run_collision_tests(void) {
         int ids[15];
         for (int i = 0; i < 15; i++) {
             BitStream bs;
-            onetwo_parse(packets[i], 64, &bs);
+            encode_bytes(&bs, packets[i], 64);
             ids[i] = engine_ingest(&eng, pnames[i], &bs);
         }
 
@@ -379,7 +379,7 @@ void run_collision_tests(void) {
             /* Re-ingest all 15 packets each cycle — continuous bus traffic */
             for (int i = 0; i < 15; i++) {
                 BitStream bs;
-                onetwo_parse(packets[i], 64, &bs);
+                encode_bytes(&bs, packets[i], 64);
                 engine_ingest(&eng, pnames[i], &bs);
             }
             for (int t = 0; t < (int)SUBSTRATE_INT * 4; t++) {
