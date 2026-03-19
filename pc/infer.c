@@ -54,9 +54,8 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     yee_clear_fields();
 
     /* ── Step 2: EXCITE — inject query as voltage spike ──
-     * Encode query as BitStream, hash w[0] (first 8 bytes).
-     * Same hash as engine_ingest uses for content-aware coords.
-     * Query lands at the same voxel as stored nodes with same prefix. */
+     * 3-tier semantic coords: X=type(bytes 0-3), Y=sub-type(4-7), Z=instance(8-11).
+     * Same hash as engine_ingest. Query lands where same-type nodes live. */
     BitStream qbs;
     bs_init(&qbs);
     {
@@ -66,9 +65,20 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
             for (int b = 0; b < 8; b++)
                 bs_push(&qbs, (data[i] >> b) & 1);
     }
-    uint32_t hx = hash32((const uint8_t *)&qbs.w[0], 8);
-    uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
-    uint32_t hz = hash32((const uint8_t *)&hy, sizeof(hy));
+    uint8_t b0[4] = {0}, b1[4] = {0}, b2[4] = {0};
+    for (int i = 0; i < 4; i++) {
+        for (int b = 0; b < 8; b++) {
+            if (i * 8 + b < qbs.len && bs_get(&qbs, i * 8 + b))
+                b0[i] |= (1 << b);
+            if ((i + 4) * 8 + b < qbs.len && bs_get(&qbs, (i + 4) * 8 + b))
+                b1[i] |= (1 << b);
+            if ((i + 8) * 8 + b < qbs.len && bs_get(&qbs, (i + 8) * 8 + b))
+                b2[i] |= (1 << b);
+        }
+    }
+    uint32_t hx = hash32(b0, 4);
+    uint32_t hy = hash32(b1, 4);
+    uint32_t hz = hash32(b2, 4);
     int qx = hx % YEE_GX;
     int qy = hy % YEE_GY;
     int qz = hz % YEE_GZ;
