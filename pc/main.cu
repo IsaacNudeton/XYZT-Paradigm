@@ -1102,6 +1102,163 @@ static void cmd_ingest(const char *path) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+ * INSPECT MODE — dump topology of a loaded save file
+ * ══════════════════════════════════════════════════════════════ */
+
+static void cmd_inspect(const char *path) {
+    printf("=== INSPECT: %s ===\n\n", path);
+
+    Engine eng;
+    engine_init(&eng);
+    if (yee_init() != 0) { printf("Yee init failed\n"); engine_destroy(&eng); return; }
+
+    int lr = engine_load(&eng, path);
+    if (lr != 0) { printf("Load failed (%d)\n", lr); yee_destroy(); engine_destroy(&eng); return; }
+
+    Graph *g0 = &eng.shells[0].g;
+    printf("Loaded: %d nodes, %d edges, %d children, %llu ticks\n\n",
+           g0->n_nodes, g0->n_edges, eng.n_children,
+           (unsigned long long)eng.total_ticks);
+
+    /* ── Stream observation nodes (s_*) ── */
+    printf("─── OBSERVATION NODES (s_*) ───\n");
+    printf("%-6s %-20s %6s %4s %5s %3s %3s %3s\n",
+           "ID", "Name", "Val", "Vnc", "Cryst", "X", "Y", "Z");
+
+    float *h_L = (float *)malloc(YEE_N * sizeof(float));
+    yee_download_L(h_L, YEE_N);
+
+    int obs_ids[512];
+    int n_obs = 0;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive) continue;
+        if (n->name[0] == 's' && n->name[1] == '_') {
+            int gx = coord_x(n->coord) % 64;
+            int gy = coord_y(n->coord) % 64;
+            int gz = coord_z(n->coord) % 64;
+            int vid = gx + gy * 64 + gz * 64 * 64;
+            printf("%-6d %-20s %6d %4d %5d %3d %3d %3d  L=%.4f\n",
+                   i, n->name, n->val, (int)n->valence,
+                   crystal_strength(n), gx, gy, gz, h_L[vid]);
+            if (n_obs < 512) obs_ids[n_obs++] = i;
+        }
+    }
+    printf("  Total observation nodes: %d\n\n", n_obs);
+
+    /* ── Children ── */
+    printf("─── CHILDREN ───\n");
+    for (int c = 0; c < MAX_CHILDREN; c++) {
+        if (eng.child_owner[c] < 0) continue;
+        int owner = eng.child_owner[c];
+        Graph *child = &eng.child_pool[c];
+        Node *parent = &g0->nodes[owner];
+        printf("  child[%d]:\n", c);
+        printf("    parent: node %d '%s' val=%d valence=%d crystal=%d\n",
+               owner, parent->name, parent->val, (int)parent->valence,
+               crystal_strength(parent));
+        printf("    topology: %d nodes, %d edges, %llu ticks\n",
+               child->n_nodes, child->n_edges,
+               (unsigned long long)child->total_ticks);
+        printf("    drive=%d err_acc=%d heartbeat=%d\n",
+               child->drive, child->error_accum, child->local_heartbeat);
+        printf("    learns=%llu grown=%llu pruned=%llu\n",
+               (unsigned long long)child->total_learns,
+               (unsigned long long)child->total_grown,
+               (unsigned long long)child->total_pruned);
+        if (child->retina && child->retina_len >= 64) {
+            printf("    retina=[");
+            for (int r = 0; r < 8 && r < child->n_nodes; r++) {
+                printf("%d", child->nodes[r].val);
+                if (r < 7) printf(",");
+            }
+            printf("]\n");
+        }
+    }
+
+    /* ── Strongest edges between observation nodes ── */
+    printf("\n─── TOP 20 EDGES (by weight) ───\n");
+    typedef struct { int eid; int w; } EW;
+    EW top_edges[20];
+    int n_top = 0;
+    for (int e = 0; e < g0->n_edges; e++) {
+        Edge *ed = &g0->edges[e];
+        if (ed->weight == 0) continue;
+        int w = ed->weight;
+        if (n_top < 20) {
+            top_edges[n_top].eid = e; top_edges[n_top].w = w; n_top++;
+        } else {
+            int min_k = 0;
+            for (int k = 1; k < 20; k++)
+                if (top_edges[k].w < top_edges[min_k].w) min_k = k;
+            if (w > top_edges[min_k].w) {
+                top_edges[min_k].eid = e; top_edges[min_k].w = w;
+            }
+        }
+    }
+    /* Sort descending */
+    for (int i = 0; i < n_top - 1; i++)
+        for (int j = i + 1; j < n_top; j++)
+            if (top_edges[j].w > top_edges[i].w) {
+                EW tmp = top_edges[i]; top_edges[i] = top_edges[j]; top_edges[j] = tmp;
+            }
+    for (int i = 0; i < n_top; i++) {
+        Edge *ed = &g0->edges[top_edges[i].eid];
+        printf("  w=%3d  '%s' + '%s' -> '%s'%s\n",
+               ed->weight,
+               g0->nodes[ed->src_a].name, g0->nodes[ed->src_b].name,
+               g0->nodes[ed->dst].name,
+               (ed->invert_a || ed->invert_b) ? " [INVERTED]" : "");
+    }
+
+    /* ── L-field at observation positions ── */
+    printf("\n─── L-FIELD AT OBSERVATIONS ───\n");
+    float l_min = 999, l_max = 0;
+    for (int o = 0; o < n_obs; o++) {
+        Node *n = &g0->nodes[obs_ids[o]];
+        int gx = coord_x(n->coord) % 64;
+        int gy = coord_y(n->coord) % 64;
+        int gz = coord_z(n->coord) % 64;
+        int vid = gx + gy * 64 + gz * 64 * 64;
+        float l = h_L[vid];
+        if (l < l_min) l_min = l;
+        if (l > l_max) l_max = l;
+    }
+    printf("  Observation L range: [%.4f, %.4f]\n", l_min, l_max);
+
+    /* Global L stats for comparison */
+    float gl_min = 999, gl_max = 0, gl_mean = 0;
+    int gl_wire = 0;
+    for (int i = 0; i < YEE_N; i++) {
+        gl_mean += h_L[i];
+        if (h_L[i] < gl_min) gl_min = h_L[i];
+        if (h_L[i] > gl_max) gl_max = h_L[i];
+        if (h_L[i] < 0.95f) gl_wire++;
+    }
+    gl_mean /= YEE_N;
+    printf("  Global L: mean=%.4f range=[%.4f, %.4f] wire=%d\n\n",
+           gl_mean, gl_min, gl_max, gl_wire);
+
+    /* ── Crystallized nodes (highest valence) ── */
+    printf("─── CRYSTALLIZED NODES (valence >= 200) ───\n");
+    int n_crystal = 0;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        if (n->valence >= 200) {
+            printf("  [%d] %-30s valence=%d val=%d crystal=%d\n",
+                   i, n->name, (int)n->valence, n->val, crystal_strength(n));
+            n_crystal++;
+        }
+    }
+    printf("  Total crystallized: %d\n", n_crystal);
+
+    free(h_L);
+    yee_destroy();
+    engine_destroy(&eng);
+}
+
+/* ══════════════════════════════════════════════════════════════
  * STREAM MODE — continuous stdin ingestion + Yee visualization
  * ══════════════════════════════════════════════════════════════ */
 
@@ -1288,6 +1445,8 @@ int main(int argc, char *argv[]) {
         engine_init(&eng);
         engine_wire_export(&eng, argv[2]);
         engine_destroy(&eng);
+    } else if (strcmp(argv[1], "inspect") == 0 && argc >= 3) {
+        cmd_inspect(argv[2]);
     } else if (strcmp(argv[1], "stream") == 0) {
         int binary = (argc >= 3 && strcmp(argv[2], "-b") == 0);
         cmd_stream(binary);
