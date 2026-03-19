@@ -175,12 +175,21 @@ __global__ void kernel_yee_hebbian(float *L, const float *V_accum,
     float l = L[p];
 
     if (acc > threshold) {
-        /* Co-presence: lower L = strengthen = wire */
-        l *= (1.0f - strengthen_rate);
+        /* Co-presence: lower L = strengthen = wire.
+         * Scale rate by headroom: as L approaches L_MIN (CFL floor),
+         * strengthen slows down. Prevents floor saturation on long runs. */
+        float headroom = (l - YEE_L_MIN) / (YEE_L_WIRE - YEE_L_MIN + 0.01f);
+        if (headroom > 1.0f) headroom = 1.0f;
+        if (headroom < 0.0f) headroom = 0.0f;
+        l *= (1.0f - strengthen_rate * headroom);
         if (l < YEE_L_MIN) l = YEE_L_MIN;
     } else {
-        /* Absence: raise L = weaken = dissolve wire */
-        l *= (1.0f + weaken_rate);
+        /* Absence: raise L = weaken = dissolve wire.
+         * Scale rate by headroom toward ceiling similarly. */
+        float headroom = (YEE_L_MAX - l) / (YEE_L_MAX - YEE_L_WIRE + 0.01f);
+        if (headroom > 1.0f) headroom = 1.0f;
+        if (headroom < 0.0f) headroom = 0.0f;
+        l *= (1.0f + weaken_rate * headroom);
         if (l > YEE_L_MAX) l = YEE_L_MAX;
     }
     L[p] = l;

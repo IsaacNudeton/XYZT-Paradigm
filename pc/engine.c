@@ -2167,6 +2167,28 @@ void engine_tick(Engine *eng) {
                 }
             }
 
+            /* Contradiction erosion: when two nodes linked by inverted edges
+             * both have high valence, erode the one with lower crystal strength.
+             * Conservation alone can't resolve contradictions — this gives
+             * frustration real teeth against stalemates. */
+            for (int e = 0; e < g0->n_edges; e++) {
+                Edge *ed = &g0->edges[e];
+                if (!ed->invert_a && !ed->invert_b) continue;
+                if (ed->weight == 0) continue;
+                Node *na = &g0->nodes[ed->src_a];
+                Node *nd = &g0->nodes[ed->dst];
+                if (!na->alive || !nd->alive) continue;
+                if (na->valence < 128 || nd->valence < 128) continue;  /* only high-valence stalemates */
+
+                /* Erode the weaker crystal */
+                Node *weaker = (crystal_strength(na) <= crystal_strength(nd)) ? na : nd;
+                int erosion = VALENCE_DECAY_RATE * 2;
+                if (weaker->valence > erosion)
+                    weaker->valence -= erosion;
+                else
+                    weaker->valence = 0;
+            }
+
             /* Heat incoherent nodes: frustration raises plasticity */
             for (int i = 0; i < g0->n_nodes; i++) {
                 Node *nh = &g0->nodes[i];
