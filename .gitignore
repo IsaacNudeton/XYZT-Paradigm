@@ -25,3 +25,10 @@ pc/build_now.bat
 pc/build_tmp.bat
 pc/do_build.bat
 pc/do_build2.bat
+
+.qwen/
+gha-creds-*.json
+engine_chord.wav
+engine_dream.wav
+engine_learning.wav
+stream_output.xyzt

@@ -36,6 +36,12 @@ int  cortex_query(Cortex *c, const char *text, InferResult *out, int max);
 int  cortex_save(Cortex *c, const char *path);
 int  cortex_load(Cortex *c, const char *path);
 
+/* Prediction loop: graph proposes, wave verifies, Hebbian learns.
+ * Finds what the engine is focused on, predicts connected nodes,
+ * injects predictions at 0.3x amplitude, reads which resonated.
+ * Returns number of verified predictions. */
+int cortex_predict(Cortex *c);
+
 /* Self-observation: engine reads its own coherence field, encodes what
  * it sees, and ingests the observation as a new node. The engine watches
  * itself think. Returns the node ID of the self-observation, or -1. */

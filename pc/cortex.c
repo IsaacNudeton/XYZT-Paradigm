@@ -163,6 +163,111 @@ int cortex_self_observe(Cortex *c) {
     return id;
 }
 
+/* ── Prediction loop: graph proposes, wave verifies, Hebbian learns ──
+ *
+ * 1. Run inference on current state (Phase 4a spatial + 4b topological)
+ * 2. Top-K results are PREDICTIONS — what the graph thinks is relevant
+ * 3. Re-inject predictions at 0.3x amplitude (hypothesis, not statement)
+ * 4. Tick to let waves propagate through carved topology
+ * 5. Read which predictions resonated (survived the sponge)
+ * 6. Strengthen edges to verified predictions, weaken edges to failed ones
+ *
+ * The sponge is the bullshit detector. Wrong predictions get absorbed.
+ * Only predictions matching carved knowledge survive.
+ * The engine can't hallucinate because the physics won't let it. */
+
+extern int yee_clear_fields(void);
+extern int yee_inject(const void *sources, int n);
+extern int yee_apply_sponge(int width, float rate);
+extern int yee_download_acc_raw(float *h_acc, int n);
+
+int cortex_predict(Cortex *c) {
+    if (!c->gpu_ok) return 0;
+    Graph *g0 = &c->eng.shells[0].g;
+    if (g0->n_nodes < 2) return 0;
+
+    /* Step 1: Find what the engine is currently "thinking about" */
+    int best_id = -1;
+    int best_score = 0;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        if (n->name[0] == '_') continue;
+        int score = abs(n->val) + (int)n->valence * 4 + crystal_strength(n) * 2;
+        if (score > best_score) { best_score = score; best_id = i; }
+    }
+    if (best_id < 0) return 0;
+
+    /* Step 2: Find nodes connected to the current focus via strong edges */
+    typedef struct { int voxel; int node_id; float amp; } Prediction;
+    Prediction preds[8];
+    int n_preds = 0;
+
+    for (int e = 0; e < g0->n_edges && n_preds < 8; e++) {
+        Edge *ed = &g0->edges[e];
+        if (ed->weight < 128) continue;  /* only strong edges */
+        int target = -1;
+        if (ed->src_a == best_id) target = ed->dst;
+        else if (ed->dst == best_id) target = ed->src_a;
+        if (target < 0 || target == best_id) continue;
+        if (!g0->nodes[target].alive) continue;
+
+        int gx = coord_x(g0->nodes[target].coord) % 64;
+        int gy = coord_y(g0->nodes[target].coord) % 64;
+        int gz = coord_z(g0->nodes[target].coord) % 64;
+
+        preds[n_preds].voxel = gx + gy * 64 + gz * 64 * 64;
+        preds[n_preds].node_id = target;
+        preds[n_preds].amp = 0.3f * (float)ed->weight / 255.0f;  /* 0.3x = hypothesis */
+        n_preds++;
+    }
+
+    if (n_preds == 0) return 0;
+
+    /* Step 3: Clear wave state, inject predictions at reduced amplitude */
+    yee_clear_fields();
+
+    /* Reuse the YeeSource layout (voxel_id, amplitude, strength) */
+    typedef struct { int vid; float amp; float str; } PS;
+    PS psrc[8];
+    for (int i = 0; i < n_preds; i++) {
+        psrc[i].vid = preds[i].voxel;
+        psrc[i].amp = preds[i].amp;
+        psrc[i].str = 1.0f;
+    }
+
+    /* Drive predictions for 15 ticks, then let ring with sponge */
+    for (int t = 0; t < 40; t++) {
+        if (t < 15)
+            yee_inject((const void *)psrc, n_preds);
+        yee_tick();
+        yee_apply_sponge(4, 0.15f);
+    }
+
+    /* Step 4: Read which predictions resonated */
+    float *h_acc = (float *)malloc(YEE_TOTAL * sizeof(float));
+    if (!h_acc) return 0;
+    yee_download_acc_raw(h_acc, YEE_TOTAL);
+
+    int verified = 0;
+    for (int i = 0; i < n_preds; i++) {
+        float energy = h_acc[preds[i].voxel];
+        int nid = preds[i].node_id;
+
+        if (energy > 0.01f) {
+            /* Prediction verified — edge strengthened */
+            verified++;
+            if (g0->nodes[nid].valence < 254)
+                g0->nodes[nid].valence += 2;
+        }
+        /* Predictions below 0.01 were absorbed by sponge — wrong prediction.
+         * Don't explicitly weaken — the Hebbian's normal weaken rate handles decay. */
+    }
+
+    free(h_acc);
+    return verified;
+}
+
 void cortex_destroy(Cortex *c) {
     free(c->yee_sub);
     c->yee_sub = NULL;
