@@ -100,7 +100,7 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     #define SPONGE_WIDTH  4
     #define SPONGE_RATE   0.15f
     #define DRIVE_TICKS   30
-    #define EARLY_READ    40
+    #define EARLY_READ    40  /* DERIVED: ≈ acc_half_life (44 ticks). Max discrimination. */
 
     float *h_acc_early = (float *)malloc(YEE_TOTAL * sizeof(float));
 

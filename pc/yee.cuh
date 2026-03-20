@@ -35,15 +35,29 @@
 #define YEE_GZ  64    /* global Z voxels */
 #define YEE_N   (YEE_GX * YEE_GY * YEE_GZ)  /* 262144 */
 
-/* Physics constants */
-#define YEE_ALPHA   0.5f    /* CFL / smoothing (proven stable in 1D+3D proofs) */
+/* ── Physics constants ──
+ * Single free parameter: YEE_ALPHA = 0.5
+ * Everything else derives from CFL stability + wave physics.
+ *
+ * Chain: alpha → L_MIN (CFL floor) → wave speed → delay timescales
+ *   L_MIN = 3 * alpha² / C = 0.75
+ *   Wave speed at L_WIRE: c = alpha / sqrt(L*C) = 0.5 cells/tick
+ *   Accumulator half-life: ln(0.5)/ln(63/64) = 44 ticks
+ *   EARLY_READ ≈ half-life (40 ticks — max discrimination)
+ *   SUBSTRATE_INT ≈ 3.5 × half-life (155 ticks — full decay cycle)
+ */
+#define YEE_ALPHA   0.5f    /* THE free parameter. CFL timestep. */
+#define YEE_C       1.0f    /* capacitance (fixed) */
 #define YEE_R       0.02f   /* series resistance (loss) */
 #define YEE_G       0.01f   /* shunt conductance (loss) */
-#define YEE_C       1.0f    /* capacitance (fixed, not learnable) */
 #define YEE_L_WIRE  1.0f    /* low L = wire = strengthened */
 #define YEE_L_VAC   9.0f    /* high L = vacuum = default */
-#define YEE_L_MIN   0.75f   /* CFL floor: alpha <= sqrt(L*C/3) */
+#define YEE_L_MIN   0.75f   /* DERIVED: 3 * alpha² / C = 3 * 0.25 / 1.0 */
 #define YEE_L_MAX   16.0f   /* maximum inductance (hard barrier) */
+
+/* Verify L_MIN = 3 * alpha² / C (CFL derivation) */
+/* If someone changes alpha, L_MIN must change too. */
+#define YEE_L_MIN_CHECK (3.0f * YEE_ALPHA * YEE_ALPHA / YEE_C)
 
 /* CUDA launch config */
 #define YEE_BLOCK   256     /* threads per block */

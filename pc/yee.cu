@@ -261,7 +261,12 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMalloc(&d_inject_buf, YEE_MAX_SOURCES * sizeof(YeeSource)));
     h_inject_buf = (YeeSource *)malloc(YEE_MAX_SOURCES * sizeof(YeeSource));
 
-    /* leaky integrator — no tick counter needed */
+    /* Verify constant derivation chain: L_MIN must equal 3*alpha²/C */
+    if (fabsf(YEE_L_MIN - YEE_L_MIN_CHECK) > 0.001f) {
+        fprintf(stderr, "YEE CONSTANT ERROR: L_MIN=%.4f but 3*alpha^2/C=%.4f\n",
+                YEE_L_MIN, YEE_L_MIN_CHECK);
+        return -1;
+    }
 
     printf("  Yee grid: %dx%dx%d = %d voxels\n", YEE_GX, YEE_GY, YEE_GZ, YEE_N);
     printf("  Memory: %.1f MB (5 arrays × %d × 4B)\n",
