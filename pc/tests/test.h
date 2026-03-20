@@ -38,5 +38,6 @@ void run_child_conflict_tests(void);
 void run_external_tests(void);
 void run_lfield_test(void);
 void run_stress_system_tests(void);
+void run_duality_test(void);
 
 #endif /* XYZT_TEST_H */
