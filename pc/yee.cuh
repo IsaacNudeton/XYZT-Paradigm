@@ -36,24 +36,36 @@
 #define YEE_N   (YEE_GX * YEE_GY * YEE_GZ)  /* 262144 */
 
 /* ── Physics constants ──
- * Single free parameter: YEE_ALPHA = 0.5
- * Everything else derives from CFL stability + wave physics.
  *
- * Chain: alpha → L_MIN (CFL floor) → wave speed → delay timescales
- *   L_MIN = 3 * alpha² / C = 0.75
+ * {2} = distinction: two states exist (wire and wall, L_MIN and L_MAX)
+ * {3} = substrate: the L-field gradient between them
+ * Observer = alpha: how fast the system samples its own physics
+ *
+ * DERIVED from alpha (CFL stability):
+ *   L_MIN = 3 * alpha² / C = 0.75  (below this → numerically unstable)
  *   Wave speed at L_WIRE: c = alpha / sqrt(L*C) = 0.5 cells/tick
  *   Accumulator half-life: ln(0.5)/ln(63/64) = 44 ticks
- *   EARLY_READ ≈ half-life (40 ticks — max discrimination)
- *   SUBSTRATE_INT ≈ 3.5 × half-life (155 ticks — full decay cycle)
+ *   EARLY_READ ≈ half-life (40 ticks)
+ *   SUBSTRATE_INT ≈ 3.5 × half-life (155 ticks)
+ *
+ * NOT derived (engineering choices):
+ *   L_WIRE = 1.0 (unit impedance — convention)
+ *   L_VAC = 9.0 (default vacuum — chosen for dynamic range)
+ *   L_MAX = 16.0 (hard ceiling — chosen for practical stability)
+ *   R, G = loss terms (tuned empirically)
+ *
+ * The EXISTENCE of two states ({2}) is the axiom.
+ * The SPECIFIC values are consequences of the grid.
+ * Different hardware → different values → same computation.
  */
-#define YEE_ALPHA   0.5f    /* THE free parameter. CFL timestep. */
-#define YEE_C       1.0f    /* capacitance (fixed) */
-#define YEE_R       0.02f   /* series resistance (loss) */
-#define YEE_G       0.01f   /* shunt conductance (loss) */
-#define YEE_L_WIRE  1.0f    /* low L = wire = strengthened */
-#define YEE_L_VAC   9.0f    /* high L = vacuum = default */
-#define YEE_L_MIN   0.75f   /* DERIVED: 3 * alpha² / C = 3 * 0.25 / 1.0 */
-#define YEE_L_MAX   16.0f   /* maximum inductance (hard barrier) */
+#define YEE_ALPHA   0.5f    /* Observer: CFL timestep. {2,3}'s free parameter. */
+#define YEE_C       1.0f    /* capacitance (unit, fixed) */
+#define YEE_R       0.02f   /* series resistance (loss, empirical) */
+#define YEE_G       0.01f   /* shunt conductance (loss, empirical) */
+#define YEE_L_WIRE  1.0f    /* wire state: unit impedance (convention) */
+#define YEE_L_VAC   9.0f    /* wall state: high impedance (engineering choice) */
+#define YEE_L_MIN   0.75f   /* DERIVED: 3 * alpha² / C (CFL floor) */
+#define YEE_L_MAX   16.0f   /* hard ceiling (engineering choice) */
 
 /* Verify L_MIN = 3 * alpha² / C (CFL derivation) */
 /* If someone changes alpha, L_MIN must change too. */
