@@ -40,5 +40,6 @@ void run_lfield_test(void);
 void run_stress_system_tests(void);
 void run_duality_test(void);
 void run_resonance_test(void);
+void run_self_observe_test(void);
 
 #endif /* XYZT_TEST_H */

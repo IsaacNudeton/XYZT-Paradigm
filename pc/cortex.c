@@ -79,6 +79,90 @@ int cortex_load(Cortex *c, const char *path) {
     return engine_load(&c->eng, path);
 }
 
+/* Yee coherence download */
+extern int yee_download_acc_raw(float *h_acc, int n);
+extern int yee_download_signed(float *h_signed, int n);
+
+int cortex_self_observe(Cortex *c) {
+    if (!c->gpu_ok) return -1;
+    Graph *g0 = &c->eng.shells[0].g;
+    if (g0->n_nodes == 0) return -1;
+
+    /* Read coherence field at each node's voxel position */
+    float *h_acc = (float *)malloc(YEE_TOTAL * sizeof(float));
+    float *h_signed = (float *)malloc(YEE_TOTAL * sizeof(float));
+    if (!h_acc || !h_signed) { free(h_acc); free(h_signed); return -1; }
+
+    yee_download_acc_raw(h_acc, YEE_TOTAL);
+    yee_download_signed(h_signed, YEE_TOTAL);
+
+    /* Find top-4 resonating nodes by combined score:
+     * crystal strength + valence + (1 - coherence) * 100
+     * Low coherence = oscillating = inside carved waveguide = interesting */
+    typedef struct { int id; float score; } Candidate;
+    Candidate top[4] = {{-1,0},{-1,0},{-1,0},{-1,0}};
+    int n_top = 0;
+
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero) continue;
+        /* Skip previous self-observations to prevent infinite nesting */
+        if (n->name[0] == '_' && n->name[1] == 's' && n->name[2] == 'o') continue;
+
+        int gx = coord_x(n->coord) % 64;
+        int gy = coord_y(n->coord) % 64;
+        int gz = coord_z(n->coord) % 64;
+        int vid = gx + gy * 64 + gz * 64 * 64;
+
+        float energy = h_acc[vid];
+        float coherence = (energy > 0.001f) ? fabsf(h_signed[vid]) / energy : 1.0f;
+        float incoherence = 1.0f - coherence;  /* high = oscillating = resonant */
+
+        float score = (float)crystal_strength(n) +
+                      (float)n->valence * 0.5f +
+                      incoherence * 200.0f;
+
+        if (n_top < 4) {
+            top[n_top].id = i; top[n_top].score = score; n_top++;
+        } else {
+            int min_k = 0;
+            for (int k = 1; k < 4; k++)
+                if (top[k].score < top[min_k].score) min_k = k;
+            if (score > top[min_k].score) {
+                top[min_k].id = i; top[min_k].score = score;
+            }
+        }
+    }
+
+    free(h_acc);
+    free(h_signed);
+
+    if (n_top == 0) return -1;
+
+    /* Encode: concatenate the top nodes' names + scores into a self-observation.
+     * This is what the engine "sees" about itself. The content of this
+     * observation IS the engine's state compressed into bytes. */
+    char self_buf[256];
+    int pos = 0;
+    for (int k = 0; k < n_top && top[k].id >= 0; k++) {
+        Node *n = &g0->nodes[top[k].id];
+        int written = snprintf(self_buf + pos, 256 - pos, "%s:%.0f ",
+                               n->name, top[k].score);
+        if (written > 0) pos += written;
+    }
+
+    /* Ingest the self-observation as a new node */
+    char name[64];
+    snprintf(name, 64, "_so_%06llu", (unsigned long long)c->eng.total_ticks);
+
+    BitStream bs;
+    encode_bytes(&bs, (const uint8_t *)self_buf, pos);
+    int id = engine_ingest(&c->eng, name, &bs);
+    if (id >= 0) c->n_ingested++;
+
+    return id;
+}
+
 void cortex_destroy(Cortex *c) {
     free(c->yee_sub);
     c->yee_sub = NULL;

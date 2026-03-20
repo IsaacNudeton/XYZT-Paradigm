@@ -138,6 +138,7 @@ void run_lfield_test(void);
 void run_stress_system_tests(void);
 void run_duality_test(void);
 void run_resonance_test(void);
+void run_self_observe_test(void);
 void run_tracking_sweep(void);
 void run_sense_diagnostic(void);
 }
@@ -265,6 +266,7 @@ static void cmd_test(void) {
     run_stress_system_tests();
     run_duality_test();
     run_resonance_test();
+    run_self_observe_test();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
@@ -1527,6 +1529,13 @@ int main(int argc, char *argv[]) {
                     printf("  [%d] %-25s energy=%.4f crystal=%d z3=%d z4=%d\n",
                            res[i].node_id, res[i].name, res[i].energy,
                            res[i].crystal, res[i].z3_freq, res[i].z4_corr);
+            } else if (strcmp(line, "observe") == 0) {
+                int id = cortex_self_observe(&ctx);
+                if (id >= 0)
+                    printf("  self-observation → node %d '%s'\n",
+                           id, ctx.eng.shells[0].g.nodes[id].name);
+                else
+                    printf("  no self-observation (empty state)\n");
             } else if (strncmp(line, "save ", 5) == 0) {
                 cortex_save(&ctx, line + 5);
                 printf("  Saved.\n");

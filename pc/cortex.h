@@ -36,6 +36,11 @@ int  cortex_query(Cortex *c, const char *text, InferResult *out, int max);
 int  cortex_save(Cortex *c, const char *path);
 int  cortex_load(Cortex *c, const char *path);
 
+/* Self-observation: engine reads its own coherence field, encodes what
+ * it sees, and ingests the observation as a new node. The engine watches
+ * itself think. Returns the node ID of the self-observation, or -1. */
+int cortex_self_observe(Cortex *c);
+
 /* Cleanup */
 void cortex_destroy(Cortex *c);
 
