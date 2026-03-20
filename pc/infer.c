@@ -215,6 +215,98 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
                 results[j] = tmp;
             }
 
+    /* ── Step 5: CORTEX LOOP — re-inject predictions, verify, learn ──
+     *
+     * The graph proposed top-K results. Now test them.
+     * Re-inject each prediction as a wave at 0.3x amplitude.
+     * If the prediction's cavity resonates (energy sustains through sponge),
+     * the prediction is correct — strengthen the edge that led to it.
+     * If it doesn't (sponge absorbs it), the prediction was wrong — weaken.
+     *
+     * 0.3x amplitude = hypothesis, not statement.
+     * Full amplitude would always resonate (forcing the answer).
+     * Reduced amplitude only sustains in matching carved topology.
+     * The sponge is the bullshit detector.
+     *
+     * This is the perception↔reasoning feedback loop.
+     * The graph proposes. The wave field disposes.
+     * x = f(x) between the two systems. */
+    if (n_results > 0) {
+        #define CORTEX_INJECT_AMP  0.3f    /* hypothesis strength, not assertion */
+        #define CORTEX_DRIVE_TICKS 15
+        #define CORTEX_RING_TICKS  30
+        #define CORTEX_VERIFY_THRESH 0.002f /* minimum energy to count as verified */
+
+        /* Clear fields for verification pass (keep L-field) */
+        yee_clear_fields();
+
+        /* Re-inject top predictions at their node positions */
+        int n_inject = n_results < 5 ? n_results : 5;
+        YeeSource pred_src[5];
+        for (int k = 0; k < n_inject; k++) {
+            Node *pn = &g0->nodes[results[k].node_id];
+            int px = coord_x(pn->coord) % YEE_GX;
+            int py = coord_y(pn->coord) % YEE_GY;
+            int pz = coord_z(pn->coord) % YEE_GZ;
+            pred_src[k].voxel_id = yee_vid(px, py, pz);
+            pred_src[k].amplitude = CORTEX_INJECT_AMP;
+            pred_src[k].strength = CORTEX_INJECT_AMP;
+        }
+
+        /* Drive predictions, then let ring with sponge */
+        for (int t = 0; t < CORTEX_DRIVE_TICKS + CORTEX_RING_TICKS; t++) {
+            if (t < CORTEX_DRIVE_TICKS)
+                yee_inject(pred_src, n_inject);
+            yee_tick();
+            yee_apply_sponge(SPONGE_WIDTH, SPONGE_RATE);
+        }
+
+        /* Read verification: which predictions survived the sponge? */
+        float *h_verify = (float *)malloc(YEE_TOTAL * sizeof(float));
+        if (h_verify) {
+            yee_download_acc_raw(h_verify, YEE_TOTAL);
+
+            for (int k = 0; k < n_inject; k++) {
+                Node *pn = &g0->nodes[results[k].node_id];
+                int px = coord_x(pn->coord) % YEE_GX;
+                int py = coord_y(pn->coord) % YEE_GY;
+                int pz = coord_z(pn->coord) % YEE_GZ;
+                float verify_energy = h_verify[yee_vid(px, py, pz)];
+
+                int verified = (verify_energy > CORTEX_VERIFY_THRESH) ? 1 : 0;
+
+                /* Learn: strengthen edges that led to verified predictions,
+                   weaken edges that led to unverified ones */
+                for (int e = 0; e < g0->n_edges; e++) {
+                    Edge *ed = &g0->edges[e];
+                    if ((int)ed->dst == results[k].node_id ||
+                        (int)ed->src_a == results[k].node_id) {
+                        if (verified) {
+                            /* Prediction matched cavity — edge is good */
+                            int nw = (int)ed->weight + 2;
+                            ed->weight = nw > 255 ? 255 : (uint8_t)nw;
+                        } else {
+                            /* Prediction didn't resonate — edge may be wrong */
+                            int nw = (int)ed->weight - 1;
+                            ed->weight = nw < 1 ? 1 : (uint8_t)nw;
+                        }
+                        ed->last_active = (uint32_t)time(NULL);
+                    }
+                }
+
+                /* Update node plasticity based on verification */
+                if (verified) {
+                    pn->plasticity -= PLASTICITY_COOL;
+                    if (pn->plasticity < PLASTICITY_MIN) pn->plasticity = PLASTICITY_MIN;
+                } else {
+                    pn->plasticity += PLASTICITY_HEAT;
+                    if (pn->plasticity > PLASTICITY_MAX) pn->plasticity = PLASTICITY_MAX;
+                }
+            }
+            free(h_verify);
+        }
+    }
+
     free(node_energy);
     free(h_acc);
     free(h_V);
