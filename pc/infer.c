@@ -327,3 +327,119 @@ int infer_query_raw(Engine *eng, const uint8_t *data, int len,
                     InferResult *results, int max_results) {
     return infer_forward(eng, data, len, results, max_results);
 }
+
+/* ══════════════════════════════════════════════════════════════
+ * DREAM MODE — the engine thinks without input
+ *
+ * No query. Inject thermal noise into the carved L-field.
+ * The topology shapes noise into structured resonance.
+ * Deep cavities ring at their natural frequency.
+ * Shallow cavities absorb noise and stay silent.
+ * What resonates is what the engine KNOWS, ranked by depth.
+ *
+ * dream_score = energy × (1 - coherence)
+ *   High energy + low coherence = active oscillation = dreaming
+ *   High energy + high coherence = steady accumulation = noise
+ *   Low energy = the sponge absorbed it = not carved deep enough
+ *
+ * A database needs a query to return results.
+ * The engine needs only noise. grep can't dream.
+ * ══════════════════════════════════════════════════════════════ */
+
+int infer_dream(Engine *eng, DreamResult *results, int max_results, int ticks) {
+    Graph *g0 = &eng->shells[0].g;
+    if (g0->n_nodes == 0) return 0;
+    if (max_results > INFER_MAX_RESULTS) max_results = INFER_MAX_RESULTS;
+    if (ticks <= 0) ticks = 500;
+
+    /* Clear wave state, keep L-field */
+    yee_clear_fields();
+
+    /* RNG for thermal noise */
+    uint32_t rng = (uint32_t)time(NULL) ^ 0xDEADBEEF;
+
+    /* Phase 1: inject thermal noise for first half, then let it ring */
+    int noise_ticks = ticks / 2;
+    for (int t = 0; t < ticks; t++) {
+        if (t < noise_ticks) {
+            /* 16 random noise sources per tick — tiny amplitudes */
+            YeeSource noise[16];
+            for (int i = 0; i < 16; i++) {
+                rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+                noise[i].voxel_id = rng % YEE_TOTAL;
+                noise[i].amplitude = 0.001f * ((float)(rng % 2000) - 1000.0f) / 1000.0f;
+                noise[i].strength = 0.01f;
+            }
+            yee_inject(noise, 16);
+        }
+        yee_tick();
+        yee_apply_sponge(4, 0.15f);
+    }
+
+    /* Phase 2: read what resonated */
+    float *h_acc = (float *)malloc(YEE_TOTAL * sizeof(float));
+    float *h_V = (float *)malloc(YEE_TOTAL * sizeof(float));
+    if (!h_acc || !h_V) { free(h_acc); free(h_V); return 0; }
+
+    yee_download_acc_raw(h_acc, YEE_TOTAL);
+    yee_download_V(h_V, YEE_TOTAL);
+
+    /* Also get signed accumulator if available */
+    float *h_signed = (float *)malloc(YEE_TOTAL * sizeof(float));
+    extern int yee_download_V_signed(float *h_out, int n);
+    if (h_signed) yee_download_V_signed(h_signed, YEE_TOTAL);
+
+    /* Score each node by dream_score */
+    int n_results = 0;
+    for (int i = 0; i < g0->n_nodes; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive) continue;
+
+        int gx = coord_x(n->coord) % YEE_GX;
+        int gy = coord_y(n->coord) % YEE_GY;
+        int gz = coord_z(n->coord) % YEE_GZ;
+        int vid = yee_vid(gx, gy, gz);
+
+        float energy = h_acc[vid];
+        float signed_v = h_signed ? h_signed[vid] : 0.0f;
+        float coherence = (energy > 0.001f) ? fabsf(signed_v) / energy : 1.0f;
+        if (coherence > 1.0f) coherence = 1.0f;
+
+        /* dream_score: high energy × low coherence = active resonance.
+           The cavity is ringing (oscillating V, not steady accumulation). */
+        float dream = energy * (1.0f - coherence);
+        if (dream < 0.0001f) continue;
+
+        DreamResult r;
+        r.node_id = i;
+        strncpy(r.name, n->name, NAME_LEN - 1);
+        r.name[NAME_LEN - 1] = '\0';
+        r.dream_score = dream;
+        r.energy = energy;
+        r.coherence = coherence;
+
+        if (n_results < max_results) {
+            results[n_results++] = r;
+        } else {
+            int min_k = 0;
+            for (int k = 1; k < max_results; k++)
+                if (results[k].dream_score < results[min_k].dream_score) min_k = k;
+            if (r.dream_score > results[min_k].dream_score)
+                results[min_k] = r;
+        }
+    }
+
+    /* Sort by dream_score descending */
+    for (int i = 0; i < n_results - 1; i++)
+        for (int j = i + 1; j < n_results; j++)
+            if (results[j].dream_score > results[i].dream_score) {
+                DreamResult tmp = results[i];
+                results[i] = results[j];
+                results[j] = tmp;
+            }
+
+    free(h_acc);
+    free(h_V);
+    free(h_signed);
+    return n_results;
+}

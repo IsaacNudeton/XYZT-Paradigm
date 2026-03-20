@@ -1729,6 +1729,44 @@ int main(int argc, char *argv[]) {
 
         yee_destroy();
         engine_destroy(&eng);
+    } else if (strcmp(argv[1], "dream") == 0 && argc >= 2) {
+        /* Dream mode: load state, inject noise, read what resonates */
+        const char *state_path = argc >= 3 ? argv[2] : "state.xyzt";
+        int dream_ticks = argc >= 4 ? atoi(argv[3]) : 500;
+
+        Engine eng;
+        engine_init(&eng);
+        if (yee_init() != 0) { printf("Yee init failed\n"); engine_destroy(&eng); return 1; }
+        if (engine_load(&eng, state_path) != 0) {
+            printf("Load failed: %s\n", state_path);
+            yee_destroy(); engine_destroy(&eng); return 1;
+        }
+
+        printf("=== DREAM MODE — %s ===\n", state_path);
+        printf("  nodes=%d  ticks=%d\n", eng.shells[0].g.n_nodes, dream_ticks);
+        printf("  Injecting thermal noise into carved L-field...\n\n");
+
+        DreamResult dreams[INFER_MAX_RESULTS];
+        int n = infer_dream(&eng, dreams, 10, dream_ticks);
+
+        if (n == 0) {
+            printf("  Silence. No cavities resonated from noise.\n");
+            printf("  The L-field may be uncarved or too shallow.\n");
+        } else {
+            printf("  The engine is dreaming about:\n\n");
+            printf("  %-25s │ dream  │ energy │ coherence │\n", "concept");
+            printf("  ─────────────────────────┼────────┼────────┼───────────┤\n");
+            for (int i = 0; i < n; i++) {
+                printf("  %-25s │ %6.4f │ %6.4f │ %6.4f    │\n",
+                       dreams[i].name, dreams[i].dream_score,
+                       dreams[i].energy, dreams[i].coherence);
+            }
+            printf("\n  What resonated first is what the engine knows deepest.\n");
+            printf("  No query. No input. The structure IS the thought.\n");
+        }
+
+        yee_destroy();
+        engine_destroy(&eng);
     } else if (strcmp(argv[1], "inspect") == 0 && argc >= 3) {
         cmd_inspect(argv[2]);
     } else if (strcmp(argv[1], "stream") == 0) {
@@ -1780,7 +1818,7 @@ int main(int argc, char *argv[]) {
         if (gpu_ok) yee_destroy();
         engine_destroy(&eng);
     } else {
-        printf("Usage: xyzt_pc [run|test|bench|ingest <file>|t3|stream [-b]|exec <file.xyzt>|wire_import <path>|wire_export <path>|bridge [wire.bin]]\n");
+        printf("Usage: xyzt_pc [run|test|bench|ingest <file>|t3|stream [-b]|infer <state>|dream <state> [ticks]|exec <file.xyzt>|wire_import <path>|wire_export <path>|bridge [wire.bin]]\n");
         return 1;
     }
 

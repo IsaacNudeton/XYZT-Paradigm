@@ -41,4 +41,18 @@ int infer_query(Engine *eng, const char *query_text,
 int infer_query_raw(Engine *eng, const uint8_t *data, int len,
                     InferResult *results, int max_results);
 
+/* Dream mode: no query. Inject thermal noise into carved L-field.
+ * Read what resonates. The engine tells you what it knows
+ * without being asked. Deep knowledge resonates strongest.
+ * Returns top-K resonating nodes ordered by dream_score. */
+typedef struct {
+    int    node_id;
+    char   name[NAME_LEN];
+    float  dream_score;    /* energy × (1 - coherence): active resonance */
+    float  energy;
+    float  coherence;      /* |V_signed|/V_energy: low = oscillating = dreaming */
+} DreamResult;
+
+int infer_dream(Engine *eng, DreamResult *results, int max_results, int ticks);
+
 #endif /* INFER_H */
