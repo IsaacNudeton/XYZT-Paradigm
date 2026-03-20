@@ -1391,8 +1391,19 @@ static void cmd_stream(int binary_mode) {
     }
 
     /* Drain: run 10 full SUBSTRATE_INT cycles after EOF
-     * to let Hebbian carve the L-field from accumulated activity */
+     * to let Hebbian carve the L-field from accumulated activity.
+     * Also generate live audio trace — the engine learning as music. */
     printf("\n  Post-EOF: running %d Hebbian cycles...\n", 10);
+
+    /* Open WAV file for live sonification (header written at end) */
+    FILE *learn_wav = fopen("engine_learning.wav", "wb");
+    int learn_samples = 0;
+    if (learn_wav) {
+        /* Write placeholder header — update at end */
+        char placeholder[44] = {0};
+        fwrite(placeholder, 1, 44, learn_wav);
+    }
+
     for (int cycle = 0; cycle < 10; cycle++) {
         for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
             wire_engine_to_yee(&eng);
@@ -1424,6 +1435,34 @@ static void cmd_stream(int binary_mode) {
                        cycle + 1, gc->nodes[best_id].name,
                        gc->nodes[best_id].val, crystal_strength(&gc->nodes[best_id]));
         }
+        /* Live sonification: 1 second of audio from current L-field */
+        if (learn_wav)
+            sonify_snapshot(&eng, learn_wav, &learn_samples);
+    }
+
+    /* Finalize WAV header with correct sizes */
+    if (learn_wav && learn_samples > 0) {
+        uint32_t data_size = learn_samples * 2;
+        uint32_t file_size = 36 + data_size;
+        fseek(learn_wav, 0, SEEK_SET);
+        /* RIFF header */
+        fwrite("RIFF", 1, 4, learn_wav);
+        fwrite(&file_size, 4, 1, learn_wav);
+        fwrite("WAVE", 1, 4, learn_wav);
+        /* fmt chunk */
+        fwrite("fmt ", 1, 4, learn_wav);
+        uint32_t fmt_size = 16; fwrite(&fmt_size, 4, 1, learn_wav);
+        uint16_t format = 1; fwrite(&format, 2, 1, learn_wav);
+        uint16_t channels = 1; fwrite(&channels, 2, 1, learn_wav);
+        uint32_t sr = 44100; fwrite(&sr, 4, 1, learn_wav);
+        uint32_t byte_rate = 88200; fwrite(&byte_rate, 4, 1, learn_wav);
+        uint16_t block = 2; fwrite(&block, 2, 1, learn_wav);
+        uint16_t bits = 16; fwrite(&bits, 2, 1, learn_wav);
+        /* data chunk */
+        fwrite("data", 1, 4, learn_wav);
+        fwrite(&data_size, 4, 1, learn_wav);
+        fclose(learn_wav);
+        printf("  Learning audio: engine_learning.wav (%d sec)\n", learn_samples / 44100);
     }
 
     Graph *g0 = &eng.shells[0].g;

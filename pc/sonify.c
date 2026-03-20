@@ -145,3 +145,82 @@ int sonify_engine(Engine *eng, const char *chord_path, const char *dream_path) {
     free(h_L);
     return n_voices;
 }
+
+/* Real-time snapshot: 1 second of audio from current L-field state.
+ * Call this every Hebbian cycle during learning. The resulting WAV
+ * is the engine's knowledge evolving over time — learning as music. */
+int sonify_snapshot(Engine *eng, FILE *wav_file, int *total_samples) {
+    Graph *g0 = &eng->shells[0].g;
+    if (g0->n_nodes == 0 || !wav_file) return 0;
+
+    float *h_L = (float *)malloc(YEE_TOTAL * sizeof(float));
+    if (!h_L) return 0;
+    yee_download_L(h_L, YEE_TOTAL);
+
+    /* Collect voices from current topology */
+    typedef struct { double freq; double amp; } SV;
+    SV voices[64];
+    int n_v = 0;
+
+    for (int i = 0; i < g0->n_nodes && n_v < 64; i++) {
+        Node *n = &g0->nodes[i];
+        if (!n->alive || n->layer_zero || n->name[0] == '_') continue;
+
+        int gx = coord_x(n->coord) % YEE_GX;
+        int gy = coord_y(n->coord) % YEE_GY;
+        int gz = coord_z(n->coord) % YEE_GZ;
+        int vid = gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
+        float L_c = h_L[vid];
+
+        /* Measure cavity width along X */
+        int w = 1;
+        for (int dx = 1; dx < 16; dx++) {
+            int nx = (gx + dx) % YEE_GX;
+            if (h_L[nx + gy * YEE_GX + gz * YEE_GX * YEE_GY] < 1.0f) w++;
+            else break;
+        }
+        for (int dx = 1; dx < 16; dx++) {
+            int nx = (gx - dx + YEE_GX) % YEE_GX;
+            if (h_L[nx + gy * YEE_GX + gz * YEE_GX * YEE_GY] < 1.0f) w++;
+            else break;
+        }
+        if (w < 1) w = 1;
+
+        double f = 0.5 / sqrt((double)L_c) / (2.0 * w);
+        double f_audio = 80.0 + (f - 0.01) * 720.0 / 0.09;
+        if (f_audio < 40) f_audio = 40;
+        if (f_audio > 2000) f_audio = 2000;
+
+        voices[n_v].freq = f_audio;
+        voices[n_v].amp = (double)n->valence / 255.0;
+        n_v++;
+    }
+
+    /* Generate 1 second of audio */
+    int n_samples = SAMPLE_RATE;
+    int16_t *buf = (int16_t *)calloc(n_samples, sizeof(int16_t));
+    double phase_base = (double)(*total_samples) / SAMPLE_RATE;
+
+    for (int s = 0; s < n_samples; s++) {
+        double t = phase_base + (double)s / SAMPLE_RATE;
+        double sum = 0;
+        for (int v = 0; v < n_v; v++) {
+            /* Fade in/out at edges to avoid clicks */
+            double env = voices[v].amp;
+            if (s < 1000) env *= (double)s / 1000.0;
+            if (s > n_samples - 1000) env *= (double)(n_samples - s) / 1000.0;
+            sum += env * sin(2.0 * 3.14159265 * voices[v].freq * t);
+        }
+        sum *= 2000.0 / (n_v > 0 ? sqrt((double)n_v) : 1.0);
+        if (sum > 32000) sum = 32000;
+        if (sum < -32000) sum = -32000;
+        buf[s] = (int16_t)sum;
+    }
+
+    fwrite(buf, sizeof(int16_t), n_samples, wav_file);
+    *total_samples += n_samples;
+
+    free(buf);
+    free(h_L);
+    return n_v;
+}
