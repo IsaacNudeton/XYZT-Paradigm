@@ -1547,6 +1547,86 @@ int main(int argc, char *argv[]) {
             }
         }
         cortex_destroy(&ctx);
+    } else if (strcmp(argv[1], "dream") == 0 && argc >= 3) {
+        /* Dream mode: load trained state, inject noise, read what resonates */
+        Engine eng;
+        engine_init(&eng);
+        if (yee_init() != 0) { printf("Yee init failed\n"); engine_destroy(&eng); return 1; }
+        if (engine_load(&eng, argv[2]) != 0) {
+            printf("Load failed: %s\n", argv[2]);
+            yee_destroy(); engine_destroy(&eng); return 1;
+        }
+
+        printf("=== DREAM MODE: %s ===\n", argv[2]);
+        printf("  L-field carved. Clearing waves. Injecting thermal noise.\n");
+        printf("  The engine tells you what it knows, in order of depth.\n\n");
+
+        yee_clear_fields();
+        Graph *g0 = &eng.shells[0].g;
+
+        int ticks = (argc >= 4) ? atoi(argv[3]) : 1000;
+        if (ticks < 100) ticks = 100;
+        if (ticks > 10000) ticks = 10000;
+        uint32_t rng = 0xDEADBEEF;
+
+        float *h_acc = (float *)malloc(YEE_N * sizeof(float));
+        float *h_signed = (float *)malloc(YEE_N * sizeof(float));
+
+        for (int t = 0; t < ticks; t++) {
+            /* Inject thermal noise for first half */
+            if (t < ticks / 2) {
+                YeeSource noise[16];
+                for (int i = 0; i < 16; i++) {
+                    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+                    noise[i].voxel_id = rng % YEE_N;
+                    noise[i].amplitude = 0.05f * ((float)((int)(rng % 2000) - 1000)) / 1000.0f;
+                    noise[i].strength = 0.5f;
+                }
+                yee_inject(noise, 16);
+            }
+            yee_tick();
+            yee_apply_sponge(4, 0.15f);
+
+            /* Report every 100 ticks */
+            if (t % 100 == 99) {
+                yee_download_acc_raw(h_acc, YEE_N);
+                yee_download_signed(h_signed, YEE_N);
+
+                /* Find top-3 dreaming nodes */
+                int best[3] = {-1,-1,-1};
+                float best_s[3] = {0,0,0};
+                for (int i = 0; i < g0->n_nodes; i++) {
+                    Node *n = &g0->nodes[i];
+                    if (!n->alive || n->layer_zero) continue;
+                    if (n->name[0]=='_' && n->name[1]=='s') continue;
+                    int gx = coord_x(n->coord) % 64;
+                    int gy = coord_y(n->coord) % 64;
+                    int gz = coord_z(n->coord) % 64;
+                    int vid = gx + gy*64 + gz*64*64;
+                    float e = h_acc[vid];
+                    float c = (e > 0.001f) ? fabsf(h_signed[vid])/e : 1.0f;
+                    float ds = e * (1.0f - c);
+                    for (int k = 0; k < 3; k++) {
+                        if (ds > best_s[k]) {
+                            for (int j = 2; j > k; j--) { best[j]=best[j-1]; best_s[j]=best_s[j-1]; }
+                            best[k] = i; best_s[k] = ds;
+                            break;
+                        }
+                    }
+                }
+                printf("  tick %4d:", t+1);
+                for (int k = 0; k < 3 && best[k] >= 0; k++)
+                    printf("  '%s'(%.4f)", g0->nodes[best[k]].name, best_s[k]);
+                printf("\n");
+            }
+        }
+
+        printf("\n=== DREAM COMPLETE ===\n");
+        printf("  The engine's deepest knowledge resonated from noise.\n");
+        printf("  grep can't dream.\n");
+
+        free(h_acc); free(h_signed);
+        yee_destroy(); engine_destroy(&eng);
     } else if (strcmp(argv[1], "infer") == 0 && argc >= 3) {
         /* Load saved state and run wave-based inference queries */
         Engine eng;
