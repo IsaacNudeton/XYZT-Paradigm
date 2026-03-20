@@ -386,8 +386,8 @@ int infer_dream(Engine *eng, DreamResult *results, int max_results, int ticks) {
 
     /* Also get signed accumulator if available */
     float *h_signed = (float *)malloc(YEE_TOTAL * sizeof(float));
-    extern int yee_download_V_signed(float *h_out, int n);
-    if (h_signed) yee_download_V_signed(h_signed, YEE_TOTAL);
+    extern int yee_download_signed(float *h_out, int n);
+    if (h_signed) yee_download_signed(h_signed, YEE_TOTAL);
 
     /* Score each node by dream_score */
     int n_results = 0;
