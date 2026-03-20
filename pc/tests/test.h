@@ -42,5 +42,11 @@ void run_duality_test(void);
 void run_resonance_test(void);
 void run_self_observe_test(void);
 void run_predict_test(void);
+void run_generalize_test(void);
+
+#define CHECK(name, cond) do { \
+    if (cond) { g_pass++; printf("  PASS %s\n", name); } \
+    else { g_fail++; printf("  FAIL %s\n", name); } \
+} while(0)
 
 #endif /* XYZT_TEST_H */
