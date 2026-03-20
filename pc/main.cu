@@ -31,6 +31,7 @@ extern "C" {
 #include "io.h"
 #include "infer.h"
 #include "cortex.h"
+#include "sonify.h"
 }
 #include "substrate.cuh"
 #include "yee.cuh"
@@ -1547,6 +1548,20 @@ int main(int argc, char *argv[]) {
             }
         }
         cortex_destroy(&ctx);
+    } else if (strcmp(argv[1], "sing") == 0 && argc >= 3) {
+        /* Sonify the L-field: knowledge as a chord, dreaming as a fade */
+        Engine eng;
+        engine_init(&eng);
+        if (yee_init() != 0) { printf("Yee init failed\n"); engine_destroy(&eng); return 1; }
+        if (engine_load(&eng, argv[2]) != 0) {
+            printf("Load failed: %s\n", argv[2]);
+            yee_destroy(); engine_destroy(&eng); return 1;
+        }
+        printf("=== THE ENGINE SINGS: %s ===\n", argv[2]);
+        sonify_engine(&eng, "engine_chord.wav", "engine_dream.wav");
+        printf("\n  Play engine_chord.wav to hear what the engine knows.\n");
+        printf("  Play engine_dream.wav to hear it dream.\n");
+        yee_destroy(); engine_destroy(&eng);
     } else if (strcmp(argv[1], "dream") == 0 && argc >= 3) {
         /* Dream mode: load trained state, inject noise, read what resonates */
         Engine eng;
