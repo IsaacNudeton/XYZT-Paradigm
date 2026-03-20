@@ -167,6 +167,10 @@ int yee_upload_acc(const float *h_acc, int n);
 /* Download raw float accumulator (lossless, for save/load) */
 int yee_download_acc_raw(float *h_acc, int n);
 
+/* Download signed accumulator (coherence field).
+ * |signed|/energy ratio = coherence: 1.0 = steady, 0.0 = oscillating */
+int yee_download_signed(float *h_signed, int n);
+
 /* Sponge layer: damp V/I at boundary voxels (absorbing BC for inference) */
 int yee_apply_sponge(int width, float rate);
 

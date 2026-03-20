@@ -30,6 +30,12 @@ static float *d_L  = NULL;   /* inductance per voxel (learnable) */
 /* Accumulator for Hebbian: tracks |V| integrated over time */
 static float *d_V_accum = NULL;
 
+/* Signed accumulator: tracks V (with sign) integrated over time.
+ * Oscillating voxels cancel (low |signed|/energy ratio).
+ * Steady voxels accumulate (high ratio).
+ * ratio = coherence: how much the voxel agrees with itself over time. */
+static float *d_V_signed = NULL;
+
 /* Host-side scratch for reductions */
 static float *h_scratch = NULL;
 
@@ -159,10 +165,11 @@ __global__ void kernel_yee_inject(float *V, const YeeSource *sources, int n_src)
 #endif
 #define YEE_ACC_SCALE  256.0f            /* calibrated: acc_ss~0.7 at V=0.01, *256→~180 */
 
-__global__ void kernel_yee_accum(float *V_accum, const float *V, int n) {
+__global__ void kernel_yee_accum(float *V_accum, float *V_signed, const float *V, int n) {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= n) return;
     V_accum[p] = V_accum[p] * YEE_ACC_DECAY + fabsf(V[p]);
+    V_signed[p] = V_signed[p] * YEE_ACC_DECAY + V[p];  /* keeps sign → detects oscillation */
 }
 
 __global__ void kernel_yee_hebbian(float *L, const float *V_accum,
@@ -238,6 +245,7 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMalloc(&d_Iz, sz));
     YEE_CHECK(cudaMalloc(&d_L,  sz));
     YEE_CHECK(cudaMalloc(&d_V_accum, sz));
+    YEE_CHECK(cudaMalloc(&d_V_signed, sz));
 
     /* Zero all field arrays */
     YEE_CHECK(cudaMemset(d_V,  0, sz));
@@ -245,6 +253,7 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMemset(d_Iy, 0, sz));
     YEE_CHECK(cudaMemset(d_Iz, 0, sz));
     YEE_CHECK(cudaMemset(d_V_accum, 0, sz));
+    YEE_CHECK(cudaMemset(d_V_signed, 0, sz));
 
     /* Initialize L to wire (low impedance — fully conductive).
      * Hebbian will RAISE L where there's no activity (creating vacuum).
@@ -282,6 +291,7 @@ extern "C" void yee_destroy(void) {
     if (d_Iz)      { cudaFree(d_Iz);      d_Iz = NULL; }
     if (d_L)       { cudaFree(d_L);       d_L = NULL; }
     if (d_V_accum)    { cudaFree(d_V_accum);    d_V_accum = NULL; }
+    if (d_V_signed)   { cudaFree(d_V_signed);   d_V_signed = NULL; }
     if (d_inject_buf) { cudaFree(d_inject_buf); d_inject_buf = NULL; }
     if (h_inject_buf) { free(h_inject_buf);     h_inject_buf = NULL; }
     if (h_scratch)    { free(h_scratch);         h_scratch = NULL; }
@@ -297,8 +307,8 @@ extern "C" int yee_tick(void) {
     /* Step 2: Update I from new V gradient */
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
 
-    /* Step 3: Accumulate |V| for Hebbian */
-    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
+    /* Step 3: Accumulate |V| and signed V for Hebbian + coherence */
+    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V_signed, d_V, YEE_N);
 
     /* Single sync: ensures I and accum are done before next tick */
     YEE_CHECK(cudaDeviceSynchronize());
@@ -313,7 +323,7 @@ extern "C" int yee_tick_async(void) {
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
     YEE_CHECK(cudaDeviceSynchronize());  /* V→I dependency (leapfrog) */
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
-    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V, YEE_N);
+    kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(d_V_accum, d_V_signed, d_V, YEE_N);
     /* I and accum still running — CPU is free to work */
     return 0;
 }
@@ -547,6 +557,12 @@ extern "C" int yee_download_acc_raw(float *h_acc, int n) {
     return 0;
 }
 
+extern "C" int yee_download_signed(float *h_signed, int n) {
+    if (n > YEE_N) n = YEE_N;
+    YEE_CHECK(cudaMemcpy(h_signed, d_V_signed, n * sizeof(float), cudaMemcpyDeviceToHost));
+    return 0;
+}
+
 extern "C" int yee_is_initialized(void) {
     return (d_V != NULL) ? 1 : 0;
 }
@@ -558,6 +574,7 @@ extern "C" int yee_clear_fields(void) {
     YEE_CHECK(cudaMemset(d_Iy, 0, sz));
     YEE_CHECK(cudaMemset(d_Iz, 0, sz));
     YEE_CHECK(cudaMemset(d_V_accum, 0, sz));
+    YEE_CHECK(cudaMemset(d_V_signed, 0, sz));
     /* leaky integrator — no tick counter needed */
     return 0;
 }
