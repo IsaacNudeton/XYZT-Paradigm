@@ -137,6 +137,7 @@ void run_external_tests(void);
 void run_lfield_test(void);
 void run_stress_system_tests(void);
 void run_duality_test(void);
+void run_resonance_test(void);
 void run_tracking_sweep(void);
 void run_sense_diagnostic(void);
 }
@@ -263,6 +264,7 @@ static void cmd_test(void) {
     run_lfield_test();
     run_stress_system_tests();
     run_duality_test();
+    run_resonance_test();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);
