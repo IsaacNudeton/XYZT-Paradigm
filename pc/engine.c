@@ -531,20 +531,28 @@ void edge_set_negation_invert(Graph *g, int edge_id) {
     Edge *e = &g->edges[edge_id];
     Node *na = &g->nodes[e->src_a];
     Node *nb = &g->nodes[e->src_b];
+
+    /* Path 1: Keyword-based negation (legacy, still works for text) */
     if (na->has_negation != nb->has_negation) {
-        /* Asymmetric: exactly one is negated */
         if (na->has_negation) e->invert_a = 1;
         if (nb->has_negation) e->invert_b = 1;
-        /* Contradiction detected: mark and crack the non-negated node.
-         * The contradicted node loses crystallization and gets flagged so
-         * all valence++ paths skip it. Without this flag, three separate
-         * paths (resolve, feedback, boredom) re-crystallize within ticks. */
         Node *target = na->has_negation ? nb : na;
         target->contradicted = 1;
         if (target->valence > 0) {
             target->valence /= 2;
             target->coherent = -1;
         }
+        return;
+    }
+
+    /* Path 2: Emergent negation from sign anti-correlation.
+     * If correlation < -0.5, the sources consistently oppose.
+     * Set invert flags the same way — physics replaces keywords. */
+    if (e->correlation < -0.5f) {
+        e->invert_a = 1;
+        e->invert_b = 1;
+        na->contradicted = 1;
+        nb->contradicted = 1;
     }
 }
 
@@ -1534,6 +1542,14 @@ void engine_tick(Engine *eng) {
                     nd->accum += out_scaled;
                     nd->I_energy += (int32_t)(fabs(output) * VAL_CEILING);
                     nd->n_incoming++;
+                }
+
+                /* Emergent negation: track sign correlation between sources.
+                 * +1 = sources agree (XNOR). -1 = sources oppose (XOR).
+                 * Replaces text_has_negation keyword list. */
+                if (na->val != 0 && nb->val != 0) {
+                    float sign_product = ((na->val > 0) == (nb->val > 0)) ? 1.0f : -1.0f;
+                    e->correlation = e->correlation * 0.95f + sign_product * 0.05f;
                 }
             }
 

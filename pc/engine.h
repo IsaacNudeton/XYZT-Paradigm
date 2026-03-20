@@ -294,6 +294,9 @@ typedef struct {
     uint8_t  weight, learn_rate, intershell;
     uint32_t created, last_active;
     uint8_t  invert_a, invert_b;
+    float    correlation;  /* sign anti-correlation: +1=agree, -1=oppose, 0=unrelated.
+                            * Updated each tick: corr = decay*corr + sign(src)*sign(dst).
+                            * Replaces text_has_negation keyword list. */
     TLine    tl;        /* FDTD transmission line (Phase 2) */
 } Edge;
 
