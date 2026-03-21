@@ -183,6 +183,11 @@ int yee_download_acc_raw(float *h_acc, int n);
  * |signed|/energy ratio = coherence: 1.0 = steady, 0.0 = oscillating */
 int yee_download_signed(float *h_signed, int n);
 
+/* Download autocorrelation field (Z=4 observer).
+ * Negative = anti-correlated = oscillating = standing wave fringe.
+ * Sees through the dead zone where amplitude observers go blind. */
+int yee_download_autocorr(float *h_autocorr, int n);
+
 /* Sponge layer: damp V/I at boundary voxels (absorbing BC for inference) */
 int yee_apply_sponge(int width, float rate);
 
