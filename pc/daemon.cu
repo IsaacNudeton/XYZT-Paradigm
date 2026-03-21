@@ -26,21 +26,29 @@
 #include <stdint.h>
 #include <time.h>
 #include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <io.h>
 #define SLEEP_MS(ms) Sleep(ms)
 #define MKDIR(d) _mkdir(d)
+#define STAT_FUNC _stat
+#define STAT_STRUCT struct _stat
 #else
 #include <unistd.h>
-#include <sys/stat.h>
 #define SLEEP_MS(ms) usleep((ms)*1000)
 #define MKDIR(d) mkdir(d, 0755)
+#define STAT_FUNC stat
+#define STAT_STRUCT struct stat
 #endif
 
+extern "C" {
 #include "engine.h"
 #include "infer.h"
+}
 
 /* Forward declarations for CUDA functions */
 extern "C" {
@@ -304,10 +312,16 @@ static void decide(DaemonState *ds, Observation *obs, int n_obs) {
    ═══════════════════════════════════════════════════════ */
 
 int main(int argc, char **argv) {
+    /* Unbuffered stdout — every printf shows immediately */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     const char *state_path = argc >= 2 ? argv[1] : "state.xyzt";
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    fprintf(stderr, "[daemon] starting...\n");
 
     printf("═══════════════════════════════════════════\n");
     printf("  XYZT DAEMON — GPU Substrate + CPU Observer\n");
@@ -316,18 +330,21 @@ int main(int argc, char **argv) {
     printf("═══════════════════════════════════════════\n\n");
 
     DaemonState ds = {0};
+    fprintf(stderr, "[daemon] engine_init...\n");
     engine_init(&ds.eng);
 
     /* Initialize GPU */
+    fprintf(stderr, "[daemon] yee_init...\n");
     if (yee_init() != 0) {
-        printf("[daemon] FATAL: Yee GPU init failed\n");
+        fprintf(stderr, "[daemon] FATAL: Yee GPU init failed\n");
         engine_destroy(&ds.eng);
         return 1;
     }
+    fprintf(stderr, "[daemon] GPU ready\n");
 
     /* Load saved state if exists */
-    struct stat st;
-    if (stat(state_path, &st) == 0) {
+    STAT_STRUCT st;
+    if (STAT_FUNC(state_path, &st) == 0) {
         if (engine_load(&ds.eng, state_path) == 0) {
             printf("[daemon] loaded state: %s (%d nodes)\n",
                    state_path, ds.eng.shells[0].g.n_nodes);
