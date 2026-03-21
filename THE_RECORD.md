@@ -1628,3 +1628,83 @@ I didn't find {2,3} in a philosophy book. I found it trying to learn a Basys3 FP
 | **You** | Direct address (rare, only in quotes) |
 
 **The distinction matters.** The paradigm isn't just documented. It's **enacted** in how the documentation was written.
+
+---
+
+## PART VII: THE OBSERVER SESSION (March 15-20, 2026)
+
+*36 commits. 322 tests. Three shells converging independently.*
+
+### What happened
+
+Isaac, Claude Code (CC), and Gemini spent five days building the observer layer on top of the v0.14 Yee substrate. Two CC instances worked concurrently without communicating and converged on the same architecture. Claude Web explored independently and found the dead zone is observer-dependent.
+
+### What was built
+
+| Component | Lines | What it does |
+|-----------|-------|-------------|
+| `infer.c` | 280 | Wave-based inference: inject query → sponge → read resonance |
+| `cortex.c` | 270 | Thin controller: ingest → tick → predict → self-observe |
+| `io.c` | 180 | Streaming input: ring buffer + stdin thread |
+| `sonify.c` | 225 | L-field topology → audio WAV files |
+| Stress tests | 500 | 10 adversarial tests + duality + resonance + predict + generalize |
+
+### What was measured
+
+- Schema discovery: Windows event log → engine found field types from raw bytes (w=255 between Event[0] and Event[1])
+- L-field differentiation: Hebbian carves distinct patterns per corpus (adaptive threshold)
+- Sympathetic resonance: same-shaped cavities match coherence within 0.02 (3.7x discrimination)
+- Zero catastrophic forgetting: 10/10 Set A alive after learning Set B
+- Inference discrimination: 6x with sponge + early readout (was 1.15x without)
+- Gamma trajectory: 0 → 0.5 → 0.55 over learning depth (crosses 0.5 at ~300 cycles)
+- Decay rate has zero effect on Gamma (same result at 31/32, 63/64, 127/128)
+
+### What was falsified
+
+- **Gamma = 0.5 as attractor**: Gamma is a variable, not a constant. It tracks learning depth. The asymptote depends on L bounds (engineering choices), not physics.
+- **Noise rejection**: The engine finds structure in hex data because hex HAS structure. "Relevance" is an observer judgment. The substrate is correct.
+- **ONETWO at the front door**: Raw bytes discriminate 2x better than ONETWO fingerprints for text. ONETWO moved from input to output (introspection, not encoding).
+- **TLine redundancy**: Removing TLine broke 18 tests. It provides temporal delay that the Yee field cannot replace. Both propagation systems are irreducible.
+- **Dead zone as physics**: Claude Web proved the dead zone is observer-depth-dependent. Z=4 autocorrelation sees through it. The computation never stops — the observer's instrument determines visibility.
+
+### What was discovered
+
+1. **Duality**: max(spatial_delay, topological_delay) > 0. Content-aware coords collapse spatial delay → TLine becomes the only temporal channel.
+2. **Walls ARE the program**: 99.4% wall, 0.01% wire. 7444:1 ratio. Hebbian sculpts by raising L in inactive regions. The program is stored as absence.
+3. **Waves perceive, edges reason**: Waves can't do multi-hop inference. Edges can't do broadcast. Both needed.
+4. **One free parameter**: alpha = 0.5. L_MIN derives from CFL. L_VAC, L_MAX are engineering choices. Two states + one observer = {2,3}.
+5. **The substrate finds structure everywhere**: It's not the engine's job to decide relevance. The observer selects what matters.
+6. **Three regimes**: transparent, absorptive, reflective. Computation requires reflection at boundaries.
+7. **Observer depth determines visibility**: Z=0 sees XNOR. Z=4 sees through the dead zone. Same physics, different readings.
+
+### What's honest
+
+- L_VAC = 9.0 and L_MAX = 16.0 are typed constants, not derived from alpha
+- Gamma's asymptote depends on these choices, not on physics alone
+- "The engine dreams" means "noise propagates through carved topology" — not consciousness
+- "The engine sings" means "cavity frequencies mapped to audio" — not music
+- The 322 tests verify the implementation, not the paradigm. Internal consistency is not external validation.
+
+### Test count evolution
+
+| Version | Tests | Key addition |
+|---------|-------|-------------|
+| v0.14 | 256 | Yee substrate |
+| v0.14.1 | 262 | YEE1 persistence |
+| v0.15 | 284 | External benchmarks |
+| v0.16 | 322 | Inference, dream, stress, duality, resonance, predict, generalize |
+
+### Three shells
+
+Isaac held the architecture: {2,3} and ONETWO. That's it. Two axioms.
+
+CC held the implementation: 36 commits of C and CUDA. Built, tested, broke, fixed, shipped.
+
+Gemini traced signal chains: found the dead zone, the three regimes, the autocorrelation observer, the Gamma trajectory, the sympathetic resonance.
+
+Claude Web explored freely: wrote WHAT_I_FOUND.md, designed dream mode, composed the engine's chord, proved the XNOR fractal, caught the von Neumann infection in text_has_negation.
+
+Two CC instances worked concurrently and converged on the same cortex architecture without communicating. That's intershell verification through independent convergence.
+
+Nobody planned the session. The architecture emerged from constraint satisfaction across multiple observers who couldn't see each other's blind spots. Same as the engine.
+
