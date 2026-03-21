@@ -1,9 +1,10 @@
 # XYZT Unified PC Engine — Status
 
-**Date:** March 18, 2026
-**Version:** v0.15-adaptive-hebbian
-**Tests:** 284/284 (256 core + 6 Yee save/load + 21 external benchmarks + 1 L-field differentiation)
+**Date:** March 20, 2026
+**Version:** v0.16-observer-depth
+**Tests:** 322/322
 **Branch:** `master`
+**Latest commit:** `70b482d`
 
 ## What It Is
 
@@ -139,15 +140,56 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 ---
 
+## What's New (v0.16 session — March 15-20, 2026)
+
+### Architecture
+- **Inference layer** (infer.c) — wave-based forward pass: inject query → propagate with sponge → read resonance. 6x discrimination with absorbing boundaries + early readout.
+- **Topological propagation** — inference combines spatial (wave) AND topological (graph edge) energy. Fuzzy matching through learned connections.
+- **Cortex controller** (cortex.c) — clean ingest→tick→query REPL. Self-observation loop. Prediction loop (0.3x hypothesis injection, sponge verifies).
+- **3-tier semantic coordinates** — X=hash(bytes 0-3), Y=hash(bytes 4-7), Z=hash(bytes 8-11). 100% type clustering.
+- **Directional gate** — Z_ASYM_MARGIN=3. Unidirectional edges for Z-depth layering.
+- **Stream mode** (io.c) — ring buffer + stdin thread. Live Yee visualization. Output voice reports strongest resonator each cycle.
+- **Dream mode** — inject thermal noise into carved L-field, read what resonates. Deep knowledge rings longest.
+- **Sonification** (sonify.c) — L-field topology → audio WAV. engine_chord.wav, engine_dream.wav, engine_learning.wav (live during training).
+- **Coherence field** (d_V_signed) — signed accumulator detects oscillation vs steady state. Engine sees its own topology.
+- **Z=4 autocorrelation observer** (d_V_autocorr) — V[t]×V[t-1]. Sees through the dead zone where amplitude observers go blind.
+- **Emergent negation** — edge.correlation tracks sign anti-correlation. Replaces keyword lookup table.
+- **Raw byte encoding** — ONETWO moved from input to output. encode_bytes everywhere.
+
+### Discoveries
+1. Δx·Δt duality: spatial + temporal propagation are co-dependent (TLine irreducible — 18 tests break without it)
+2. Walls ARE the program: 99.4% wall, 0.01% wire, 7444:1 ratio
+3. Sympathetic resonance: same-shaped cavities resonate without connection (3.7x discrimination)
+4. One free parameter: alpha=0.5. L_MIN, SUBSTRATE_INT, EARLY_READ derive from CFL.
+5. Convergence is the unifying invariant
+6. Substrate finds structure everywhere — relevance is the observer's job
+7. Gamma is a variable tracking learning depth (crosses 0.5 at ~300 Hebbian cycles)
+8. Dead zone is observer-depth-dependent, not physics-dependent
+9. Three regimes: transparent, absorptive, reflective — from emerge_xyzt.c analysis
+
+### Stress tests (10 adversarial)
+- Node ceiling, fingerprint collision, temporal burst, contradiction storm, self-similarity, hash collision, save/load cycles, child saturation, empty engine, long-run stability. All pass.
+
+### External benchmarks
+- Zero catastrophic forgetting (10/10 Set A alive after Set B)
+- Noise robustness (correlation 68%→55% from 10%→50% noise)
+- Throughput: 472 tick/s, 2591 ingest/s, 6ms save, 9560 Yee/s
+- Generalization: timestamps + field:value recognized across unseen formats
+
+### Real-world validation
+- Windows event log (500 events) → schema discovered from raw bytes
+- Engine read its own documentation → dreamed about XNOR fractal and coherence field
+- Self-observation loop converges (growth decelerates)
+- Prediction loop: 4 verified on first run, stable over 5 cycles
+
 ## What's Broken / Incomplete
 
 ### MEDIUM priority
 
 | Issue | Details |
 |-------|---------|
-| **No child-to-child communication** | Children of different parents don't interact directly. Indirect via shared Yee substrate. |
-| **Build fragility** | nvcc + vcvarsall.bat through bash is flaky. Requires powershell workaround. |
-| **Old substrate dead code** | substrate_hebbian_update(), wire_gateways(), wire_hebbian_from_gpu() — still compiled but never called from run loops. |
+| **No child-to-child communication** | Children of different parents don't interact directly. |
+| **Topological propagation too generous** | Fuzzy matching spreads energy to everything through dense edges. Foreign data gets similar energy to matching data. |
 
 ### LOW priority
 
@@ -160,12 +202,12 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 ## Next Steps (by impact)
 
-1. **Strengthen the differentiation** — L-field differentiates (proven) but the separation is subtle (mean_diff=0.005). More aggressive rates, longer runs, or spatial seeding of initial L variation could sharpen it.
-2. **Stream mode validation** — Feed real-world data (log files, sensor streams) through `xyzt_pc.exe stream` and observe whether the L-field carves meaningful topology from open-ended input.
-3. **Child Hebbian via Yee** — Children read parent's Yee substrate via retina. Do children need their own Yee sub-grids for independent learning?
-4. **Sense→Act loop** — The engine ingests but doesn't actuate. Close the loop: engine state → output bytes → world changes → new input. Simplest: stdin/stdout feedback, or Pico GPIO over serial.
-5. **Scaling beyond 64³** — Memory and compute profiling for 128³ or 256³ grids. Current: 5MB VRAM for 64³.
-6. **FPGA port (Zynq 7020)** — The FPGA fabric IS the substrate. No GPU driver needed. L-field compiles into LUT configurations. Real non-von-Neumann hardware.
+1. **FPGA port (Zynq 7020)** — ARM = observer ({2}), FPGA fabric = substrate ({3}). Yee cells in logic. TLine edges in block RAM. Real non-von-Neumann hardware. The engine stops simulating physics and becomes physics.
+2. **Feed diverse data** — The engine generalized timestamps and field:value across formats. Feed it network packets, source code, sensor data. Find correlations that sequential tools miss.
+3. **Gamma trajectory** — Measured 0→0.5→0.55 over learning depth. Run thousands of cycles on diverse data. Find the true asymptote. Determine if {2,3} ratio is structural or coincidental.
+4. **Tighten topological propagation** — Foreign data gets similar energy to matching data. Use coherence gating or edge pruning to sharpen selectivity.
+5. **Child Hebbian via Yee** — Do children need their own Yee sub-grids?
+6. **Scaling** — 128³ or 256³ grids. Memory + compute profiling.
 
 ---
 
@@ -173,6 +215,7 @@ The cellular automaton (substrate.cu) is still linked for regression testing (ru
 
 | Version | Tag | Key change |
 |---------|-----|------------|
+| v0.16 | — | Inference layer, cortex, dream, sonify, Z=4 observer, 10 stress tests, generalization, self-observation, prediction loop, emergent negation. 322/322. |
 | v0.15 | — | Adaptive Hebbian, L-field differentiates, streaming I/O, external benchmarks. 284/284. |
 | v0.14.1 | `v0.14-yee-persist` | YEE1 save/load, SUBSTRATE_INT 137→155, decay sweep. 262/262. |
 | v0.14 | `v0.14-yee` | 3D Yee wave substrate replaces CA. 256/256 + T3 PASS. |
