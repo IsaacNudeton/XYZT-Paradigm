@@ -29,6 +29,74 @@ int yee_inject(const YeeSource *sources, int n_sources);
 int yee_download_acc(uint8_t *h_substrate, int n);
 
 /* ══════════════════════════════════════════════════════════════
+ * RETINA — holographic injection on boundary face
+ *
+ * Data enters as 2D Fourier pattern on the x=0 face.
+ * Each byte creates a sinusoidal component. The wave propagates
+ * inward through the L-field. Where energy peaks = the address.
+ * No hash. Position IS value because the wave decided.
+ * ══════════════════════════════════════════════════════════════ */
+
+int wire_retina_inject(const uint8_t *data, int len, float amplitude) {
+    if (len == 0) return 0;
+    int max_bytes = len < 64 ? len : 64;
+
+    /* Build sources on x=0 face: holographic Fourier injection */
+    YeeSource sources[YEE_MAX_SOURCES];
+    int n_src = 0;
+
+    for (int z = 0; z < YEE_GZ && n_src < YEE_MAX_SOURCES - 1; z += 2) {
+        for (int y = 0; y < YEE_GY && n_src < YEE_MAX_SOURCES - 1; y += 2) {
+            float val = 0;
+            for (int i = 0; i < max_bytes; i++) {
+                float freq_y = 6.2832f * (float)(i + 1) / (float)YEE_GY;
+                float freq_z = 6.2832f * (float)(i + 1) / (float)YEE_GZ;
+                float phase = (float)data[i] * 6.2832f / 256.0f;
+                float amp_i = ((float)data[i] - 128.0f) / 128.0f;
+                val += amp_i * sinf(freq_y * y + phase) *
+                               cosf(freq_z * z + phase * 0.7f);
+            }
+            val *= amplitude / (float)max_bytes;
+            if (fabsf(val) > 0.001f) {
+                sources[n_src].voxel_id = yee_voxel(0, y, z);
+                sources[n_src].amplitude = val;
+                sources[n_src].strength = 1.0f;
+                n_src++;
+            }
+        }
+    }
+
+    if (n_src > 0)
+        return yee_inject(sources, n_src);
+    return 0;
+}
+
+uint32_t wire_retina_find_peak(void) {
+    /* Download accumulator, find the highest-energy voxel
+     * outside the sponge region. That's the data's address. */
+    float *h_acc = (float *)malloc(YEE_N * sizeof(float));
+    if (!h_acc) return coord_pack(32, 32, 32);  /* fallback: center */
+    yee_download_acc_raw(h_acc, YEE_N);
+
+    int best_x = 32, best_y = 32, best_z = 32;
+    float best_e = 0;
+    for (int z = 4; z < YEE_GZ - 4; z++)
+        for (int y = 4; y < YEE_GY - 4; y++)
+            for (int x = 8; x < YEE_GX - 4; x++) {  /* skip retina face + sponge */
+                float e = h_acc[yee_voxel(x, y, z)];
+                if (e > best_e) {
+                    best_e = e;
+                    best_x = x; best_y = y; best_z = z;
+                }
+            }
+
+    free(h_acc);
+    return coord_pack(best_x, best_y, best_z);
+}
+
+extern int yee_download_acc_raw(float *h_acc, int n);
+
+/* ══════════════════════════════════════════════════════════════
  * YEE SUBSTRATE WIRING — Wave physics replaces CA
  * ══════════════════════════════════════════════════════════════ */
 

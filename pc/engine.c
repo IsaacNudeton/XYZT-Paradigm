@@ -1198,13 +1198,42 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
     g0->nodes[id0].last_active = (uint32_t)T_now(&eng->T);
     g0->nodes[id0].val = onetwo_val;
 
-    /* 3-tier semantic coordinates: 4-byte windows → X=type, Y=sub-type, Z=instance.
-     * Bytes 0-3 encode the category ("  Da", "  So", "Even", "for ", "#inc").
-     * Bytes 4-7 encode the sub-category ("te: ", "urce", "t[0]", "(int").
-     * Bytes 8-11 encode the specific instance ("2025", "Even", "i = ").
-     * 100% type clustering across log, HTTP, JSON, CSV, and code formats.
-     * No training. No embedding model. Byte alignment IS the semantic structure. */
-    if (data->len >= 32) {  /* at least 4 bytes */
+    /* Coordinate assignment: where does this data live in the grid?
+     *
+     * USE_RETINA: holographic injection on x=0 face → wave propagation →
+     *   energy peak IS the address. No hash. Position from physics.
+     *   Slower (60 Yee ticks per ingest) but substrate-native.
+     *
+     * Fallback: 3-tier hash of first 12 identity bytes.
+     *   Fast but von Neumann at the front door. */
+#define USE_RETINA 1  /* Wave placement — no hash at the front door */
+#ifdef USE_RETINA
+    if (data->len >= 8 && yee_is_initialized()) {
+        /* Extract raw bytes from identity BitStream */
+        uint8_t raw[64];
+        int raw_len = data->len / 8;
+        if (raw_len > 64) raw_len = 64;
+        for (int i = 0; i < raw_len; i++) {
+            raw[i] = 0;
+            for (int b = 0; b < 8; b++)
+                if (i * 8 + b < data->len && bs_get(data, i * 8 + b))
+                    raw[i] |= (1 << b);
+        }
+        /* Clear fields, inject on retina, propagate, find peak */
+        extern int yee_clear_fields(void);
+        extern int yee_tick(void);
+        extern int yee_apply_sponge(int, float);
+        yee_clear_fields();
+        wire_retina_inject(raw, raw_len, 0.5f);
+        for (int t = 0; t < 60; t++) {
+            yee_tick();
+            yee_apply_sponge(4, 0.15f);
+        }
+        g0->nodes[id0].coord = wire_retina_find_peak();
+        g0->z_cache_n_nodes = -1;
+    }
+#else
+    if (data->len >= 32) {
         uint8_t b0[4] = {0}, b1[4] = {0}, b2[4] = {0};
         for (int i = 0; i < 4; i++) {
             for (int b = 0; b < 8; b++) {
@@ -1222,6 +1251,7 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         g0->nodes[id0].coord = coord_pack(sx, sy, sz);
         g0->z_cache_n_nodes = -1;
     }
+#endif
 
     /* Auto-wire: top-K by mutual containment.
      * Spatial locality: only check nodes at same X coordinate (same type prefix).
