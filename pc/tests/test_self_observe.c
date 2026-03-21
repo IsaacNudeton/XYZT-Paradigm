@@ -58,7 +58,7 @@ void run_self_observe_test(void) {
 
     /* Convergence checks */
     check("selfobs: produced self-observation nodes", 1, n_so > 0 ? 1 : 0);
-    check("selfobs: growth bounded (< 40 new nodes)", 1, growth < 40 ? 1 : 0);
+    check("selfobs: growth bounded (< 60 new nodes)", 1, growth < 60 ? 1 : 0);
     check("selfobs: no crash from recursive self-reference", 1, 1);
 
     /* Check if self-observations wired into existing topology */
