@@ -8,7 +8,6 @@
  */
 
 #include "engine.h"
-#include "substrate.cuh"
 #include <stdio.h>
 
 void report_shells(const Engine *eng) {
@@ -107,25 +106,7 @@ void report_top_nodes(const Engine *eng, int shell, int top_n) {
     free(top);
 }
 
-void report_gpu_substrate(const CubeState *cubes, int n_cubes) {
-    printf("=== GPU SUBSTRATE ===\n");
-    int total_alive = 0, total_active = 0;
-    uint64_t total_co = 0;
-    for (int c = 0; c < n_cubes; c++) {
-        for (int p = 0; p < CUBE_SIZE; p++) {
-            if (cubes[c].substrate[p] >= SUB_ALIVE) total_alive++;
-            if (cubes[c].active[p]) total_active++;
-            total_co += xyzt_popcnt64(cubes[c].co_present[p]);
-        }
-    }
-    int total_voxels = n_cubes * CUBE_SIZE;
-    printf("  %d cubes, %d voxels\n", n_cubes, total_voxels);
-    printf("  alive: %d/%d (%.1f%%)\n", total_alive, total_voxels,
-           total_voxels > 0 ? 100.0 * total_alive / total_voxels : 0);
-    printf("  active: %d  co-present bits: %llu\n", total_active, (unsigned long long)total_co);
-}
-
-void report_full(const Engine *eng, const CubeState *cubes, int n_cubes) {
+void report_full(const Engine *eng) {
     printf("\n");
     printf("ENGINE: %llu ticks, %d boundary edges\n",
            (unsigned long long)eng->total_ticks, eng->n_boundary_edges);
@@ -133,7 +114,5 @@ void report_full(const Engine *eng, const CubeState *cubes, int n_cubes) {
     report_onetwo(eng);
     report_nesting(eng);
     report_top_nodes(eng, 0, 5);
-    if (cubes && n_cubes > 0)
-        report_gpu_substrate(cubes, n_cubes);
     printf("\n");
 }

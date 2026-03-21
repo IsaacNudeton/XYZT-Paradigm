@@ -11,6 +11,12 @@
 #include <stdlib.h>
 #include <math.h>
 
+/* Constants from old substrate.cuh — needed for retina gather */
+#ifndef CUBE_SIZE
+#define CUBE_SIZE 64
+#define CUBE_DIM  4
+#endif
+
 /* Yee API — declared in yee.cuh but we can't include it from C.
  * These are extern "C" functions in yee.cu. */
 typedef struct { int voxel_id; float amplitude; float strength; } YeeSource;
@@ -21,36 +27,6 @@ typedef struct { int voxel_id; float amplitude; float strength; } YeeSource;
 #define YEE_MAX_SOURCES 512
 int yee_inject(const YeeSource *sources, int n_sources);
 int yee_download_acc(uint8_t *h_substrate, int n);
-
-void wire_local_3d(CubeState *cubes, int n_cubes) {
-    /* Wire each position to its 6 face-neighbors within same cube.
-     * This is the v3 spatial proximity principle in 3D. */
-    int dx[] = {1, -1, 0, 0, 0, 0};
-    int dy[] = {0, 0, 1, -1, 0, 0};
-    int dz[] = {0, 0, 0, 0, 1, -1};
-
-    for (int c = 0; c < n_cubes; c++) {
-        CubeState *cube = &cubes[c];
-        for (int pos = 0; pos < CUBE_SIZE; pos++) {
-            int lx, ly, lz;
-            local_coords(pos, &lx, &ly, &lz);
-
-            uint64_t rd = 0;
-            for (int d = 0; d < 6; d++) {
-                int nx = lx + dx[d], ny = ly + dy[d], nz = lz + dz[d];
-                if (nx >= 0 && nx < CUBE_DIM && ny >= 0 && ny < CUBE_DIM && nz >= 0 && nz < CUBE_DIM) {
-                    int nidx = local_idx(nx, ny, nz);
-                    rd |= (1ULL << nidx);
-                }
-            }
-            cube->reads[pos] = rd;
-            cube->active[pos] = (rd != 0) ? 1 : 0;
-        }
-    }
-}
-
-/* wire_gateways, wire_hebbian_from_gpu, wire_engine_to_gpu, wire_gpu_to_engine
- * removed in v0.14-yee-persist — dead code after Yee substrate swap. */
 
 /* ══════════════════════════════════════════════════════════════
  * YEE SUBSTRATE WIRING — Wave physics replaces CA

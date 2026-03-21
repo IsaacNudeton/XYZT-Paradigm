@@ -33,7 +33,6 @@ extern "C" {
 #include "cortex.h"
 #include "sonify.h"
 }
-#include "substrate.cuh"
 #include "yee.cuh"
 
 /* Forward declarations from reporter.c */
@@ -42,75 +41,7 @@ void report_shells(const Engine *eng);
 void report_onetwo(const Engine *eng);
 void report_nesting(const Engine *eng);
 void report_top_nodes(const Engine *eng, int shell, int top_n);
-void report_gpu_substrate(const CubeState *cubes, int n_cubes);
-void report_full(const Engine *eng, const CubeState *cubes, int n_cubes);
-}
-
-/* ══════════════════════════════════════════════════════════════
- * GPU BENCHMARK
- * ══════════════════════════════════════════════════════════════ */
-
-static void cmd_bench(void) {
-    printf("=== GPU BENCHMARK ===\n\n");
-
-    char info[512];
-    substrate_device_info(info, sizeof(info));
-    printf("%s\n", info);
-
-    int cube_counts[] = {64, 256, 1024, 4096};
-
-    for (int tc = 0; tc < 4; tc++) {
-        int n_cubes = cube_counts[tc];
-        int total_voxels = n_cubes * CUBE_SIZE;
-
-        if (substrate_init(n_cubes) != 0) {
-            printf("  Failed to init %d cubes\n", n_cubes);
-            continue;
-        }
-
-        /* Set up some marks for a meaningful test */
-        CubeState *h_cubes = (CubeState *)calloc(n_cubes, sizeof(CubeState));
-        for (int c = 0; c < n_cubes; c++) {
-            /* Wire each position to its neighbors (done by kernel_auto_wire_local) */
-            h_cubes[c].substrate[0] = 128;   /* Alive */
-            h_cubes[c].substrate[1] = (c % 2) ? 128 : 0;
-        }
-        substrate_upload(h_cubes, n_cubes);
-
-        /* Warm up */
-        int *results = (int *)calloc(n_cubes * CUBE_SIZE, sizeof(int));
-        substrate_tick_and_observe(n_cubes, OBS_PARITY, -1, results);
-
-        /* Benchmark */
-        cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-
-        int iterations = 1000;
-        cudaEventRecord(start);
-        for (int i = 0; i < iterations; i++) {
-            substrate_tick(n_cubes);
-        }
-        cudaEventRecord(stop);
-        cudaDeviceSynchronize();
-
-        float ms = 0;
-        cudaEventElapsedTime(&ms, start, stop);
-
-        double cubes_per_sec = (double)n_cubes * iterations / (ms / 1000.0);
-        double voxels_per_sec = cubes_per_sec * CUBE_SIZE;
-
-        printf("  %4d cubes (%6d voxels): %.1f ms for %dk ticks = %.1f M cube-ticks/s = %.1f M voxel-ticks/s\n",
-               n_cubes, total_voxels, ms, iterations,
-               cubes_per_sec / 1e6, voxels_per_sec / 1e6);
-
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
-        free(h_cubes);
-        free(results);
-        substrate_destroy();
-    }
-    printf("\n");
+void report_full(const Engine *eng);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -122,7 +53,6 @@ extern "C" int g_fail = 0;
 
 extern "C" {
 void run_core_tests(void);
-void run_gpu_tests(void);
 void run_lifecycle_tests(void);
 void run_observer_tests(void);
 void run_stress_tests(void);
@@ -142,117 +72,12 @@ void run_resonance_test(void);
 void run_self_observe_test(void);
 void run_predict_test(void);
 void run_generalize_test(void);
-void run_tracking_sweep(void);
-void run_sense_diagnostic(void);
-}
-
-static void cmd_sweep(void) {
-    /* Metric collection: 25-sentence corpus with overlapping themes, 40 cycles */
-    Engine eng; engine_init(&eng);
-
-    const char *corpus[] = {
-        "the quick brown fox jumps over the lazy dog near the river bank",
-        "hydrogen helium lithium beryllium boron carbon nitrogen oxygen fluorine neon",
-        "struct node val accum identity valence crystal relay collision threshold",
-        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima",
-        "zero one two three four five six seven eight nine ten eleven twelve thirteen",
-        "the brown fox sleeps under the oak tree by the quiet river bank at dawn",
-        "sodium magnesium aluminum silicon phosphorus sulfur chlorine argon potassium",
-        "edge weight source destination propagate impedance fresnel junction boundary",
-        "mike november oscar papa quebec romeo sierra tango uniform victor whiskey",
-        "fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty",
-        "a lazy dog rests near the brown fox while the river flows toward the sea",
-        "calcium scandium titanium vanadium chromium manganese iron cobalt nickel copper",
-        "graph shell observer substrate lattice topology coherent valence crystal lysis",
-        "xray yankee zulu alpha bravo charlie one two three four five six seven eight",
-        "hundred thousand million billion trillion quadrillion quintillion sextillion",
-        "the river bank where the fox and dog meet is shaded by ancient oak trees",
-        "zinc gallium germanium arsenic selenium bromine krypton rubidium strontium",
-        "accumulate propagate crystallize observe prune grow wire resolve identity bloom",
-        "nine eight seven six five four three two one zero ignition liftoff altitude",
-        "the dog chases the fox across the river bank and through the oak forest",
-        "yttrium zirconium niobium molybdenum technetium ruthenium rhodium palladium",
-        "impedance matching fresnel conservation energy bounded lysis trigger nesting",
-        "delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa",
-        "fibonacci prime composite perfect abundant deficient amicable sociable happy",
-        "both the fox and the dog drink from the same river under the same oak tree",
-    };
-    int n_corpus = 25;
-    for (int k = 0; k < n_corpus; k++)
-        engine_ingest_text(&eng, corpus[k], corpus[k]);
-
-    int total_ticks = 40 * (int)SUBSTRATE_INT;
-    int64_t total_error = 0;
-    int crystal_cycles = 0;
-
-    /* Escape probability accumulators */
-    int uncoupled_total = 0, alive_total = 0, cycles = 0;
-
-    for (int t = 0; t < total_ticks; t++) {
-        engine_tick(&eng);
-        if ((t + 1) % SUBSTRATE_INT == 0) {
-            total_error += abs(eng.onetwo.feedback[7]);
-
-            Graph *g = &eng.shells[0].g;
-
-            /* Count crystals */
-            for (int i = 0; i < g->n_nodes; i++) {
-                Node *n = &g->nodes[i];
-                if (n->alive && !n->layer_zero && n->valence >= 200) crystal_cycles++;
-            }
-
-            /* Escape probability: count uncoupled nodes */
-            int n_in[MAX_NODES]; memset(n_in, 0, g->n_nodes * (int)sizeof(int));
-            for (int e = 0; e < g->n_edges; e++)
-                if (g->edges[e].weight > 0) n_in[g->edges[e].dst]++;
-
-            int uncoupled = 0, alive = 0;
-            for (int i = 0; i < g->n_nodes; i++) {
-                Node *n = &g->nodes[i];
-                if (!n->alive || n->layer_zero) continue;
-                alive++;
-                if (n_in[i] == 0) uncoupled++;
-            }
-            uncoupled_total += uncoupled;
-            alive_total += alive;
-            cycles++;
-        }
-    }
-
-    /* Final topology snapshot */
-    int n_alive = 0, n_relay = 0, n_collision = 0, n_crystal_final = 0;
-    int total_valence = 0, n_incoherent = 0, total_edges = 0;
-    Graph *gf = &eng.shells[0].g;
-    int n_in_f[MAX_NODES]; memset(n_in_f, 0, gf->n_nodes * (int)sizeof(int));
-    for (int e = 0; e < gf->n_edges; e++)
-        if (gf->edges[e].weight > 0) { n_in_f[gf->edges[e].dst]++; total_edges++; }
-
-    for (int i = 0; i < gf->n_nodes; i++) {
-        Node *n = &gf->nodes[i];
-        if (!n->alive || n->layer_zero) continue;
-        n_alive++;
-        total_valence += n->valence;
-        if (n->coherent < 0) n_incoherent++;
-        if (n->valence >= 200) n_crystal_final++;
-        else if (n_in_f[i] >= 2) n_collision++;
-        else n_relay++;
-    }
-
-    double uncoupled_frac = alive_total > 0 ? (double)uncoupled_total / (double)alive_total : 0.0;
-
-    printf("SWEEP\t%d\t%d\t%d\t%d\t%d\t%lld\t%d\t%d\t%.4f\t%d\t%d\t%d\n",
-           (int)SUBSTRATE_INT, n_alive, n_relay, n_collision, n_crystal_final,
-           (long long)total_error, total_valence, crystal_cycles, uncoupled_frac,
-           gf->grow_interval, gf->prune_interval, total_edges);
-
-    engine_destroy(&eng);
 }
 
 static void cmd_test(void) {
     printf("=== XYZT PC Self-Test ===\n\n");
 
     run_core_tests();
-    run_gpu_tests();
     run_lifecycle_tests();
     run_observer_tests();
     run_stress_tests();
@@ -726,12 +551,9 @@ static void cmd_t3(int argc, char *argv[]) {
     for (int i = 0; i < 3; i++) {
         if (ids[i] < 0) continue;
         Node *n = &eng.shells[0].g.nodes[ids[i]];
-        printf("    [%s] node %d: coord=(%d,%d,%d) -> cube=%d\n",
+        printf("    [%s] node %d: coord=(%d,%d,%d)\n",
                labels[i], ids[i],
-               coord_x(n->coord), coord_y(n->coord), coord_z(n->coord),
-               cube_id_from(coord_x(n->coord) / CUBE_DIM,
-                            coord_y(n->coord) / CUBE_DIM,
-                            coord_z(n->coord) / CUBE_DIM));
+               coord_x(n->coord), coord_y(n->coord), coord_z(n->coord));
     }
 
     /* ── PHASE 2: Tick to crystallization ──────────────────────── */
@@ -939,7 +761,7 @@ static void cmd_t3(int argc, char *argv[]) {
     printf("\n═══════════════════════════════════════════════════════\n\n");
 
     /* Full engine report (no CubeState in Yee path) */
-    report_full(&eng, NULL, 0);
+    report_full(&eng);
 
     free(yee_substrate);
     if (gpu_ok) yee_destroy();
@@ -985,7 +807,7 @@ static void cmd_run(void) {
                 yee_download_acc(yee_substrate, YEE_N);
                 wire_yee_retinas(&eng, yee_substrate);
             }
-            report_full(&eng, NULL, 0);
+            report_full(&eng);
         }
         else if (strncmp(line, "ingest ", 7) == 0) {
             const char *text = line + 7;
@@ -1111,7 +933,7 @@ static void cmd_ingest(const char *path) {
     printf("Running 500 ticks...\n");
     for (int i = 0; i < 500; i++) engine_tick(&eng);
 
-    report_full(&eng, NULL, 0);
+    report_full(&eng);
 
     engine_destroy(&eng);
 }
@@ -1501,14 +1323,6 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[1], "test") == 0) {
         cmd_test();
         return g_fail;
-    } else if (strcmp(argv[1], "sweep") == 0) {
-        cmd_sweep();
-    } else if (strcmp(argv[1], "tracking") == 0) {
-        run_tracking_sweep();
-    } else if (strcmp(argv[1], "sense-diag") == 0) {
-        run_sense_diagnostic();
-    } else if (strcmp(argv[1], "bench") == 0) {
-        cmd_bench();
     } else if (strcmp(argv[1], "ingest") == 0 && argc >= 3) {
         cmd_ingest(argv[2]);
     } else if (strcmp(argv[1], "t3") == 0) {

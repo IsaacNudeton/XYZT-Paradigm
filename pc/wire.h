@@ -11,12 +11,6 @@
 #define WIRE_H
 
 #include "engine.h"
-#include "substrate.cuh"
-
-/* Wire a voxel to its spatial neighbors within the volume.
- * 6-connected (face neighbors) for local wiring.
- * Used by old CA regression tests (run_gpu_tests). */
-void wire_local_3d(CubeState *cubes, int n_cubes);
 
 /* ── Yee substrate wiring (wave physics) ── */
 

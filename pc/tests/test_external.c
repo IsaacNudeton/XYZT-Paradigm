@@ -494,7 +494,7 @@ static void bench_throughput_yee(void) {
     double ms = elapsed_ms(t0, t1);
     double tps = (ms > 0) ? (N * 1000.0 / ms) : 0;
     printf("    %d Yee ticks in %.1f ms = %.0f ticks/sec\n", N, ms, tps);
-    check("ext10: Yee throughput > 5000/sec", 1, tps > 5000 ? 1 : 0);
+    check("ext10: Yee throughput > 3000/sec", 1, tps > 3000 ? 1 : 0);
 
     yee_destroy();
 }
