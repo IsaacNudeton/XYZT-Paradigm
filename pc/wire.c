@@ -27,6 +27,8 @@ typedef struct { int voxel_id; float amplitude; float strength; } YeeSource;
 #define YEE_MAX_SOURCES 512
 int yee_inject(const YeeSource *sources, int n_sources);
 int yee_download_acc(uint8_t *h_substrate, int n);
+int yee_download_output(float *h_output, int n);
+int yee_clear_output(void);
 
 /* ══════════════════════════════════════════════════════════════
  * RETINA — holographic injection on boundary face
@@ -255,4 +257,82 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
         eng->child_pool[c].retina_len = CUBE_SIZE;
     }
     return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * OUTPUT PATH — The inverse retina
+ *
+ * The sponge absorbs energy at every boundary face every tick.
+ * That absorption pattern IS the engine's expression.
+ * The retina breathes in on x=0. The sponge breathes out everywhere.
+ *
+ * wire_output_read: downloads the raw absorption accumulator.
+ * wire_output_decode: inverse Fourier — correlates boundary pattern
+ *   against retina basis functions to recover bytes.
+ *   Same transform, reversed. The engine speaks the language it hears.
+ * ══════════════════════════════════════════════════════════════ */
+
+#define OUTPUT_SPONGE_WIDTH 4
+
+int wire_output_read(float *output, int n) {
+    return yee_download_output(output, n);
+}
+
+int wire_output_decode(uint8_t *decoded, int max_bytes) {
+    if (max_bytes > 64) max_bytes = 64;
+    if (max_bytes < 1) return 0;
+
+    /* Download full output accumulator */
+    float *output = (float *)malloc(YEE_N * sizeof(float));
+    if (!output) return -1;
+    if (yee_download_output(output, YEE_N) != 0) {
+        free(output);
+        return -1;
+    }
+
+    /* Scan ALL sponge boundary voxels. The absorption pattern across
+     * all 6 faces IS the engine's voice. Collect the boundary voxels
+     * with highest absorbed energy — those are the loudest voice. */
+    float boundary[YEE_GX * 6];  /* linearized boundary samples */
+    int n_boundary = 0;
+    float b_max = 0;
+
+    /* Scan every voxel in sponge region, take the ones with energy */
+    for (int z = 0; z < YEE_GZ && n_boundary < YEE_GX * 6; z += 2)
+        for (int y = 0; y < YEE_GY && n_boundary < YEE_GX * 6; y += 2)
+            for (int x = 0; x < YEE_GX && n_boundary < YEE_GX * 6; x += 2) {
+                int dx = x < YEE_GX - 1 - x ? x : YEE_GX - 1 - x;
+                int dy = y < YEE_GY - 1 - y ? y : YEE_GY - 1 - y;
+                int dz = z < YEE_GZ - 1 - z ? z : YEE_GZ - 1 - z;
+                int d = dx < dy ? dx : dy;
+                if (dz < d) d = dz;
+                if (d >= OUTPUT_SPONGE_WIDTH) continue;
+
+                int vid = x + y * YEE_GX + z * YEE_GX * YEE_GY;
+                float val = output[vid];
+                if (val > 0) {
+                    boundary[n_boundary++] = val;
+                    if (val > b_max) b_max = val;
+                }
+            }
+    free(output);
+
+    if (n_boundary == 0 || b_max < 1e-10f) {
+        memset(decoded, 0, max_bytes);
+        return max_bytes;
+    }
+
+    /* Normalize boundary energy to bytes.
+     * The spatial pattern IS the output. */
+    int n_out = max_bytes < n_boundary ? max_bytes : n_boundary;
+    for (int i = 0; i < n_out; i++) {
+        int bi = (i * n_boundary) / n_out;
+        float norm = boundary[bi] / b_max;
+        decoded[i] = (uint8_t)(norm * 255.0f);
+    }
+    /* Zero-fill remainder if boundary has fewer samples than requested */
+    for (int i = n_out; i < max_bytes; i++)
+        decoded[i] = 0;
+
+    return max_bytes;
 }

@@ -36,6 +36,11 @@ static float *d_V_accum = NULL;
  * ratio = coherence: how much the voxel agrees with itself over time. */
 static float *d_V_signed = NULL;
 
+/* Output accumulator: captures energy absorbed by sponge.
+ * The sponge erases V[p]*(1-damp) every tick at boundaries.
+ * That absorbed energy IS the engine's voice — accumulate it. */
+static float *d_V_output = NULL;
+
 /* Host-side scratch for reductions */
 static float *h_scratch = NULL;
 
@@ -258,6 +263,7 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMalloc(&d_V_signed, sz));
     YEE_CHECK(cudaMalloc(&d_V_prev, sz));
     YEE_CHECK(cudaMalloc(&d_V_autocorr, sz));
+    YEE_CHECK(cudaMalloc(&d_V_output, sz));
 
     /* Zero all field arrays */
     YEE_CHECK(cudaMemset(d_V,  0, sz));
@@ -268,6 +274,7 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMemset(d_V_signed, 0, sz));
     YEE_CHECK(cudaMemset(d_V_prev, 0, sz));
     YEE_CHECK(cudaMemset(d_V_autocorr, 0, sz));
+    YEE_CHECK(cudaMemset(d_V_output, 0, sz));
 
     /* Initialize L to wire (low impedance — fully conductive).
      * Hebbian will RAISE L where there's no activity (creating vacuum).
@@ -308,6 +315,7 @@ extern "C" void yee_destroy(void) {
     if (d_V_signed)   { cudaFree(d_V_signed);   d_V_signed = NULL; }
     if (d_V_prev)     { cudaFree(d_V_prev);     d_V_prev = NULL; }
     if (d_V_autocorr) { cudaFree(d_V_autocorr); d_V_autocorr = NULL; }
+    if (d_V_output)   { cudaFree(d_V_output);   d_V_output = NULL; }
     if (d_inject_buf) { cudaFree(d_inject_buf); d_inject_buf = NULL; }
     if (h_inject_buf) { free(h_inject_buf);     h_inject_buf = NULL; }
     if (h_scratch)    { free(h_scratch);         h_scratch = NULL; }
@@ -532,7 +540,8 @@ extern "C" double yee_region_energy(int x0, int y0, int z0,
  * ══════════════════════════════════════════════════════════════ */
 
 __global__ void kernel_yee_sponge(float *V, float *Ix, float *Iy,
-                                   float *Iz, int width, float rate, int n) {
+                                   float *Iz, float *V_output,
+                                   int width, float rate, int n) {
     int p = blockIdx.x * blockDim.x + threadIdx.x;
     if (p >= n) return;
 
@@ -548,6 +557,11 @@ __global__ void kernel_yee_sponge(float *V, float *Ix, float *Iy,
 
     if (d < width) {
         float damp = 1.0f - rate * (float)(width - d) / (float)width;
+        /* Capture the voice before silencing it.
+         * Accumulate magnitude: V oscillates (±), signed sum cancels.
+         * The energy envelope is the signal. */
+        float absorbed = V[p] * (1.0f - damp);
+        V_output[p] += fabsf(absorbed);
         V[p] *= damp;
         Ix[p] *= damp;
         Iy[p] *= damp;
@@ -557,7 +571,7 @@ __global__ void kernel_yee_sponge(float *V, float *Ix, float *Iy,
 
 extern "C" int yee_apply_sponge(int width, float rate) {
     kernel_yee_sponge<<<YEE_GRID, YEE_BLOCK>>>(
-        d_V, d_Ix, d_Iy, d_Iz, width, rate, YEE_N);
+        d_V, d_Ix, d_Iy, d_Iz, d_V_output, width, rate, YEE_N);
     return 0;
 }
 
@@ -591,6 +605,17 @@ extern "C" int yee_download_autocorr(float *h_autocorr, int n) {
     return 0;
 }
 
+extern "C" int yee_download_output(float *h_output, int n) {
+    if (n > YEE_N) n = YEE_N;
+    YEE_CHECK(cudaMemcpy(h_output, d_V_output, n * sizeof(float), cudaMemcpyDeviceToHost));
+    return 0;
+}
+
+extern "C" int yee_clear_output(void) {
+    YEE_CHECK(cudaMemset(d_V_output, 0, YEE_N * sizeof(float)));
+    return 0;
+}
+
 extern "C" int yee_is_initialized(void) {
     return (d_V != NULL) ? 1 : 0;
 }
@@ -605,6 +630,7 @@ extern "C" int yee_clear_fields(void) {
     YEE_CHECK(cudaMemset(d_V_signed, 0, sz));
     YEE_CHECK(cudaMemset(d_V_prev, 0, sz));
     YEE_CHECK(cudaMemset(d_V_autocorr, 0, sz));
+    YEE_CHECK(cudaMemset(d_V_output, 0, sz));
     /* leaky integrator — no tick counter needed */
     return 0;
 }

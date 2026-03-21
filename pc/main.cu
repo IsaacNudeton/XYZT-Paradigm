@@ -72,6 +72,7 @@ void run_resonance_test(void);
 void run_self_observe_test(void);
 void run_predict_test(void);
 void run_generalize_test(void);
+void run_output_test(void);
 }
 
 static void cmd_test(void) {
@@ -97,6 +98,7 @@ static void cmd_test(void) {
     run_self_observe_test();
     run_predict_test();
     run_generalize_test();
+    run_output_test();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);

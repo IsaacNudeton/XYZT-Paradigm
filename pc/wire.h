@@ -37,4 +37,15 @@ int wire_yee_to_engine(Engine *eng);
  * Each child reads 64 bytes from its parent's cube. */
 int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate);
 
+/* ── Output path: the inverse retina ── */
+
+/* Download raw sponge absorption accumulator.
+ * The pattern of absorbed energy at boundaries = engine's voice. */
+int wire_output_read(float *output, int n);
+
+/* Inverse retina: decode boundary absorption pattern back to bytes.
+ * Correlates output face against retina basis functions.
+ * Returns number of bytes decoded, or -1 on error. */
+int wire_output_decode(uint8_t *decoded, int max_bytes);
+
 #endif /* WIRE_H */

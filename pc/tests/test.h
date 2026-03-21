@@ -43,6 +43,7 @@ void run_resonance_test(void);
 void run_self_observe_test(void);
 void run_predict_test(void);
 void run_generalize_test(void);
+void run_output_test(void);
 
 #define CHECK(name, cond) do { \
     if (cond) { g_pass++; printf("  PASS %s\n", name); } \

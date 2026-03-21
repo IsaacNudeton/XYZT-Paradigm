@@ -188,8 +188,16 @@ int yee_download_signed(float *h_signed, int n);
  * Sees through the dead zone where amplitude observers go blind. */
 int yee_download_autocorr(float *h_autocorr, int n);
 
-/* Sponge layer: damp V/I at boundary voxels (absorbing BC for inference) */
+/* Sponge layer: damp V/I at boundary voxels (absorbing BC for inference).
+ * Absorbed energy accumulates in d_V_output — the engine's voice. */
 int yee_apply_sponge(int width, float rate);
+
+/* Download sponge output accumulator (absorbed energy at boundaries).
+ * This IS the engine's expression — the inverse of the retina. */
+int yee_download_output(float *h_output, int n);
+
+/* Clear output accumulator (between readings) */
+int yee_clear_output(void);
 
 /* Check if Yee grid is initialized */
 int yee_is_initialized(void);
