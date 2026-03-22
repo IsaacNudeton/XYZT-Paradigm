@@ -62,7 +62,10 @@ static YeeSource *h_inject_buf = NULL;
  *
  * dV/dt = -(1/C) * div(I) - (G/C)*V
  * div(I) = (Ix[x,y,z] - Ix[x-1,y,z]) + (Iy - Iy[y-1]) + (Iz - Iz[z-1])
- * Boundary: I outside grid = 0 (open circuit)
+ *
+ * Periodic boundaries: the grid is a 3-torus.
+ * Energy leaving one face enters the opposite face.
+ * The echo loop is the geometry, not a function call.
  * ══════════════════════════════════════════════════════════════ */
 
 __global__ void kernel_yee_V(float *V, const float *Ix, const float *Iy,
@@ -75,17 +78,17 @@ __global__ void kernel_yee_V(float *V, const float *Ix, const float *Iy,
 
     float inv_C = 1.0f / YEE_C;
 
-    /* dIx/dx: Ix[x,y,z] - Ix[x-1,y,z] */
-    float dIx = Ix[p];
-    if (gx > 0) dIx -= Ix[yee_idx(gx-1, gy, gz)];
+    /* dIx/dx: Ix[x,y,z] - Ix[x-1,y,z] — wraps at boundary */
+    int xm = (gx > 0) ? gx - 1 : YEE_GX - 1;
+    float dIx = Ix[p] - Ix[yee_idx(xm, gy, gz)];
 
-    /* dIy/dy */
-    float dIy = Iy[p];
-    if (gy > 0) dIy -= Iy[yee_idx(gx, gy-1, gz)];
+    /* dIy/dy — wraps */
+    int ym = (gy > 0) ? gy - 1 : YEE_GY - 1;
+    float dIy = Iy[p] - Iy[yee_idx(gx, ym, gz)];
 
-    /* dIz/dz */
-    float dIz = Iz[p];
-    if (gz > 0) dIz -= Iz[yee_idx(gx, gy, gz-1)];
+    /* dIz/dz — wraps */
+    int zm = (gz > 0) ? gz - 1 : YEE_GZ - 1;
+    float dIz = Iz[p] - Iz[yee_idx(gx, gy, zm)];
 
     float div_I = dIx + dIy + dIz;
     float dV = -inv_C * div_I - YEE_G * inv_C * V[p];
@@ -97,8 +100,8 @@ __global__ void kernel_yee_V(float *V, const float *Ix, const float *Iy,
  *
  * dIx/dt = -(1/L) * dV/dx - (R/L)*Ix
  * dV/dx at face (x,y,z) = V[x+1,y,z] - V[x,y,z]
- * Boundary: V outside grid = 0 (grounded)
  *
+ * Periodic boundaries: V wraps at edges.
  * Uses NEW V from kernel 1 (leapfrog stagger).
  * ══════════════════════════════════════════════════════════════ */
 
@@ -112,23 +115,20 @@ __global__ void kernel_yee_I(const float *V, float *Ix, float *Iy,
 
     float inv_L = 1.0f / L[p];
 
-    /* Ix: dV/dx = V[x+1] - V[x] */
-    if (gx < YEE_GX - 1) {
-        float dVx = V[yee_idx(gx+1, gy, gz)] - V[p];
-        Ix[p] += YEE_ALPHA * (-inv_L * dVx - YEE_R * inv_L * Ix[p]);
-    }
+    /* Ix: dV/dx = V[x+1] - V[x] — wraps at boundary */
+    int xp = (gx < YEE_GX - 1) ? gx + 1 : 0;
+    float dVx = V[yee_idx(xp, gy, gz)] - V[p];
+    Ix[p] += YEE_ALPHA * (-inv_L * dVx - YEE_R * inv_L * Ix[p]);
 
-    /* Iy: dV/dy = V[y+1] - V[y] */
-    if (gy < YEE_GY - 1) {
-        float dVy = V[yee_idx(gx, gy+1, gz)] - V[p];
-        Iy[p] += YEE_ALPHA * (-inv_L * dVy - YEE_R * inv_L * Iy[p]);
-    }
+    /* Iy: dV/dy — wraps */
+    int yp = (gy < YEE_GY - 1) ? gy + 1 : 0;
+    float dVy = V[yee_idx(gx, yp, gz)] - V[p];
+    Iy[p] += YEE_ALPHA * (-inv_L * dVy - YEE_R * inv_L * Iy[p]);
 
-    /* Iz: dV/dz = V[z+1] - V[z] */
-    if (gz < YEE_GZ - 1) {
-        float dVz = V[yee_idx(gx, gy, gz+1)] - V[p];
-        Iz[p] += YEE_ALPHA * (-inv_L * dVz - YEE_R * inv_L * Iz[p]);
-    }
+    /* Iz: dV/dz — wraps */
+    int zp = (gz < YEE_GZ - 1) ? gz + 1 : 0;
+    float dVz = V[yee_idx(gx, gy, zp)] - V[p];
+    Iz[p] += YEE_ALPHA * (-inv_L * dVz - YEE_R * inv_L * Iz[p]);
 }
 
 /* ══════════════════════════════════════════════════════════════
