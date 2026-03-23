@@ -41,9 +41,6 @@ void tline_inject(TLine *tl, double val);
 /* Read the value at cell n-1 (destination end) */
 double tline_read(const TLine *tl);
 
-/* Read the value at any cell (for Z-depth observation) */
-double tline_read_at(const TLine *tl, int cell);
-
 /* One step: shift register with per-cell attenuation + smoothing */
 void tline_step(TLine *tl);
 
@@ -53,9 +50,6 @@ void tline_set_impedance(TLine *tl, double z_src, double z_dst);
 /* Effective "weight" — product of per-cell attenuation.
  * Returns uint8_t so old code reading e->weight stays compatible. */
 uint8_t tline_weight(const TLine *tl);
-
-/* Back-reaction: collision energy grows Lc at boundary cells. */
-void tline_backreaction(TLine *tl, double collision_energy);
 
 /* Strengthen: decrease Lc by rate (less loss, stronger coupling) */
 void tline_strengthen(TLine *tl, double rate);

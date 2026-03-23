@@ -51,12 +51,6 @@ double tline_read(const TLine *tl) {
     return tl->V[tl->n_cells - 1];
 }
 
-double tline_read_at(const TLine *tl, int cell) {
-    if (cell < 0) cell = 0;
-    if (cell >= tl->n_cells) cell = tl->n_cells - 1;
-    return tl->V[cell];
-}
-
 void tline_step(TLine *tl) {
     int nc = tl->n_cells;
     
@@ -121,20 +115,6 @@ uint8_t tline_weight(const TLine *tl) {
     if (w < 1) w = 1;
     if (w > 254) w = 254;
     return (uint8_t)w;
-}
-
-void tline_backreaction(TLine *tl, double collision_energy) {
-    /* Grow Lc at both boundaries proportional to collision energy.
-     * Mass forms where energy collides, not where it passes through. */
-    double bump = 0.001 * collision_energy;
-    for (int d = 0; d < IMP_DEPTH && d < tl->n_cells; d++) {
-        double scale = exp(-(double)d * 0.5);
-        tl->Lc[d] += bump * scale;
-        tl->Lc[tl->n_cells - 1 - d] += bump * scale;
-        if (tl->Lc[d] > 50.0) tl->Lc[d] = 50.0;
-        if (tl->Lc[tl->n_cells - 1 - d] > 50.0)
-            tl->Lc[tl->n_cells - 1 - d] = 50.0;
-    }
 }
 
 void tline_strengthen(TLine *tl, double rate) {

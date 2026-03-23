@@ -192,7 +192,9 @@ int encode_file(BitStream *bs, const char *path) {
     fseek(f, 0, SEEK_SET);
     int max = BS_MAXBITS / 8;
     if (sz > max) sz = max;
+    if (sz <= 0) { fclose(f); return -1; }
     uint8_t *buf = (uint8_t *)malloc(sz);
+    if (!buf) { fclose(f); return -1; }
     size_t rd = fread(buf, 1, sz, f);
     fclose(f);
     encode_bytes(bs, buf, (int)rd);
@@ -394,12 +396,6 @@ int crystal_strength(const Node *n) {
     return total / n->crystal_n;
 }
 
-int crystal_distance(const Node *a, const Node *b) {
-    int dist = 0;
-    for (int i = 0; i < 8; i++) dist += abs((int)a->crystal_hist[i] - (int)b->crystal_hist[i]);
-    return dist;
-}
-
 /* ══════════════════════════════════════════════════════════════
  * GRAPH OPERATIONS
  * ══════════════════════════════════════════════════════════════ */
@@ -596,17 +592,6 @@ int engine_predict_polarity(Engine *eng, int node_id, const char *label) {
     return predict;
 }
 
-void engine_polarity_summary(const Engine *eng) {
-    printf("[polarity summary] bridge: %d/%d invert  kw: %d/%d invert\n",
-           eng->pol_bridge_invert, eng->pol_bridge_total,
-           eng->pol_kw_invert, eng->pol_kw_total);
-}
-
-void engine_polarity_reset(Engine *eng) {
-    eng->pol_bridge_total = eng->pol_bridge_invert = 0;
-    eng->pol_kw_total = eng->pol_kw_invert = 0;
-}
-
 int graph_learn(Graph *g, int32_t structural_match) {
     int changed = 0;
     /* ONETWO feedback gating: structural_match controls learning rate.
@@ -731,20 +716,6 @@ int graph_compute_topology(Graph *g, int z_depth) {
     }
     
     return max_y;
-}
-
-int graph_zone_coherence(const Graph *g, const int *node_ids, int n_ids, int *n_alive) {
-    int alive = 0, incoh = 0;
-    for (int k = 0; k < n_ids; k++) {
-        int i = node_ids[k];
-        if (i < 0 || i >= g->n_nodes) continue;
-        const Node *n = &g->nodes[i];
-        if (!n->alive || n->layer_zero) continue;
-        alive++;
-        if (n->coherent < 0) incoh++;
-    }
-    if (n_alive) *n_alive = alive;
-    return incoh;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1486,6 +1457,7 @@ void engine_tick(Engine *eng) {
             memset(g->z_edge_off, 0, sizeof(g->z_edge_off));
             for (int z = 0; z < 64; z++) g->z_edge_off[z + 1] = g->z_edge_off[z] + z_edge_count[z];
             g->z_edge_idx = (int *)malloc((g->z_edge_off[64] + 1) * sizeof(int));
+            if (!g->z_edge_idx) { g->z_cache_n_nodes = -1; return; }
             int z_cur[64] = {0};
             for (int i = 0; i < g->n_edges; i++) {
                 Edge *e = &g->edges[i];
@@ -1507,6 +1479,7 @@ void engine_tick(Engine *eng) {
             memset(g->z_node_off, 0, sizeof(g->z_node_off));
             for (int z = 0; z < 64; z++) g->z_node_off[z + 1] = g->z_node_off[z] + z_node_count[z];
             g->z_node_idx = (int *)malloc((g->z_node_off[64] + 1) * sizeof(int));
+            if (!g->z_node_idx) { free(g->z_edge_idx); g->z_edge_idx = NULL; g->z_cache_n_nodes = -1; return; }
             memset(z_cur, 0, sizeof(z_cur));
             for (int i = 0; i < g->n_nodes; i++)
                 if (g->nodes[i].alive) {

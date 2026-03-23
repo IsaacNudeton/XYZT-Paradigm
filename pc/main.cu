@@ -28,7 +28,6 @@ extern "C" {
 #include "onetwo.h"
 #include "wire.h"
 #include "transducer.h"
-#include "sense.h"
 #include "io.h"
 #include "infer.h"
 #include "cortex.h"

@@ -475,7 +475,6 @@ static inline uint8_t apply_fresnel(int raw, double Z_src, double Z_dst) {
 /* Crystal histogram */
 void crystal_update(Node *n, Edge *edges, int n_edges, int node_id);
 int  crystal_strength(const Node *n);
-int  crystal_distance(const Node *a, const Node *b);
 
 /* ONETWO functions */
 void bs_runs(const BitStream *b, RunList *r);
@@ -495,7 +494,6 @@ int  graph_find_edge(Graph *g, int a, int b, int d);
 int  graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter);
 int  graph_learn(Graph *g, int32_t structural_match);
 int  graph_compute_topology(Graph *g, int z_depth);
-int  graph_zone_coherence(const Graph *g, const int *node_ids, int n_ids, int *n_alive);
 
 /* Engine lifecycle */
 int  child_tick_once(Graph *g);
@@ -547,7 +545,5 @@ void edge_set_negation_invert(Graph *g, int edge_id);
 
 /* Predict polarity from sense neighborhood (step 4b) */
 int engine_predict_polarity(Engine *eng, int node_id, const char *label);
-void engine_polarity_summary(const Engine *eng);
-void engine_polarity_reset(Engine *eng);
 
 #endif /* XYZT_ENGINE_H */
