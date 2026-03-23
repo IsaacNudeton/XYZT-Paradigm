@@ -1206,10 +1206,8 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
      *
      * Fallback: 3-tier hash of first 12 identity bytes.
      *   Fast but von Neumann at the front door. */
-#define USE_RETINA 1  /* Wave placement — no hash at the front door */
-#ifdef USE_RETINA
+    /* Retina placement: wave physics decides coordinates */
     if (data->len >= 8 && yee_is_initialized()) {
-        /* Extract raw bytes from identity BitStream */
         uint8_t raw[64];
         int raw_len = data->len / 8;
         if (raw_len > 64) raw_len = 64;
@@ -1219,7 +1217,6 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
                 if (i * 8 + b < data->len && bs_get(data, i * 8 + b))
                     raw[i] |= (1 << b);
         }
-        /* Clear fields, inject on retina, propagate, find peak */
         extern int yee_clear_fields(void);
         extern int yee_tick(void);
         extern int yee_apply_sponge(int, float);
@@ -1232,26 +1229,6 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
         g0->nodes[id0].coord = wire_retina_find_peak();
         g0->z_cache_n_nodes = -1;
     }
-#else
-    if (data->len >= 32) {
-        uint8_t b0[4] = {0}, b1[4] = {0}, b2[4] = {0};
-        for (int i = 0; i < 4; i++) {
-            for (int b = 0; b < 8; b++) {
-                if (i * 8 + b < data->len && bs_get(data, i * 8 + b))
-                    b0[i] |= (1 << b);
-                if ((i + 4) * 8 + b < data->len && bs_get(data, (i + 4) * 8 + b))
-                    b1[i] |= (1 << b);
-                if ((i + 8) * 8 + b < data->len && bs_get(data, (i + 8) * 8 + b))
-                    b2[i] |= (1 << b);
-            }
-        }
-        uint32_t sx = hash32(b0, 4) % 64;
-        uint32_t sy = hash32(b1, 4) % 64;
-        uint32_t sz = hash32(b2, 4) % 64;
-        g0->nodes[id0].coord = coord_pack(sx, sy, sz);
-        g0->z_cache_n_nodes = -1;
-    }
-#endif
 
     /* Auto-wire: top-K by mutual containment.
      * With retina placement, spatial filtering is unnecessary —
@@ -1869,26 +1846,16 @@ void engine_tick(Engine *eng) {
         uint8_t state_buf[1024];
         int pos = 0;
 
-        /* Multi-pass state observation with region tracking for windowed sense.
+        /* Multi-pass state observation.
          * All shells contribute — shell 2 (verifier) was invisible in single-pass
          * because shell 0 edges often filled the 400-byte budget alone. */
-        sense_region_t regions[SENSE_MAX_REGIONS];
-        int n_regions = 0;
 
         /* Pass 1: edge weights from ALL shells */
-        int pass1_start = pos;
         for (int s = 0; s < eng->n_shells; s++) {
             Graph *g = &eng->shells[s].g;
             for (int e = 0; e < g->n_edges && pos < 400; e++)
                 state_buf[pos++] = g->edges[e].weight;
         }
-        if (pos > pass1_start) {
-            regions[n_regions].offset = pass1_start;
-            regions[n_regions].length = pos - pass1_start;
-            regions[n_regions].pass_id = 1;
-            n_regions++;
-        }
-
         /* Pass 2: node state from ALL shells.
          * 4 bytes per node: valence, crystal_strength, val_sign, I_energy_sat. */
         int pass2_start = pos;
@@ -1909,13 +1876,6 @@ void engine_tick(Engine *eng) {
                 }
             }
         }
-        if (pos > pass2_start) {
-            regions[n_regions].offset = pass2_start;
-            regions[n_regions].length = pos - pass2_start;
-            regions[n_regions].pass_id = 2;
-            n_regions++;
-        }
-
         /* Precompute incoming edge count for shell 0 (used by coherence + profile) */
         Graph *g0_s10 = &eng->shells[0].g;
         int s10_n_in[MAX_NODES];
@@ -1956,22 +1916,8 @@ void engine_tick(Engine *eng) {
                 state_buf[pos++] = (uint8_t)((g->edges[e].weight >> 1) | (inv << 7));
             }
         }
-        if (pos > pass4_start) {
-            regions[n_regions].offset = pass4_start;
-            regions[n_regions].length = pos - pass4_start;
-            regions[n_regions].pass_id = 4;
-            n_regions++;
-        }
-
-        /* ONETWO still gets full buffer unchanged */
+        /* ONETWO gets full buffer */
         if (pos > 0) ot_sys_ingest(&eng->onetwo, state_buf, pos);
-
-        /* Windowed sense: per-region extraction + cross-wire + single decay */
-        if (n_regions > 0)
-            sense_pass_windowed(eng, state_buf, regions, n_regions, &eng->last_sense);
-
-        /* Snapshot for next cycle's observer comparison */
-        eng->prev_sense = eng->last_sense;
 
         /* Coherence: two signals, either can trigger incoherence.
          * 1. Val delta vs neighbors (original) — catches value disagreement.

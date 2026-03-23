@@ -57,7 +57,7 @@ void run_core_tests(void);
 void run_lifecycle_tests(void);
 void run_observer_tests(void);
 void run_stress_tests(void);
-void run_sense_tests(void);
+/* run_sense_tests removed — sense functions cut in cleanup */
 void run_collision_tests(void);
 void run_t3_stage1_tests(void);
 void run_t3_full_tests(void);
@@ -112,7 +112,7 @@ static void cmd_test(void) {
     run_lifecycle_tests();
     run_observer_tests();
     run_stress_tests();
-    run_sense_tests();
+    /* run_sense_tests removed — sense functions cut */
     run_collision_tests();
     run_t3_stage1_tests();
     run_t3_full_tests();
@@ -610,7 +610,6 @@ static void cmd_t3(int argc, char *argv[]) {
             yee_download_acc(yee_substrate, YEE_N);
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
-            sense_feedback(&eng, &eng.last_sense);
             yee_hebbian(0.01f, 0.005f);
             auto_persist(&eng);
         }
@@ -677,7 +676,6 @@ static void cmd_t3(int argc, char *argv[]) {
             yee_download_acc(yee_substrate, YEE_N);
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
-            sense_feedback(&eng, &eng.last_sense);
             yee_hebbian(0.01f, 0.005f);
             auto_persist(&eng);
         }

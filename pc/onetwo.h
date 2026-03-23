@@ -52,9 +52,6 @@
 /* Main encoding function: raw bytes -> 4096-bit structural rules */
 void onetwo_parse(const uint8_t *raw, size_t len, BitStream *out);
 
-/* Inverse: pattern bitstream -> estimated raw bytes (lossy) */
-void onetwo_generate(const BitStream *in, uint8_t *out_buf, size_t *out_len);
-
 /* Self-observation: feed bitstream bytes back through parse */
 void onetwo_self_observe(const BitStream *bs, BitStream *out);
 

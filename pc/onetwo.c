@@ -293,35 +293,6 @@ void onetwo_parse(const uint8_t *raw, size_t len, BitStream *out) {
     }
 }
 
-void onetwo_generate(const BitStream *in, uint8_t *out_buf, size_t *out_len) {
-    if (!in || in->len == 0) { *out_len = 0; return; }
-    int lclass = 0;
-    for (int i = 0; i < OT_MLEN_LEN && i < 64; i++)
-        if (bs_get(in, OT_MLEN_OFF + i)) lclass = i + 1;
-    int est_len = 1 << lclass;
-    if (est_len > 1024) est_len = 1024;
-    if (est_len < 1) est_len = 1;
-
-    int div_score = 0;
-    for (int i = 0; i < OT_MUNIQ_LEN && i < 64; i++)
-        if (bs_get(in, OT_MUNIQ_OFF + i)) div_score = i + 1;
-    int nu = div_score * 256 / 64;
-    if (nu < 1) nu = 1; if (nu > 256) nu = 256;
-
-    uint8_t pal[256];
-    for (int i = 0; i < nu; i++) pal[i] = (uint8_t)(i * 256 / nu);
-    for (int i = 0; i < est_len; i++) out_buf[i] = pal[i % nu];
-
-    int ds = 0;
-    for (int i = 0; i < OT_MDENS_LEN && i < 64; i++)
-        if (bs_get(in, OT_MDENS_OFF + i)) ds = i + 1;
-    if (ds < 32) {
-        uint8_t mask = (uint8_t)((1 << (ds * 8 / 64 + 1)) - 1);
-        for (int i = 0; i < est_len; i++) out_buf[i] &= mask;
-    }
-    *out_len = est_len;
-}
-
 void onetwo_self_observe(const BitStream *bs, BitStream *out) {
     int byte_len = (bs->len + 7) / 8;
     if (byte_len > 1024) byte_len = 1024;

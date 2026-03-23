@@ -50,21 +50,7 @@ static void test_onetwo_encode(void) {
     check("similar > different", 1, corr_similar > corr_different ? 1 : 0);
 }
 
-static void test_transducer(void) {
-    printf("--- Transducer ---\n");
-    Transducer t;
-    transducer_init(&t, XDUCE_RAW, NULL, 0);
-
-    uint8_t raw[] = {10, 200, 50, 180, 30, 220, 100, 150};
-    BitStream bs;
-    transducer_to_bits(&t, raw, 8, &bs);
-    check("transducer produces bits", 8, bs.len);
-    check("threshold calibrated", 1, t.threshold > 0 ? 1 : 0);
-    /* Values above threshold should be 1: 200, 180, 220, 150 */
-    /* Values below threshold (115): 10, 50, 30, 100 */
-    check("low value = 0", 0, bs_get(&bs, 0));   /* 10 */
-    check("high value = 1", 1, bs_get(&bs, 1));   /* 200 */
-}
+/* transducer_init/to_bits tests removed — functions cut in cleanup */
 
 static void test_wire_mapping(void) {
     printf("--- Wire Mapping ---\n");
@@ -103,7 +89,6 @@ void run_core_tests(void) {
 
     test_engine_basic();
     test_onetwo_encode();
-    test_transducer();
     test_wire_mapping();
 
     /* T4: Layer Zero invariant */
