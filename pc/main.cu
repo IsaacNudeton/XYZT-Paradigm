@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 extern "C" {
 #include "engine.h"
@@ -1693,6 +1695,122 @@ int main(int argc, char *argv[]) {
         engine_destroy(&eng);
     } else if (strcmp(argv[1], "inspect") == 0 && argc >= 3) {
         cmd_inspect(argv[2]);
+    } else if (strcmp(argv[1], "live") == 0) {
+        /* ══════════════════════════════════════════════════════════
+         * LIVE MODE — the engine perceives its own PC
+         *
+         * Keyboard bytes enter the retina raw. No line buffering.
+         * The engine ticks continuously. The sponge output prints
+         * to console as the engine's voice. The L-field carves
+         * waveguides from whatever flows through the boundaries.
+         *
+         * The PC IS the body. The keyboard IS the fingertip.
+         * The console IS the mouth.
+         * ══════════════════════════════════════════════════════════ */
+        Engine eng;
+        engine_init(&eng);
+        int gpu_ok = (yee_init() == 0);
+        if (!gpu_ok) { printf("Yee init failed\n"); engine_destroy(&eng); return 1; }
+
+        /* Load state if it exists */
+        if (engine_load(&eng, PERSIST_PATH) == 0)
+            printf("Loaded: %s\n", PERSIST_PATH);
+
+        uint8_t *yee_sub = (uint8_t *)calloc(YEE_N, 1);
+        StreamContext sctx;
+        io_init(&sctx);
+
+        printf("LIVE MODE — the engine perceives. Type anything.\n");
+        printf("Ctrl+Z to stop.\n\n");
+
+        uint64_t tick = 0;
+        LARGE_INTEGER freq, last_input, now;
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&last_input);
+
+        while (!io_eof(&sctx)) {
+            /* Read raw bytes from keyboard (non-blocking) */
+            char raw[64];
+            int n_raw = io_read_raw(&sctx, raw, 64);
+
+            if (n_raw > 0) {
+                /* Measure inter-input timing */
+                QueryPerformanceCounter(&now);
+                double gap_ms = (double)(now.QuadPart - last_input.QuadPart)
+                               * 1000.0 / (double)freq.QuadPart;
+                last_input = now;
+
+                /* Byte 63 of retina = timing (gap clamped to 0-255) */
+                uint8_t input[64];
+                memset(input, 128, 64);  /* neutral baseline */
+                for (int i = 0; i < n_raw && i < 63; i++)
+                    input[i] = (uint8_t)raw[i];
+                /* Timing byte: 0=instant, 255=long pause */
+                int gap_byte = (int)(gap_ms / 4.0);
+                if (gap_byte > 255) gap_byte = 255;
+                input[63] = (uint8_t)gap_byte;
+
+                /* Inject through retina */
+                wire_retina_inject(input, 64, 0.5f);
+
+                /* Ingest as a node too (graph layer observes) */
+                char name[16];
+                snprintf(name, sizeof(name), "k%llu", (unsigned long long)tick);
+                BitStream bs;
+                encode_bytes(&bs, (const uint8_t *)raw, n_raw);
+                engine_ingest(&eng, name, &bs);
+            }
+
+            /* Tick — always, even without input */
+            wire_engine_to_yee(&eng);
+            yee_tick_async();
+            yee_apply_sponge(4, 0.03f);  /* light tap */
+            engine_tick(&eng);
+            yee_sync();
+            tick++;
+
+            /* Hebbian every SUBSTRATE_INT ticks */
+            if (tick % 155 == 0) {
+                yee_download_acc(yee_sub, YEE_N);
+                wire_yee_retinas(&eng, yee_sub);
+                wire_yee_to_engine(&eng);
+                yee_hebbian(0.01f, 0.005f);
+                auto_persist(&eng);
+            }
+
+            /* Voice: read sponge output every 500 ticks */
+            if (tick % 500 == 0 && tick > 0) {
+                uint8_t voice[8];
+                wire_output_decode(voice, 8);
+                yee_clear_output();
+
+                /* Print the engine's voice as raw bytes → printable chars */
+                printf("[%6llu] voice: ", (unsigned long long)tick);
+                for (int i = 0; i < 8; i++) {
+                    char c = (voice[i] >= 32 && voice[i] < 127) ? (char)voice[i] : '.';
+                    printf("%c", c);
+                }
+                int n_crystal = 0;
+                for (int i = 0; i < eng.shells[0].g.n_nodes; i++)
+                    if (eng.shells[0].g.nodes[i].valence >= 200) n_crystal++;
+                printf(" | nodes=%d edges=%d crystal=%d\n",
+                       eng.shells[0].g.n_nodes, eng.shells[0].g.n_edges, n_crystal);
+            }
+
+            /* Don't burn CPU when no input */
+            if (n_raw == 0)
+                io_sleep_ms(1);
+        }
+
+        /* Save on exit */
+        engine_save(&eng, PERSIST_PATH);
+        printf("\nSaved: %s (%llu ticks)\n", PERSIST_PATH, (unsigned long long)tick);
+
+        free(yee_sub);
+        io_destroy(&sctx);
+        yee_destroy();
+        engine_destroy(&eng);
+
     } else if (strcmp(argv[1], "stream") == 0) {
         int binary = (argc >= 3 && strcmp(argv[2], "-b") == 0);
         cmd_stream(binary);
