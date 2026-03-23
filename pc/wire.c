@@ -43,29 +43,22 @@ int wire_retina_inject(const uint8_t *data, int len, float amplitude) {
     if (len == 0) return 0;
     int max_bytes = len < 64 ? len : 64;
 
-    /* Build sources on x=0 face: holographic Fourier injection */
+    /* Raw boundary injection: each byte becomes a voltage at a position
+     * on the x=0 face. No Fourier. No transform. No design choice.
+     * Bytes map to an 8x8 grid on the face. The L-field learns what
+     * spatial arrangement makes the input intelligible. */
     YeeSource sources[YEE_MAX_SOURCES];
     int n_src = 0;
 
-    for (int z = 0; z < YEE_GZ && n_src < YEE_MAX_SOURCES - 1; z += 2) {
-        for (int y = 0; y < YEE_GY && n_src < YEE_MAX_SOURCES - 1; y += 2) {
-            float val = 0;
-            for (int i = 0; i < max_bytes; i++) {
-                float freq_y = 6.2832f * (float)(i + 1) / (float)YEE_GY;
-                float freq_z = 6.2832f * (float)(i + 1) / (float)YEE_GZ;
-                float phase = (float)data[i] * 6.2832f / 256.0f;
-                float amp_i = ((float)data[i] - 128.0f) / 128.0f;
-                val += amp_i * sinf(freq_y * y + phase) *
-                               cosf(freq_z * z + phase * 0.7f);
-            }
-            val *= amplitude / (float)max_bytes;
-            if (fabsf(val) > 0.001f) {
-                sources[n_src].voxel_id = yee_voxel(0, y, z);
-                sources[n_src].amplitude = val;
-                sources[n_src].strength = 1.0f;
-                n_src++;
-            }
-        }
+    for (int i = 0; i < max_bytes && n_src < YEE_MAX_SOURCES; i++) {
+        float val = ((float)data[i] - 128.0f) / 128.0f * amplitude;
+        if (fabsf(val) < 0.001f) continue;
+        int y = (i % 8) * 8;  /* 8 columns, stride 8 across face */
+        int z = (i / 8) * 8;  /* 8 rows, stride 8 down face */
+        sources[n_src].voxel_id = yee_voxel(0, y, z);
+        sources[n_src].amplitude = val;
+        sources[n_src].strength = 1.0f;
+        n_src++;
     }
 
     if (n_src > 0)
@@ -269,7 +262,8 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
  * wire_output_read: downloads the raw absorption accumulator.
  * wire_output_decode: inverse Fourier — correlates boundary pattern
  *   against retina basis functions to recover bytes.
- *   Same transform, reversed. The engine speaks the language it hears.
+ *   Raw boundary response. No encoding. No normalization.
+ *   Whatever the sponge captured IS the voice.
  * ══════════════════════════════════════════════════════════════ */
 
 #define OUTPUT_SPONGE_WIDTH 4
@@ -290,49 +284,23 @@ int wire_output_decode(uint8_t *decoded, int max_bytes) {
         return -1;
     }
 
-    /* Scan ALL sponge boundary voxels. The absorption pattern across
-     * all 6 faces IS the engine's voice. Collect the boundary voxels
-     * with highest absorbed energy — those are the loudest voice. */
-    float boundary[YEE_GX * 6];  /* linearized boundary samples */
-    int n_boundary = 0;
-    float b_max = 0;
-
-    /* Scan every voxel in sponge region, take the ones with energy */
-    for (int z = 0; z < YEE_GZ && n_boundary < YEE_GX * 6; z += 2)
-        for (int y = 0; y < YEE_GY && n_boundary < YEE_GX * 6; y += 2)
-            for (int x = 0; x < YEE_GX && n_boundary < YEE_GX * 6; x += 2) {
-                int dx = x < YEE_GX - 1 - x ? x : YEE_GX - 1 - x;
-                int dy = y < YEE_GY - 1 - y ? y : YEE_GY - 1 - y;
-                int dz = z < YEE_GZ - 1 - z ? z : YEE_GZ - 1 - z;
-                int d = dx < dy ? dx : dy;
-                if (dz < d) d = dz;
-                if (d >= OUTPUT_SPONGE_WIDTH) continue;
-
-                int vid = x + y * YEE_GX + z * YEE_GX * YEE_GY;
-                float val = output[vid];
-                if (val > 0) {
-                    boundary[n_boundary++] = val;
-                    if (val > b_max) b_max = val;
-                }
-            }
+    /* Raw boundary read: same 8x8 grid as retina input but on x=63 face.
+     * The output mirrors the input geometry. Byte i reads from the same
+     * (y,z) position it was injected at. The L-field transforms between. */
+    for (int i = 0; i < max_bytes; i++) {
+        int y = (i % 8) * 8;
+        int z = (i / 8) * 8;
+        /* Sum across the far sponge region (x=60-63) at this position */
+        float sum = 0;
+        for (int x = YEE_GX - OUTPUT_SPONGE_WIDTH; x < YEE_GX; x++)
+            sum += output[x + y * YEE_GX + z * YEE_GX * YEE_GY];
+        /* Clamp to byte range — no normalization, no max scaling.
+         * The raw absorption value IS the output. */
+        int val = (int)(sum * 256.0f);
+        if (val > 255) val = 255;
+        if (val < 0) val = 0;
+        decoded[i] = (uint8_t)val;
+    }
     free(output);
-
-    if (n_boundary == 0 || b_max < 1e-10f) {
-        memset(decoded, 0, max_bytes);
-        return max_bytes;
-    }
-
-    /* Normalize boundary energy to bytes.
-     * The spatial pattern IS the output. */
-    int n_out = max_bytes < n_boundary ? max_bytes : n_boundary;
-    for (int i = 0; i < n_out; i++) {
-        int bi = (i * n_boundary) / n_out;
-        float norm = boundary[bi] / b_max;
-        decoded[i] = (uint8_t)(norm * 255.0f);
-    }
-    /* Zero-fill remainder if boundary has fewer samples than requested */
-    for (int i = n_out; i < max_bytes; i++)
-        decoded[i] = 0;
-
     return max_bytes;
 }

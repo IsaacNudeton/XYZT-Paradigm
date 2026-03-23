@@ -149,18 +149,13 @@ void yee_cpu_clear_output(YeeGrid *g) {
 
 void yee_cpu_retina_inject(YeeGrid *g, const uint8_t *data, int len, float amp) {
     int max_bytes = len < 64 ? len : 64;
-    for (int z = 0; z < YEE_GZ; z += 2)
-        for (int y = 0; y < YEE_GY; y += 2) {
-            float val = 0;
-            for (int i = 0; i < max_bytes; i++) {
-                float freq = 6.2832f * (float)(i + 1) / (float)YEE_GY;
-                float phase = (float)data[i] * 6.2832f / 256.0f;
-                float amp_i = ((float)data[i] - 128.0f) / 128.0f;
-                val += amp_i * sinf(freq * y + phase) *
-                               cosf(freq * z + phase * 0.7f);
-            }
-            val *= amp / (float)max_bytes;
-            if (fabsf(val) > 0.001f)
-                g->V[yee_idx(0, y, z)] += val;
-        }
+    /* Raw boundary injection: each byte becomes a voltage at a position
+     * on the x=0 face. No Fourier. No transform. */
+    for (int i = 0; i < max_bytes; i++) {
+        float val = ((float)data[i] - 128.0f) / 128.0f * amp;
+        if (fabsf(val) < 0.001f) continue;
+        int y = (i % 8) * 8;
+        int z = (i / 8) * 8;
+        g->V[yee_idx(0, y, z)] += val;
+    }
 }
