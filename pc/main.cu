@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 extern "C" {
 #include "engine.h"
@@ -73,6 +74,34 @@ void run_self_observe_test(void);
 void run_predict_test(void);
 void run_generalize_test(void);
 void run_output_test(void);
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * AUTO-PERSIST — the mesh writes itself to disk
+ *
+ * Called at Hebbian boundaries. If 30+ seconds since last save,
+ * writes state.xyzt. The disk representation and VRAM are the
+ * same state at different speeds. The mesh doesn't "get saved."
+ * It exists on disk and VRAM simultaneously.
+ * ══════════════════════════════════════════════════════════════ */
+
+#define PERSIST_INTERVAL_SEC 30
+#define PERSIST_PATH "state.xyzt"
+
+static clock_t persist_last = 0;
+static int persist_count = 0;
+
+static void auto_persist(const Engine *eng) {
+    clock_t now = clock();
+    if (persist_last == 0) { persist_last = now; return; }
+
+    double elapsed = (double)(now - persist_last) / CLOCKS_PER_SEC;
+    if (elapsed < PERSIST_INTERVAL_SEC) return;
+
+    if (engine_save(eng, PERSIST_PATH) == 0) {
+        persist_count++;
+        persist_last = now;
+    }
 }
 
 static void cmd_test(void) {
@@ -570,6 +599,7 @@ static void cmd_t3(int argc, char *argv[]) {
         if (gpu_ok) {
             wire_engine_to_yee(&eng);
             yee_tick_async();     /* launch GPU, don't wait */
+            yee_apply_sponge(4, 0.03f);  /* light tap — stable torus */
         }
         engine_tick(&eng);        /* CPU works while GPU runs */
         if (gpu_ok) yee_sync();   /* wait for GPU before next inject */
@@ -580,6 +610,7 @@ static void cmd_t3(int argc, char *argv[]) {
             wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
             yee_hebbian(0.01f, 0.005f);
+            auto_persist(&eng);
         }
 
         /* Check spawn progress */
@@ -635,6 +666,7 @@ static void cmd_t3(int argc, char *argv[]) {
         if (gpu_ok) {
             wire_engine_to_yee(&eng);
             yee_tick_async();
+            yee_apply_sponge(4, 0.03f);  /* light tap — stable torus */
         }
         engine_tick(&eng);
         if (gpu_ok) yee_sync();
@@ -645,6 +677,7 @@ static void cmd_t3(int argc, char *argv[]) {
             wire_yee_to_engine(&eng);
             sense_feedback(&eng, &eng.last_sense);
             yee_hebbian(0.01f, 0.005f);
+            auto_persist(&eng);
         }
 
         if (eng.n_children > spawned) {
@@ -765,6 +798,11 @@ static void cmd_t3(int argc, char *argv[]) {
     /* Full engine report (no CubeState in Yee path) */
     report_full(&eng);
 
+    /* Persist on exit — the mesh survives */
+    engine_save(&eng, PERSIST_PATH);
+    printf("  auto-persist: %s (%d saves this session)\n",
+           PERSIST_PATH, persist_count + 1);
+
     free(yee_substrate);
     if (gpu_ok) yee_destroy();
     engine_destroy(&eng);
@@ -842,6 +880,7 @@ static void cmd_run(void) {
                 if (gpu_ok) {
                     wire_engine_to_yee(&eng);
                     yee_tick_async();
+                    yee_apply_sponge(4, 0.03f);  /* light tap — stable torus */
                 }
                 engine_tick(&eng);
                 if (gpu_ok) yee_sync();
@@ -851,6 +890,7 @@ static void cmd_run(void) {
                     wire_yee_retinas(&eng, yee_substrate);
                     wire_yee_to_engine(&eng);
                     yee_hebbian(0.01f, 0.005f);
+                    auto_persist(&eng);
                 }
             }
 
@@ -1236,6 +1276,7 @@ static void cmd_stream(int binary_mode) {
         for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
             wire_engine_to_yee(&eng);
             yee_tick_async();
+            yee_apply_sponge(4, 0.03f);  /* light tap — stable torus */
             engine_tick(&eng);
             yee_sync();
         }
@@ -1246,6 +1287,7 @@ static void cmd_stream(int binary_mode) {
             wire_yee_retinas(&eng, drain_sub);
             wire_yee_to_engine(&eng);
             yee_hebbian(0.01f, 0.005f);
+            auto_persist(&eng);
             free(drain_sub);
         }
         /* Report strongest node each cycle */
@@ -1300,7 +1342,10 @@ static void cmd_stream(int binary_mode) {
     printf("  nodes: %d  edges: %d  children: %d\n",
            g0->n_nodes, g0->n_edges, eng.n_children);
 
-    /* Save if anything was ingested */
+    /* Always persist on exit — the mesh survives */
+    engine_save(&eng, PERSIST_PATH);
+    printf("  auto-persist: %s (%d saves this session)\n",
+           PERSIST_PATH, persist_count + 1);
     if (obs_count > 0) {
         engine_save(&eng, "stream_output.xyzt");
         printf("  saved: stream_output.xyzt\n");
