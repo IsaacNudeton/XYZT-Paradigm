@@ -962,20 +962,82 @@ static void cmd_ingest(const char *path) {
     Engine eng;
     engine_init(&eng);
 
-    int id = engine_ingest_file(&eng, path);
-    if (id < 0) {
-        printf("Error: could not ingest '%s'\n", path);
+    int gpu_ok = (yee_init() == 0);
+    if (!gpu_ok) printf("  WARNING: Yee init failed — no wave physics\n");
+
+    uint8_t *yee_substrate = gpu_ok ? (uint8_t *)calloc(YEE_N, 1) : NULL;
+
+    /* Read file line by line — each line becomes a node */
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("Error: could not open '%s'\n", path);
+        if (gpu_ok) { free(yee_substrate); yee_destroy(); }
         engine_destroy(&eng);
         return;
     }
-    printf("Ingested -> node %d\n", id);
 
-    /* Run ticks to let the engine process */
-    printf("Running 500 ticks...\n");
-    for (int i = 0; i < 500; i++) engine_tick(&eng);
+    char line[4096];
+    int n_lines = 0;
+    int n_ingested = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        n_lines++;
+        int len = (int)strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) len--;
+        if (len < 4) continue;  /* skip blank/tiny lines */
+
+        /* Name: file_lineN */
+        char name[64];
+        snprintf(name, sizeof(name), "L%d", n_lines);
+
+        BitStream bs;
+        encode_bytes(&bs, (const uint8_t *)line, len);
+        int id = engine_ingest(&eng, name, &bs);
+        if (id >= 0) n_ingested++;
+
+        /* Tick the engine after each line */
+        if (gpu_ok) {
+            wire_engine_to_yee(&eng);
+            yee_tick_async();
+            yee_apply_sponge(4, 0.03f);
+            engine_tick(&eng);
+            yee_sync();
+        } else {
+            engine_tick(&eng);
+        }
+
+        /* Hebbian every 20 lines */
+        if (gpu_ok && n_ingested > 0 && n_ingested % 20 == 0) {
+            yee_download_acc(yee_substrate, YEE_N);
+            wire_yee_retinas(&eng, yee_substrate);
+            wire_yee_to_engine(&eng);
+            yee_hebbian(0.01f, 0.005f);
+        }
+
+        if (n_ingested % 100 == 0 && n_ingested > 0)
+            printf("  %d lines ingested, %d nodes\n",
+                   n_lines, eng.shells[0].g.n_nodes);
+    }
+    fclose(f);
+
+    /* Final Hebbian pass */
+    if (gpu_ok && n_ingested > 0) {
+        yee_download_acc(yee_substrate, YEE_N);
+        wire_yee_retinas(&eng, yee_substrate);
+        wire_yee_to_engine(&eng);
+        yee_hebbian(0.01f, 0.005f);
+    }
+
+    printf("\n  Ingested %d lines (%d nodes, %d edges)\n",
+           n_lines, eng.shells[0].g.n_nodes, eng.shells[0].g.n_edges);
 
     report_full(&eng);
 
+    /* Save state */
+    engine_save(&eng, PERSIST_PATH);
+    printf("  Saved: %s\n", PERSIST_PATH);
+
+    if (gpu_ok) { free(yee_substrate); yee_destroy(); }
     engine_destroy(&eng);
 }
 
