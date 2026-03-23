@@ -5,8 +5,8 @@
  * It's a voltage spike propagating through a carved impedance field.
  *
  * 1. LOAD: L-field is already in GPU memory (loaded from .xyzt)
- * 2. EXCITE: Convert query to raw bytes, hash to 3D coordinates,
- *    inject voltage spike at those coordinates
+ * 2. EXCITE: Inject query through retina (holographic Fourier on x=0).
+ *    Same front door as engine_ingest. No hash.
  * 3. RING: Run yee_tick() for N heartbeats. Waves propagate through
  *    low-L corridors, reflect off high-L walls, interfere at junctions.
  * 4. READ: Download accumulator, find which nodes have highest energy.
@@ -32,6 +32,9 @@ extern int yee_download_acc_raw(float *h_acc, int n);
 extern int yee_clear_fields(void);
 extern int yee_apply_sponge(int width, float rate);
 
+/* Retina — same front door as engine_ingest */
+extern int wire_retina_inject(const uint8_t *data, int len, float amplitude);
+
 #define YEE_GX 64
 #define YEE_GY 64
 #define YEE_GZ 64
@@ -54,49 +57,10 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
     /* ── Step 1: Clear dynamic fields (V, I, acc) but keep L-field ── */
     yee_clear_fields();
 
-    /* ── Step 2: EXCITE — inject query as voltage spike ──
-     * 3-tier semantic coords: X=type(bytes 0-3), Y=sub-type(4-7), Z=instance(8-11).
-     * Same hash as engine_ingest. Query lands where same-type nodes live. */
-    BitStream qbs;
-    bs_init(&qbs);
-    {
-        int max = BS_MAXBITS / 8;
-        int elen = len < max ? len : max;
-        for (int i = 0; i < elen; i++)
-            for (int b = 0; b < 8; b++)
-                bs_push(&qbs, (data[i] >> b) & 1);
-    }
-    uint8_t b0[4] = {0}, b1[4] = {0}, b2[4] = {0};
-    for (int i = 0; i < 4; i++) {
-        for (int b = 0; b < 8; b++) {
-            if (i * 8 + b < qbs.len && bs_get(&qbs, i * 8 + b))
-                b0[i] |= (1 << b);
-            if ((i + 4) * 8 + b < qbs.len && bs_get(&qbs, (i + 4) * 8 + b))
-                b1[i] |= (1 << b);
-            if ((i + 8) * 8 + b < qbs.len && bs_get(&qbs, (i + 8) * 8 + b))
-                b2[i] |= (1 << b);
-        }
-    }
-    uint32_t hx = hash32(b0, 4);
-    uint32_t hy = hash32(b1, 4);
-    uint32_t hz = hash32(b2, 4);
-    int qx = hx % YEE_GX;
-    int qy = hy % YEE_GY;
-    int qz = hz % YEE_GZ;
-
-    YeeSource src;
-    src.voxel_id = yee_vid(qx, qy, qz);
-    src.amplitude = 1.0f;   /* full-strength pulse */
-    src.strength = 1.0f;
-
-    /* ── Step 3: RING — propagate with absorbing boundaries ──
-     * Sponge layer (8 cells deep, 0.3 damping rate) absorbs outgoing waves.
-     * Without it, the grid is a torus — energy fills uniformly.
-     * With it, only energy trapped in carved waveguides persists.
-     *
-     * Drive the query for 15 ticks (short pulse), then let it ring.
-     * Read the EARLY accumulator (tick 25) for sharp spatial locality,
-     * then continue to full ring for resonant cavity detection. */
+    /* ── Step 2: EXCITE — inject query through retina ──
+     * Same front door as engine_ingest. Query enters as holographic
+     * Fourier pattern on x=0 face. The wave propagation through the
+     * carved L-field does the matching. No hash. */
     #define SPONGE_WIDTH  4
     #define SPONGE_RATE   0.15f
     #define DRIVE_TICKS   30
@@ -104,9 +68,15 @@ static int infer_forward(Engine *eng, const uint8_t *data, int len,
 
     float *h_acc_early = (float *)malloc(YEE_TOTAL * sizeof(float));
 
+    /* ── Step 3: RING — propagate with sponge ──
+     * Sponge absorbs non-resonant energy. Only waves trapped in
+     * carved waveguides persist. The torus wraps what the sponge
+     * doesn't catch — but heavy sponge (0.15) during inference
+     * makes the torus nearly opaque. Hypotheses that don't
+     * resonate in the L-field die at the boundary. */
     for (int t = 0; t < INFER_RING_TICKS; t++) {
         if (t < DRIVE_TICKS)
-            yee_inject(&src, 1);
+            wire_retina_inject(data, len, 1.0f);
         yee_tick();
         yee_apply_sponge(SPONGE_WIDTH, SPONGE_RATE);
 
