@@ -24,6 +24,7 @@
 #include <time.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <conio.h>
 
 extern "C" {
 #include "engine.h"
@@ -1721,17 +1722,23 @@ int main(int argc, char *argv[]) {
         io_init(&sctx);
 
         printf("LIVE MODE — the engine perceives. Type anything.\n");
-        printf("Ctrl+Z to stop.\n\n");
+        printf("ESC to stop.\n\n");
 
         uint64_t tick = 0;
         LARGE_INTEGER freq, last_input, now;
         QueryPerformanceFrequency(&freq);
         QueryPerformanceCounter(&last_input);
+        int running = 1;
 
-        while (!io_eof(&sctx)) {
-            /* Read raw bytes from keyboard (non-blocking) */
+        while (running) {
+            /* Read raw bytes from keyboard — unbuffered, no Enter needed */
             char raw[64];
-            int n_raw = io_read_raw(&sctx, raw, 64);
+            int n_raw = 0;
+            while (_kbhit() && n_raw < 63) {
+                int ch = _getch();
+                if (ch == 27) { running = 0; break; }  /* ESC = stop */
+                raw[n_raw++] = (char)ch;
+            }
 
             if (n_raw > 0) {
                 /* Measure inter-input timing */
