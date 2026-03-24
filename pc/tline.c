@@ -29,8 +29,8 @@ void tline_init(TLine *tl, int n_cells, double z0) {
     if (n_cells < 4) n_cells = 4;
     if (n_cells > TLINE_MAX_CELLS) n_cells = TLINE_MAX_CELLS;
     tl->n_cells = n_cells;
-    tl->C0 = 1.0;
-    tl->L_base = z0 * z0 * tl->C0;
+    tl->driven = 0;
+    tl->L_base = z0 * z0;  /* C0 was always 1.0 */
     tl->R = 0.15;
     tl->G = 0.02;
     for (int i = 0; i < TLINE_MAX_CELLS; i++)
@@ -42,9 +42,7 @@ void tline_inject(TLine *tl, double val) {
      * Not additive — cell 0 IS the boundary condition. */
     tl->V[0] = val;
     
-    /* Mark as actively driven this tick.
-     * Repurpose unused C0 capacitance field as 'driven' state flag. */
-    tl->C0 = 1.0;
+    tl->driven = 1;
 }
 
 double tline_read(const TLine *tl) {
@@ -68,9 +66,9 @@ void tline_step(TLine *tl) {
     /* 2. Source Boundary Condition (Cell 0)
      * If actively driven this tick, it acts as an ideal voltage source.
      * If left floating (undriven), it dissipates its remaining energy. */
-    if (tl->C0 > 0.5) {
+    if (tl->driven) {
         /* Hold intended voltage, clear flag for next tick */
-        tl->C0 = 0.0;
+        tl->driven = 0;
     } else {
         /* Undriven boundary leak (self-attenuation) */
         double atten = 1.0 - (tl->R + tl->G * tl->Lc[0]);

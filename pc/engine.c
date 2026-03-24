@@ -469,27 +469,46 @@ int graph_find_edge(Graph *g, int a, int b, int d) {
 /* Conservation: enforce MAX_NODE_WEIGHT budget on all edges touching node_id.
  * If total weight exceeds budget, scale all touching edges proportionally.
  * New edges steal energy from old edges — scarcity drives competition. */
-static void node_enforce_conservation(Graph *g, int node_id) {
-    int total = 0;
-    for (int i = 0; i < g->n_edges; i++) {
-        Edge *ed = &g->edges[i];
-        if (ed->weight == 0) continue;
-        if ((int)ed->src_a == node_id || (int)ed->src_b == node_id ||
-            (int)ed->dst == node_id)
-            total += ed->weight;
-    }
-    if (total <= (int)MAX_NODE_WEIGHT) return;
+/* Enforce conservation on up to 3 nodes in ONE pass over edges.
+ * O(E) once, not O(E) × 3. */
+static void enforce_conservation_multi(Graph *g, int n0, int n1, int n2) {
+    int total[3] = {0, 0, 0};
+    int ids[3] = {n0, n1, n2};
+    int n_ids = 1;
+    if (n1 != n0) n_ids = 2;
+    if (n2 != n0 && n2 != n1) n_ids = 3;
 
-    /* Scale all touching edges down proportionally */
+    /* Pass 1: sum weights touching each node */
     for (int i = 0; i < g->n_edges; i++) {
         Edge *ed = &g->edges[i];
         if (ed->weight == 0) continue;
-        if ((int)ed->src_a == node_id || (int)ed->src_b == node_id ||
-            (int)ed->dst == node_id) {
-            int scaled = (int)ed->weight * (int)MAX_NODE_WEIGHT / total;
-            uint8_t new_w = (uint8_t)(scaled < 1 ? 1 : scaled);
-            tline_init_from_weight(&ed->tl, new_w);
-            ed->weight = tline_weight(&ed->tl);
+        for (int k = 0; k < n_ids; k++) {
+            if ((int)ed->src_a == ids[k] || (int)ed->src_b == ids[k] ||
+                (int)ed->dst == ids[k])
+                total[k] += ed->weight;
+        }
+    }
+
+    /* Check if any node exceeds budget */
+    int any_over = 0;
+    for (int k = 0; k < n_ids; k++)
+        if (total[k] > (int)MAX_NODE_WEIGHT) any_over = 1;
+    if (!any_over) return;
+
+    /* Pass 2: scale down edges touching over-budget nodes */
+    for (int i = 0; i < g->n_edges; i++) {
+        Edge *ed = &g->edges[i];
+        if (ed->weight == 0) continue;
+        for (int k = 0; k < n_ids; k++) {
+            if (total[k] <= (int)MAX_NODE_WEIGHT) continue;
+            if ((int)ed->src_a == ids[k] || (int)ed->src_b == ids[k] ||
+                (int)ed->dst == ids[k]) {
+                int scaled = (int)ed->weight * (int)MAX_NODE_WEIGHT / total[k];
+                uint8_t new_w = (uint8_t)(scaled < 1 ? 1 : scaled);
+                tline_init_from_weight(&ed->tl, new_w);
+                ed->weight = tline_weight(&ed->tl);
+                break;  /* edge processed, don't double-scale */
+            }
         }
     }
 }
@@ -511,10 +530,8 @@ int graph_wire(Graph *g, int a, int b, int d, uint8_t w, int inter) {
     }
     e->weight = tline_weight(&e->tl);
 
-    /* Enforce energy conservation on all participating nodes */
-    node_enforce_conservation(g, a);
-    if (b != a) node_enforce_conservation(g, b);
-    if (d != a && d != b) node_enforce_conservation(g, d);
+    /* Enforce energy conservation — single O(E) pass for all 3 nodes */
+    enforce_conservation_multi(g, a, b, d);
 
     return id;
 }
@@ -1614,10 +1631,9 @@ void engine_tick(Engine *eng) {
                     if (n->valence < 255 && !n->contradicted) {
                         n->valence++;
                         /* Source-side valence: reward upstream nodes that fed this collision.
-                         * Feed-forward edges (i,i,j) make j the collision site but i the emitter.
-                         * Without this, emitters never crystallize — cut off from collision valence. */
-                        for (int e_back = 0; e_back < g->n_edges; e_back++) {
-                            Edge *ed = &g->edges[e_back];
+                         * Uses z-bucket edge cache — O(E_zl) not O(E_total). */
+                        for (int jj = g->z_edge_off[zl]; jj < g->z_edge_off[zl + 1]; jj++) {
+                            Edge *ed = &g->edges[g->z_edge_idx[jj]];
                             if (ed->dst == (uint16_t)i && ed->weight > 0) {
                                 Node *src = &g->nodes[ed->src_a];
                                 if (src->alive && !src->contradicted && src->valence < 253) {

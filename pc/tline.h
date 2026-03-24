@@ -27,7 +27,7 @@ typedef struct {
     double Lc[TLINE_MAX_CELLS];   /* per-cell inductance (controls loss) */
     int    n_cells;                /* active cells (4-32) */
     double L_base;                 /* base inductance */
-    double C0;                     /* capacitance per cell (unused by shift-reg, kept for compat) */
+    int    driven;                 /* 1 = source injected this tick, 0 = floating */
     double R;                      /* base loss per cell */
     double G;                      /* Lc-dependent loss per cell */
 } TLine;
