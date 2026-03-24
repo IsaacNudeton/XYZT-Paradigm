@@ -2613,8 +2613,143 @@ void tlg_backreaction(TLineGraph *g, double kappa) {
 }
 
 /* ══════════════════════════════════════════════════════════════
- * SAVE / LOAD (binary format, v9-v13)
+ * SAVE / LOAD — portable field-by-field format (v14)
+ *
+ * No sizeof(Node) dumps. Every field written explicitly.
+ * Reads on any architecture (x86, ARM, RISC-V) that uses
+ * IEEE 754 floats and little-endian integers.
+ *
+ * Transient fields (accum, n_incoming, I_energy, coherent,
+ * TLine V[]) are skipped — they reset on load. The topology
+ * and impedance structure persist. The signals re-establish
+ * in a few ticks.
  * ══════════════════════════════════════════════════════════════ */
+
+static void save_node(FILE *f, const Node *n) {
+    /* BitStream identity */
+    fwrite(n->identity.w, sizeof(uint64_t), BS_WORDS, f);
+    int32_t bslen = n->identity.len;
+    fwrite(&bslen, 4, 1, f);
+    /* Name */
+    fwrite(n->name, 1, NAME_LEN, f);
+    /* Temporal */
+    fwrite(&n->created, 4, 1, f);
+    fwrite(&n->last_active, 4, 1, f);
+    fwrite(&n->hit_count, 4, 1, f);
+    /* State bytes */
+    fwrite(&n->shell_id, 1, 1, f);
+    fwrite(&n->layer_zero, 1, 1, f);
+    fwrite(&n->alive, 1, 1, f);
+    fwrite(&n->valence, 1, 1, f);
+    /* Position + impedance */
+    fwrite(&n->coord, 4, 1, f);
+    fwrite(&n->Z, 8, 1, f);
+    /* Crystal */
+    fwrite(n->crystal_hist, 1, 8, f);
+    fwrite(&n->crystal_n, 1, 1, f);
+    /* Values */
+    fwrite(&n->val, 4, 1, f);
+    fwrite(&n->prev_val, 4, 1, f);
+    fwrite(&n->prev_edge_sum, 4, 1, f);
+    /* Flags */
+    fwrite(&n->child_id, 1, 1, f);
+    fwrite(&n->has_negation, 1, 1, f);
+    fwrite(&n->contradicted, 1, 1, f);
+    fwrite(&n->plasticity, 4, 1, f);
+    int8_t coh = n->coherent;
+    fwrite(&coh, 1, 1, f);
+    /* Transient fields (accum, n_incoming, I_energy) NOT saved */
+}
+
+static int load_node(FILE *f, Node *n) {
+    memset(n, 0, sizeof(Node));
+    if (fread(n->identity.w, sizeof(uint64_t), BS_WORDS, f) != BS_WORDS) return -1;
+    int32_t bslen;
+    if (fread(&bslen, 4, 1, f) != 1) return -1;
+    n->identity.len = bslen;
+    if (fread(n->name, 1, NAME_LEN, f) != NAME_LEN) return -1;
+    if (fread(&n->created, 4, 1, f) != 1) return -1;
+    if (fread(&n->last_active, 4, 1, f) != 1) return -1;
+    if (fread(&n->hit_count, 4, 1, f) != 1) return -1;
+    if (fread(&n->shell_id, 1, 1, f) != 1) return -1;
+    if (fread(&n->layer_zero, 1, 1, f) != 1) return -1;
+    if (fread(&n->alive, 1, 1, f) != 1) return -1;
+    if (fread(&n->valence, 1, 1, f) != 1) return -1;
+    if (fread(&n->coord, 4, 1, f) != 1) return -1;
+    if (fread(&n->Z, 8, 1, f) != 1) return -1;
+    if (fread(n->crystal_hist, 1, 8, f) != 8) return -1;
+    if (fread(&n->crystal_n, 1, 1, f) != 1) return -1;
+    if (fread(&n->val, 4, 1, f) != 1) return -1;
+    if (fread(&n->prev_val, 4, 1, f) != 1) return -1;
+    if (fread(&n->prev_edge_sum, 4, 1, f) != 1) return -1;
+    if (fread(&n->child_id, 1, 1, f) != 1) return -1;
+    if (fread(&n->has_negation, 1, 1, f) != 1) return -1;
+    if (fread(&n->contradicted, 1, 1, f) != 1) return -1;
+    if (fread(&n->plasticity, 4, 1, f) != 1) return -1;
+    int8_t coh;
+    if (fread(&coh, 1, 1, f) != 1) return -1;
+    n->coherent = coh;
+    /* Transient defaults */
+    n->accum = 0; n->n_incoming = 0;
+    n->I_energy = 0;
+    return 0;
+}
+
+static void save_tline(FILE *f, const TLine *tl) {
+    int32_t nc = tl->n_cells;
+    fwrite(&nc, 4, 1, f);
+    fwrite(&tl->L_base, 8, 1, f);
+    fwrite(&tl->R, 8, 1, f);
+    fwrite(&tl->G, 8, 1, f);
+    /* Lc[] = impedance structure (essential) */
+    fwrite(tl->Lc, sizeof(double), TLINE_MAX_CELLS, f);
+    /* V[] skipped — transient signal, resets to zero on load */
+}
+
+static int load_tline(FILE *f, TLine *tl) {
+    memset(tl, 0, sizeof(TLine));
+    int32_t nc;
+    if (fread(&nc, 4, 1, f) != 1) return -1;
+    tl->n_cells = nc;
+    if (fread(&tl->L_base, 8, 1, f) != 1) return -1;
+    if (fread(&tl->R, 8, 1, f) != 1) return -1;
+    if (fread(&tl->G, 8, 1, f) != 1) return -1;
+    if (fread(tl->Lc, sizeof(double), TLINE_MAX_CELLS, f) != TLINE_MAX_CELLS) return -1;
+    /* V[] stays zero — signals re-establish in a few ticks */
+    tl->driven = 0;
+    return 0;
+}
+
+static void save_edge(FILE *f, const Edge *e) {
+    fwrite(&e->src_a, 2, 1, f);
+    fwrite(&e->src_b, 2, 1, f);
+    fwrite(&e->dst, 2, 1, f);
+    fwrite(&e->weight, 1, 1, f);
+    fwrite(&e->learn_rate, 1, 1, f);
+    fwrite(&e->intershell, 1, 1, f);
+    fwrite(&e->created, 4, 1, f);
+    fwrite(&e->last_active, 4, 1, f);
+    fwrite(&e->invert_a, 1, 1, f);
+    fwrite(&e->invert_b, 1, 1, f);
+    fwrite(&e->correlation, 4, 1, f);
+    save_tline(f, &e->tl);
+}
+
+static int load_edge(FILE *f, Edge *e) {
+    memset(e, 0, sizeof(Edge));
+    if (fread(&e->src_a, 2, 1, f) != 1) return -1;
+    if (fread(&e->src_b, 2, 1, f) != 1) return -1;
+    if (fread(&e->dst, 2, 1, f) != 1) return -1;
+    if (fread(&e->weight, 1, 1, f) != 1) return -1;
+    if (fread(&e->learn_rate, 1, 1, f) != 1) return -1;
+    if (fread(&e->intershell, 1, 1, f) != 1) return -1;
+    if (fread(&e->created, 4, 1, f) != 1) return -1;
+    if (fread(&e->last_active, 4, 1, f) != 1) return -1;
+    if (fread(&e->invert_a, 1, 1, f) != 1) return -1;
+    if (fread(&e->invert_b, 1, 1, f) != 1) return -1;
+    if (fread(&e->correlation, 4, 1, f) != 1) return -1;
+    return load_tline(f, &e->tl);
+}
 
 static void save_graph(FILE *f, const Graph *g) {
     fwrite(&g->n_nodes, 4, 1, f);
@@ -2633,9 +2768,9 @@ static void save_graph(FILE *f, const Graph *g) {
     };
     fwrite(params, sizeof(params), 1, f);
     for (int i = 0; i < g->n_nodes; i++)
-        fwrite(&g->nodes[i], sizeof(Node), 1, f);
+        save_node(f, &g->nodes[i]);
     for (int i = 0; i < g->n_edges; i++)
-        fwrite(&g->edges[i], sizeof(Edge), 1, f);
+        save_edge(f, &g->edges[i]);
 }
 
 static int load_graph(FILE *f, Graph *g, int ver) {
@@ -2674,9 +2809,17 @@ static int load_graph(FILE *f, Graph *g, int ver) {
         g->error_accum = 0; g->prev_output = 0;
         g->local_heartbeat = 0; g->drive = 0;
     }
-    if (ver >= 13) {
+    if (ver >= 14) {
+        /* v14: portable field-by-field format */
+        for (int i = 0; i < g->n_nodes; i++)
+            if (load_node(f, &g->nodes[i]) != 0) return -1;
+        for (int i = 0; i < g->n_edges; i++)
+            if (load_edge(f, &g->edges[i]) != 0) return -1;
+    } else if (ver >= 13) {
         for (int i = 0; i < g->n_nodes; i++)
             if (fread(&g->nodes[i], sizeof(Node), 1, f) != 1) return -1;
+        for (int i = 0; i < g->n_edges; i++)
+            if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) return -1;
     } else {
         /* v12: Node without plasticity (4 bytes smaller) */
         size_t old_sz = sizeof(Node) - sizeof(float);
@@ -2685,9 +2828,9 @@ static int load_graph(FILE *f, Graph *g, int ver) {
             if (fread(&g->nodes[i], old_sz, 1, f) != 1) return -1;
             g->nodes[i].plasticity = PLASTICITY_DEFAULT;
         }
+        for (int i = 0; i < g->n_edges; i++)
+            if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) return -1;
     }
-    for (int i = 0; i < g->n_edges; i++)
-        if (fread(&g->edges[i], sizeof(Edge), 1, f) != 1) return -1;
     return 0;
 }
 
@@ -2695,7 +2838,7 @@ int engine_save(const Engine *eng, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     uint32_t magic = 0x58595A54; /* XYZT */
-    uint32_t version = 13;
+    uint32_t version = 14;
     fwrite(&magic, 4, 1, f);
     fwrite(&version, 4, 1, f);
 
@@ -2731,9 +2874,9 @@ int engine_save(const Engine *eng, const char *path) {
     for (int s = 0; s < eng->n_shells; s++)
         save_graph(f, &eng->shells[s].g);
 
-    /* Boundary edges */
+    /* Boundary edges — field by field */
     for (int i = 0; i < eng->n_boundary_edges; i++)
-        fwrite(&eng->boundary_edges[i], sizeof(Edge), 1, f);
+        save_edge(f, &eng->boundary_edges[i]);
 
     /* Children */
     for (int i = 0; i < MAX_CHILDREN; i++) {
@@ -2877,7 +3020,7 @@ int engine_load(Engine *eng, const char *path) {
         }
         for (int i = 0; i < eng->n_boundary_edges; i++)
             fread(&eng->boundary_edges[i], sizeof(Edge), 1, f);
-    } else if (version >= 11 && version <= 13) {
+    } else if (version >= 11 && version <= 14) {
         /* v11-v13: full persistence — engine params, OneTwoSystem, SubstrateT, children */
         uint32_t ns, nb;
         fread(&ns, 4, 1, f);
@@ -2912,8 +3055,13 @@ int engine_load(Engine *eng, const char *path) {
         }
 
         /* Boundary edges */
-        for (int i = 0; i < eng->n_boundary_edges; i++)
-            if (fread(&eng->boundary_edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -6; }
+        if (version >= 14) {
+            for (int i = 0; i < eng->n_boundary_edges; i++)
+                if (load_edge(f, &eng->boundary_edges[i]) != 0) { fclose(f); return -6; }
+        } else {
+            for (int i = 0; i < eng->n_boundary_edges; i++)
+                if (fread(&eng->boundary_edges[i], sizeof(Edge), 1, f) != 1) { fclose(f); return -6; }
+        }
 
         /* Children */
         eng->n_children = 0;
