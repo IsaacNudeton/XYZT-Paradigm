@@ -1721,6 +1721,13 @@ int main(int argc, char *argv[]) {
         StreamContext sctx;
         io_init(&sctx);
 
+        /* Set console to raw mode — no line buffering, no echo.
+         * Individual keystrokes reach ReadFile immediately. */
+        HANDLE hConIn = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD orig_mode = 0;
+        GetConsoleMode(hConIn, &orig_mode);
+        SetConsoleMode(hConIn, orig_mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
+
         printf("LIVE MODE — the engine perceives. Type anything.\n");
         printf("ESC to stop.\n\n");
 
@@ -1731,13 +1738,12 @@ int main(int argc, char *argv[]) {
         int running = 1;
 
         while (running) {
-            /* Read raw bytes from keyboard — unbuffered, no Enter needed */
+            /* Read raw bytes from keyboard — unbuffered via io thread */
             char raw[64];
-            int n_raw = 0;
-            while (_kbhit() && n_raw < 63) {
-                int ch = _getch();
-                if (ch == 27) { running = 0; break; }  /* ESC = stop */
-                raw[n_raw++] = (char)ch;
+            int n_raw = io_read_raw(&sctx, raw, 63);
+            /* Check for ESC */
+            for (int i = 0; i < n_raw; i++) {
+                if (raw[i] == 27) { running = 0; n_raw = i; break; }
             }
 
             if (n_raw > 0) {
@@ -1809,9 +1815,12 @@ int main(int argc, char *argv[]) {
                 io_sleep_ms(1);
         }
 
-        /* Save on exit */
+        /* Restore console mode and save */
+        SetConsoleMode(hConIn, orig_mode);
         engine_save(&eng, PERSIST_PATH);
-        printf("\nSaved: %s (%llu ticks)\n", PERSIST_PATH, (unsigned long long)tick);
+        printf("\nSaved: %s (%llu ticks, %d nodes, %d edges)\n",
+               PERSIST_PATH, (unsigned long long)tick,
+               eng.shells[0].g.n_nodes, eng.shells[0].g.n_edges);
 
         free(yee_sub);
         io_destroy(&sctx);
