@@ -21,25 +21,19 @@
  * DEVICE STATE
  * ══════════════════════════════════════════════════════════════ */
 
+/* ── Unified memory arrays: CPU and GPU share the same pointer.
+ * No cudaMemcpy needed. After yee_sync(), CPU reads directly.
+ * The node doesn't "download" the grid — it IS part of the grid. ── */
 static float *d_V  = NULL;   /* voltage (scalar at centers) */
+static float *d_L  = NULL;   /* inductance per voxel (learnable) */
+static float *d_V_accum = NULL;  /* |V| integrated over time (Hebbian) */
+static float *d_V_signed = NULL; /* V with sign (coherence ratio) */
+static float *d_V_output = NULL; /* sponge-absorbed energy (output voice) */
+
+/* ── Pure GPU arrays: CPU never touches these ── */
 static float *d_Ix = NULL;   /* current x-component (on x-faces) */
 static float *d_Iy = NULL;   /* current y-component (on y-faces) */
 static float *d_Iz = NULL;   /* current z-component (on z-faces) */
-static float *d_L  = NULL;   /* inductance per voxel (learnable) */
-
-/* Accumulator for Hebbian: tracks |V| integrated over time */
-static float *d_V_accum = NULL;
-
-/* Signed accumulator: tracks V (with sign) integrated over time.
- * Oscillating voxels cancel (low |signed|/energy ratio).
- * Steady voxels accumulate (high ratio).
- * ratio = coherence: how much the voxel agrees with itself over time. */
-static float *d_V_signed = NULL;
-
-/* Output accumulator: captures energy absorbed by sponge.
- * The sponge erases V[p]*(1-damp) every tick at boundaries.
- * That absorbed energy IS the engine's voice — accumulate it. */
-static float *d_V_output = NULL;
 
 /* Host-side scratch for reductions */
 static float *h_scratch = NULL;
@@ -170,9 +164,8 @@ __global__ void kernel_yee_inject(float *V, const YeeSource *sources, int n_src)
 #endif
 #define YEE_ACC_SCALE  256.0f            /* calibrated: acc_ss~0.7 at V=0.01, *256→~180 */
 
-/* d_V_prev stores V from the previous tick for autocorrelation */
-static float *d_V_prev = NULL;
-static float *d_V_autocorr = NULL;  /* running autocorrelation: V[t] × V[t-1] */
+static float *d_V_prev = NULL;      /* pure GPU: previous tick V for autocorrelation */
+static float *d_V_autocorr = NULL;  /* unified: running autocorrelation V[t] × V[t-1] */
 
 __global__ void kernel_yee_accum(float *V_accum, float *V_signed,
                                   float *V_autocorr, const float *V,
@@ -254,16 +247,19 @@ __global__ void kernel_yee_energy(const float *V, const float *Ix,
 extern "C" int yee_init(void) {
     size_t sz = YEE_N * sizeof(float);
 
-    YEE_CHECK(cudaMalloc(&d_V,  sz));
+    /* Unified memory: CPU and GPU share one pointer, no copies */
+    YEE_CHECK(cudaMallocManaged(&d_V,  sz));
+    YEE_CHECK(cudaMallocManaged(&d_L,  sz));
+    YEE_CHECK(cudaMallocManaged(&d_V_accum, sz));
+    YEE_CHECK(cudaMallocManaged(&d_V_signed, sz));
+    YEE_CHECK(cudaMallocManaged(&d_V_autocorr, sz));
+    YEE_CHECK(cudaMallocManaged(&d_V_output, sz));
+
+    /* Pure GPU — CPU never reads these */
     YEE_CHECK(cudaMalloc(&d_Ix, sz));
     YEE_CHECK(cudaMalloc(&d_Iy, sz));
     YEE_CHECK(cudaMalloc(&d_Iz, sz));
-    YEE_CHECK(cudaMalloc(&d_L,  sz));
-    YEE_CHECK(cudaMalloc(&d_V_accum, sz));
-    YEE_CHECK(cudaMalloc(&d_V_signed, sz));
     YEE_CHECK(cudaMalloc(&d_V_prev, sz));
-    YEE_CHECK(cudaMalloc(&d_V_autocorr, sz));
-    YEE_CHECK(cudaMalloc(&d_V_output, sz));
 
     /* Zero all field arrays */
     YEE_CHECK(cudaMemset(d_V,  0, sz));
@@ -278,12 +274,9 @@ extern "C" int yee_init(void) {
 
     /* Initialize L to wire (low impedance — fully conductive).
      * Hebbian will RAISE L where there's no activity (creating vacuum).
-     * Starting from vacuum deadlocks: no signal → no Hebbian → no wires. */
-    float *h_L = (float *)malloc(sz);
-    if (!h_L) return -1;
-    for (int i = 0; i < YEE_N; i++) h_L[i] = YEE_L_WIRE;
-    YEE_CHECK(cudaMemcpy(d_L, h_L, sz, cudaMemcpyHostToDevice));
-    free(h_L);
+     * Starting from vacuum deadlocks: no signal → no Hebbian → no wires.
+     * Unified memory: write directly, no copy needed. */
+    for (int i = 0; i < YEE_N; i++) d_L[i] = YEE_L_WIRE;
 
     h_scratch = (float *)malloc(YEE_GRID * sizeof(float));
 
@@ -634,3 +627,18 @@ extern "C" int yee_clear_fields(void) {
     /* leaky integrator — no tick counter needed */
     return 0;
 }
+
+/* ══════════════════════════════════════════════════════════════
+ * DIRECT POINTER ACCESS — zero-copy bridge
+ *
+ * Unified memory means the CPU can read these pointers directly
+ * after yee_sync(). No download, no copy, no translation.
+ * The node IS part of the grid.
+ * ══════════════════════════════════════════════════════════════ */
+
+extern "C" float *yee_ptr_V(void)       { return d_V; }
+extern "C" float *yee_ptr_L(void)       { return d_L; }
+extern "C" float *yee_ptr_accum(void)   { return d_V_accum; }
+extern "C" float *yee_ptr_signed(void)  { return d_V_signed; }
+extern "C" float *yee_ptr_output(void)  { return d_V_output; }
+extern "C" float *yee_ptr_autocorr(void){ return d_V_autocorr; }

@@ -30,6 +30,11 @@ int yee_download_acc(uint8_t *h_substrate, int n);
 int yee_download_output(float *h_output, int n);
 int yee_clear_output(void);
 
+/* Unified memory pointers — direct access, no copy */
+float *yee_ptr_V(void);
+float *yee_ptr_accum(void);
+float *yee_ptr_output(void);
+
 /* ══════════════════════════════════════════════════════════════
  * RETINA — holographic injection on boundary face
  *
@@ -111,6 +116,9 @@ static int      wire_cache_n_nodes = 0;  /* n_nodes when cache was built */
 static YeeSource wire_sources[YEE_MAX_SOURCES];
 
 int wire_engine_to_yee(const Engine *eng) {
+    float *V = yee_ptr_V();
+    if (!V) return -1;  /* Yee not initialized — CPU-only mode */
+
     const Graph *g0 = &eng->shells[0].g;
 
     /* Rebuild cache if topology changed (nodes added/removed) */
@@ -135,39 +143,27 @@ int wire_engine_to_yee(const Engine *eng) {
         wire_cache_tick = eng->total_ticks;
     }
 
-    /* Fast path: only update amplitudes from cached mapping */
+    /* Direct write: node amplitude → managed V[voxel_id].
+     * No YeeSource array, no cudaMemcpy. One substrate. */
     for (int s = 0; s < wire_cache_n; s++) {
         int nid = wire_cache_node_ids[s];
         const Node *n = &g0->nodes[nid];
         float amp = wire_cache_base[s] +
                     fabsf((float)n->val / (float)VAL_CEILING) * 0.5f;
-        wire_sources[s].voxel_id = wire_cache_voxel_ids[s];
-        wire_sources[s].amplitude = amp;
-        wire_sources[s].strength = 1.0f;
+        V[wire_cache_voxel_ids[s]] += amp;
     }
-
-    if (wire_cache_n > 0)
-        return yee_inject(wire_sources, wire_cache_n);
     return 0;
 }
 
 int wire_yee_to_engine(Engine *eng) {
-    /* Download Yee accumulator as uint8_t (0-255), same as old substrate[].
-     * Read at each node's voxel position. Includes Hebbian feedback
-     * (replaces wire_hebbian_from_gpu): wave activity → valence++ and
-     * strengthen incoming edges. Uses dst-indexed lookup: O(V+E). */
-    uint8_t *yee_sub = (uint8_t *)calloc(YEE_N, 1);
-    if (!yee_sub) return -1;
-
-    if (yee_download_acc(yee_sub, YEE_N) != 0) {
-        free(yee_sub);
-        return -1;
-    }
+    /* Read Yee accumulator directly from unified memory.
+     * No download, no malloc, no free. The grid IS the data. */
+    float *acc = yee_ptr_accum();
+    if (!acc) return -1;  /* Yee not initialized */
 
     Graph *g0 = &eng->shells[0].g;
 
-    /* Build dst adjacency index: O(V+E) Hebbian edge strengthening.
-     * Same pattern as wire_hebbian_from_gpu. */
+    /* Build dst adjacency index: O(V+E) Hebbian edge strengthening. */
     int *dst_off = (int *)calloc(g0->n_nodes + 1, sizeof(int));
     int *dst_idx = (int *)malloc(g0->n_edges * sizeof(int));
 
@@ -196,7 +192,10 @@ int wire_yee_to_engine(Engine *eng) {
         int gz = coord_z(n->coord) % YEE_GZ;
         int vid = yee_voxel(gx, gy, gz);
 
-        int32_t gpu_signal = (int32_t)yee_sub[vid];
+        /* Read accumulator directly — unified memory, no copy.
+         * Scale same as yee_download_acc: acc * 256, clamp to 0-255. */
+        float raw = acc[vid] * 256.0f;
+        int32_t gpu_signal = (raw > 255.0f) ? 255 : (raw < 0.0f) ? 0 : (int32_t)raw;
         n->accum += gpu_signal;
         if (gpu_signal > 0) n->n_incoming++;
 
@@ -213,16 +212,18 @@ int wire_yee_to_engine(Engine *eng) {
 
     free(dst_off);
     free(dst_idx);
-    free(yee_sub);
     return 0;
 }
 
 int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
     /* Gather each child's parent cube voxels into a contiguous buffer.
-     * The Yee flat array is 64x64x64 row-major — a 4x4x4 cube's voxels
-     * are scattered (stride 64 in Y, 4096 in Z). We gather into
-     * retina_bufs[c][0..63] so child retina sees 64 contiguous bytes. */
+     * With unified memory, read accumulator directly — no download needed.
+     * Still gather into retina_bufs because child expects contiguous uint8_t.
+     * The stride pattern (4 contiguous, skip 60, repeat) is 16 cache lines. */
     static uint8_t retina_bufs[MAX_CHILDREN][CUBE_SIZE];
+
+    /* Prefer unified memory pointer; fall back to caller-provided buffer */
+    float *acc = yee_ptr_accum();
 
     for (int c = 0; c < MAX_CHILDREN; c++) {
         if (eng->child_owner[c] < 0) continue;
@@ -237,13 +238,21 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
         int cx = gx / CUBE_DIM, cy = gy / CUBE_DIM, cz = gz / CUBE_DIM;
         int bx = cx * CUBE_DIM, by = cy * CUBE_DIM, bz = cz * CUBE_DIM;
 
-        /* Gather 4x4x4 voxels from flat Yee array into contiguous buffer */
+        /* Gather 4x4x4 voxels — read from unified memory if available */
         int lp = 0;
         for (int lz = 0; lz < CUBE_DIM; lz++)
             for (int ly = 0; ly < CUBE_DIM; ly++)
                 for (int lx = 0; lx < CUBE_DIM; lx++) {
                     int vid = (bx+lx) + (by+ly)*YEE_GX + (bz+lz)*YEE_GX*YEE_GY;
-                    retina_bufs[c][lp++] = yee_substrate[vid];
+                    if (acc) {
+                        float raw = acc[vid] * 256.0f;
+                        retina_bufs[c][lp++] = (raw > 255.0f) ? 255 :
+                                               (raw < 0.0f) ? 0 : (uint8_t)raw;
+                    } else if (yee_substrate) {
+                        retina_bufs[c][lp++] = yee_substrate[vid];
+                    } else {
+                        retina_bufs[c][lp++] = 0;
+                    }
                 }
 
         eng->child_pool[c].retina = retina_bufs[c];
@@ -269,6 +278,12 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
 #define OUTPUT_SPONGE_WIDTH 4
 
 int wire_output_read(float *output, int n) {
+    /* Prefer direct read from unified memory */
+    float *out_ptr = yee_ptr_output();
+    if (out_ptr && n <= YEE_N) {
+        memcpy(output, out_ptr, n * sizeof(float));
+        return 0;
+    }
     return yee_download_output(output, n);
 }
 
@@ -276,13 +291,10 @@ int wire_output_decode(uint8_t *decoded, int max_bytes) {
     if (max_bytes > 64) max_bytes = 64;
     if (max_bytes < 1) return 0;
 
-    /* Download full output accumulator */
-    float *output = (float *)malloc(YEE_N * sizeof(float));
+    /* Read output accumulator directly from unified memory.
+     * No malloc, no download, no free. */
+    float *output = yee_ptr_output();
     if (!output) return -1;
-    if (yee_download_output(output, YEE_N) != 0) {
-        free(output);
-        return -1;
-    }
 
     /* Raw boundary read: same 8x8 grid as retina input but on x=63 face.
      * The output mirrors the input geometry. Byte i reads from the same
@@ -301,6 +313,5 @@ int wire_output_decode(uint8_t *decoded, int max_bytes) {
         if (val < 0) val = 0;
         decoded[i] = (uint8_t)val;
     }
-    free(output);
     return max_bytes;
 }

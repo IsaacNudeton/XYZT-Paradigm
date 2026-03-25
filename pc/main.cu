@@ -609,7 +609,6 @@ static void cmd_t3(int argc, char *argv[]) {
         if (gpu_ok) yee_sync();   /* wait for GPU before next inject */
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-            yee_download_acc(yee_substrate, YEE_N);
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
             yee_hebbian(0.01f, 0.005f);
@@ -675,7 +674,6 @@ static void cmd_t3(int argc, char *argv[]) {
         if (gpu_ok) yee_sync();
 
         if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-            yee_download_acc(yee_substrate, YEE_N);
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
             yee_hebbian(0.01f, 0.005f);
@@ -690,7 +688,6 @@ static void cmd_t3(int argc, char *argv[]) {
 
     /* Final Yee sync */
     if (gpu_ok) {
-        yee_download_acc(yee_substrate, YEE_N);
         wire_yee_retinas(&eng, yee_substrate);
         wire_yee_to_engine(&eng);
     }
@@ -846,7 +843,6 @@ static void cmd_run(void) {
 
         if (strcmp(line, "status") == 0) {
             if (gpu_ok) {
-                yee_download_acc(yee_substrate, YEE_N);
                 wire_yee_retinas(&eng, yee_substrate);
             }
             report_full(&eng);
@@ -888,7 +884,6 @@ static void cmd_run(void) {
                 if (gpu_ok) yee_sync();
 
                 if (gpu_ok && eng.total_ticks % SUBSTRATE_INT == 0) {
-                    yee_download_acc(yee_substrate, YEE_N);
                     wire_yee_retinas(&eng, yee_substrate);
                     wire_yee_to_engine(&eng);
                     yee_hebbian(0.01f, 0.005f);
@@ -898,7 +893,6 @@ static void cmd_run(void) {
 
             /* Final sync at end of batch */
             if (gpu_ok) {
-                yee_download_acc(yee_substrate, YEE_N);
                 wire_yee_retinas(&eng, yee_substrate);
                 wire_yee_to_engine(&eng);
             }
@@ -1011,7 +1005,6 @@ static void cmd_ingest(const char *path) {
 
         /* Hebbian every 20 lines */
         if (gpu_ok && n_ingested > 0 && n_ingested % 20 == 0) {
-            yee_download_acc(yee_substrate, YEE_N);
             wire_yee_retinas(&eng, yee_substrate);
             wire_yee_to_engine(&eng);
             yee_hebbian(0.01f, 0.005f);
@@ -1025,7 +1018,6 @@ static void cmd_ingest(const char *path) {
 
     /* Final Hebbian pass */
     if (gpu_ok && n_ingested > 0) {
-        yee_download_acc(yee_substrate, YEE_N);
         wire_yee_retinas(&eng, yee_substrate);
         wire_yee_to_engine(&eng);
         yee_hebbian(0.01f, 0.005f);
@@ -1346,13 +1338,10 @@ static void cmd_stream(int binary_mode) {
         }
         /* Hebbian fires at end of each cycle */
         {
-            uint8_t *drain_sub = (uint8_t *)calloc(YEE_N, 1);
-            yee_download_acc(drain_sub, YEE_N);
-            wire_yee_retinas(&eng, drain_sub);
+            wire_yee_retinas(&eng, NULL);
             wire_yee_to_engine(&eng);
             yee_hebbian(0.01f, 0.005f);
             auto_persist(&eng);
-            free(drain_sub);
         }
         /* Report strongest node each cycle */
         {

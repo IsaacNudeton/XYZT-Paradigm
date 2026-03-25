@@ -205,6 +205,16 @@ int yee_is_initialized(void);
 /* Reset all fields to zero (V, I). Keep L. */
 int yee_clear_fields(void);
 
+/* ── Direct pointer access (unified memory) ──
+ * After yee_sync(), CPU reads these directly. No download.
+ * Returns NULL if yee_init() hasn't been called. */
+float *yee_ptr_V(void);
+float *yee_ptr_L(void);
+float *yee_ptr_accum(void);
+float *yee_ptr_signed(void);
+float *yee_ptr_output(void);
+float *yee_ptr_autocorr(void);
+
 #ifdef __cplusplus
 }
 #endif
