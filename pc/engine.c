@@ -1536,6 +1536,97 @@ void engine_tick(Engine *eng) {
             g->z_cache_n_edges = g->n_edges;
         }
 
+        /* ── Parallel child phase (shell 0 only) ──────────────
+         * Each child is an independent graph. No shared edges, no shared
+         * nodes during the 64-tick cycle. Different cores, different
+         * children — like cortical columns on dedicated tissue.
+         * Retina inject + idle check are serial (fast, touches parent).
+         * Child ticking is parallel (heavy, independent per child). */
+        if (s == 0 && eng->n_children > 0) {
+            /* Phase A: inject retinas, build work list (serial) */
+            int child_work[MAX_CHILDREN];
+            int child_parent[MAX_CHILDREN];
+            int n_work = 0;
+
+            for (int c = 0; c < MAX_CHILDREN; c++) {
+                if (eng->child_owner[c] < 0) continue;
+                int owner_id = eng->child_owner[c];
+                if (owner_id >= g->n_nodes) continue;
+                Node *n = &g->nodes[owner_id];
+                if (!n->alive || n->child_id != c) continue;
+
+                Graph *child = &eng->child_pool[c];
+
+                /* Inject retina */
+                if (child->retina && child->retina_len >= 64) {
+                    for (int r = 0; r < 8 && r < child->n_nodes; r++) {
+                        int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
+                        int32_t octant_val = 0;
+                        for (int lz = oz*2; lz < oz*2+2; lz++)
+                            for (int ly = oy*2; ly < oy*2+2; ly++)
+                                for (int lx = ox*2; lx < ox*2+2; lx++)
+                                    octant_val += child->retina[lx + ly*4 + lz*16];
+                        child->nodes[r].val = octant_val;
+                    }
+                } else {
+                    int n_inp = child->n_nodes > 1 ? child->n_nodes - 1 : 1;
+                    for (int r = 0; r < n_inp && r < child->n_nodes; r++)
+                        child->nodes[r].val = (int32_t)(n->accum / n_inp);
+                }
+
+                /* Idle-run check */
+                int retina_live = 0;
+                for (int r = 0; r < 8 && r < child->n_nodes; r++)
+                    if (child->nodes[r].val != 0) { retina_live = 1; break; }
+
+                if (child->idle_run >= SUBSTRATE_INT && !retina_live) {
+                    /* Still idle — skip. Parent keeps its own val. */
+                    n->last_active = (uint32_t)T_now(&eng->T);
+                    n->n_incoming = 0; n->accum = 0;
+                    continue;
+                }
+                if (retina_live) child->idle_run = 0;
+
+                child_work[n_work] = c;
+                child_parent[n_work] = owner_id;
+                n_work++;
+            }
+
+            /* Phase B: tick all non-idle children in parallel */
+            { int w;
+            #pragma omp parallel for schedule(dynamic)
+            for (w = 0; w < n_work; w++) {
+                Graph *child = &eng->child_pool[child_work[w]];
+                for (int ct = 0; ct < 64; ct++)
+                    if (!child_tick_once(child)) break;
+            }
+            }
+
+            /* Phase C: read outputs back into parent nodes (serial) */
+            for (int w = 0; w < n_work; w++) {
+                int c = child_work[w];
+                int owner_id = child_parent[w];
+                Node *n = &g->nodes[owner_id];
+                Graph *child = &eng->child_pool[c];
+
+                int out_idx = (CHILD_OUTPUT_IDX < child->n_nodes) ?
+                               CHILD_OUTPUT_IDX : child->n_nodes - 1;
+                int32_t child_out = 0;
+                if (out_idx >= 0 && child->nodes[out_idx].alive)
+                    child_out = child->nodes[out_idx].val;
+
+                if (child_out != 0) {
+                    n->val = child_out;
+                    child->idle_run = 0;
+                } else {
+                    child->idle_run++;
+                }
+
+                n->last_active = (uint32_t)T_now(&eng->T);
+                n->n_incoming = 0; n->accum = 0;
+            }
+        }
+
         for (int zl = 0; zl <= g->z_max; zl++) {
             /* Propagate: only edges targeting this z-level */
             for (int j = g->z_edge_off[zl]; j < g->z_edge_off[zl + 1]; j++) {
@@ -1581,66 +1672,10 @@ void engine_tick(Engine *eng) {
                                  && eng->child_owner[n->child_id] == i);
                 if (n->n_incoming == 0 && n->accum == 0 && !has_child) continue;
 
-                /* Nesting delegation — retina reads parent's substrate */
+                /* Child nodes already ticked in parallel pre-phase.
+                 * Skip resolve — their val is already set. */
                 if (n->child_id >= 0 && n->child_id < MAX_CHILDREN
                     && eng->child_owner[n->child_id] == i) {
-                    Graph *child = &eng->child_pool[n->child_id];
-
-                    if (child->retina && child->retina_len >= 64) {
-                        /* Inject retina: 8 octant nodes read spatial substrate.
-                         * Octant r = (ox,oy,oz) where ox=r&1, oy=(r>>1)&1, oz=(r>>2)&1.
-                         * Each octant covers 2x2x2 = 8 substrate positions. */
-                        for (int r = 0; r < 8 && r < child->n_nodes; r++) {
-                            int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
-                            int32_t octant_val = 0;
-                            for (int lz = oz*2; lz < oz*2+2; lz++)
-                                for (int ly = oy*2; ly < oy*2+2; ly++)
-                                    for (int lx = ox*2; lx < ox*2+2; lx++)
-                                        octant_val += child->retina[lx + ly*4 + lz*16];
-                            child->nodes[r].val = octant_val;
-                        }
-                    } else {
-                        /* Fallback: distribute accum across retina nodes */
-                        int n_inp = child->n_nodes > 1 ? child->n_nodes - 1 : 1;
-                        for (int r = 0; r < n_inp && r < child->n_nodes; r++)
-                            child->nodes[r].val = (int32_t)(n->accum / n_inp);
-                    }
-
-                    /* Idle-run early-out: if the child has produced zero
-                     * output for SUBSTRATE_INT consecutive parent ticks,
-                     * skip ticking — it's dead weight without wave physics.
-                     * Resets the moment parent injects non-zero retina. */
-                    int retina_live = 0;
-                    for (int r = 0; r < 8 && r < child->n_nodes; r++)
-                        if (child->nodes[r].val != 0) { retina_live = 1; break; }
-
-                    if (child->idle_run >= SUBSTRATE_INT && !retina_live) {
-                        /* Still idle — don't burn cycles, parent keeps its own val */
-                    } else {
-                        if (retina_live) child->idle_run = 0;
-
-                        for (int ct = 0; ct < 64; ct++)
-                            if (!child_tick_once(child)) break;
-
-                        /* Read output from child's designated output node.
-                         * Output stays at CHILD_OUTPUT_IDX even as child grows.
-                         * Zero output = child has nothing to say — don't clobber parent. */
-                        int out_idx = (CHILD_OUTPUT_IDX < child->n_nodes) ?
-                                       CHILD_OUTPUT_IDX : child->n_nodes - 1;
-                        int32_t child_out = 0;
-                        if (out_idx >= 0 && child->nodes[out_idx].alive)
-                            child_out = child->nodes[out_idx].val;
-
-                        if (child_out != 0) {
-                            n->val = child_out;
-                            child->idle_run = 0;
-                        } else {
-                            child->idle_run++;
-                        }
-                    }
-
-                    n->last_active = (uint32_t)T_now(&eng->T);
-                    n->n_incoming = 0; n->accum = 0;
                     continue;
                 }
 
