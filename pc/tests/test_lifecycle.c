@@ -252,8 +252,11 @@ void run_lifecycle_tests(void) {
         graph_wire(&eng.shells[0].g, id, id, nbr, 200, 0);
         graph_wire(&eng.shells[0].g, nbr, nbr, id, 200, 0);
 
-        /* Run past first SUBSTRATE_INT to establish prev_val, then another to compute coherence */
-        for (int i = 0; i < (int)SUBSTRATE_INT * 2 + 1; i++) engine_tick(&eng);
+        /* Run past first SUBSTRATE_INT to establish prev_val, then another to compute coherence.
+         * Children may crystallize and spawn — the engine's idle-run logic
+         * prevents zero-output children from clobbering parent val. */
+        for (int i = 0; i < (int)SUBSTRATE_INT * 2 + 1; i++)
+            engine_tick(&eng);
 
         /* Both nodes should have coherent field set (not 0 = unknown) */
         int8_t ca = eng.shells[0].g.nodes[id].coherent;

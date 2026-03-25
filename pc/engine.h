@@ -373,6 +373,7 @@ typedef struct {
     int32_t  prev_output;       /* output value at last heartbeat */
     int      local_heartbeat;   /* how many local heartbeats this child has lived */
     uint8_t  drive;             /* 0=curiosity, 1=frustration, 2=boredom */
+    uint16_t idle_run;           /* consecutive parent ticks with zero output */
 
     /* Z-bucket cache for O(E+N) propagation (rebuilt when topology changes) */
     int     *z_edge_idx;        /* edge indices sorted by dest z-level */

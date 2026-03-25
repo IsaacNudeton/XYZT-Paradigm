@@ -885,21 +885,46 @@ int child_tick_once(Graph *g) {
     }
 
     /* ── Grow: wire co-active pairs to downstream nodes ── */
+    #define CHILD_OUTPUT_IDX 12   /* 8 retina + 4 hidden = output at 12 */
+    #define CHILD_MAX_NODES  64   /* children can grow beyond initial 13 */
     if (g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
-        int out = g->n_nodes - 1;  /* output node is always last */
+        int out = CHILD_OUTPUT_IDX;
+        if (out >= g->n_nodes) out = g->n_nodes - 1;
         for (int i = 0; i < g->n_nodes; i++) {
             if (!g->nodes[i].alive || g->nodes[i].val == 0) continue;
             for (int j = i + 1; j < g->n_nodes; j++) {
                 if (!g->nodes[j].alive || g->nodes[j].val == 0) continue;
-                /* Find a downstream target: prefer hidden nodes (8..out-1),
+                /* Find a downstream target: prefer existing hidden nodes (8..n-1, skip output),
                  * fall back to output. Don't wire to retina (0-7). */
                 int dst = -1;
-                for (int h = 8; h < out; h++) {
-                    if (h == i || h == j) continue;
+                for (int h = 8; h < g->n_nodes; h++) {
+                    if (h == out || h == i || h == j) continue;
                     if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
                 }
                 if (dst < 0 && graph_find_edge(g, i, j, out) < 0)
                     dst = out;
+
+                /* No target found — grow a NEW hidden node.
+                 * Appends after output (output stays at CHILD_OUTPUT_IDX).
+                 * The child develops its own topology from the data. */
+                if (dst < 0 && g->n_nodes < CHILD_MAX_NODES && g->n_nodes < MAX_NODES) {
+                    int new_id = g->n_nodes;
+                    Node *new_n = &g->nodes[new_id];
+                    memset(new_n, 0, sizeof(Node));
+                    snprintf(new_n->name, NAME_LEN, "h_%d", new_id);
+                    new_n->alive = 1;
+                    new_n->identity.len = 64;
+                    new_n->plasticity = PLASTICITY_DEFAULT;
+                    new_n->Z = g->nodes[0].Z;
+                    g->n_nodes++;
+
+                    /* Wire: (i, j) → new_hidden, and new_hidden → output.
+                     * Use j as co-source for the output feed — no self-loop. */
+                    graph_wire(g, new_id, j, out, 32, 0);
+                    g->total_grown++;
+                    dst = new_id;
+                }
+
                 if (dst >= 0) {
                     graph_wire(g, i, j, dst, 32, 0);
                     g->total_grown++;
@@ -910,7 +935,7 @@ int child_tick_once(Graph *g) {
 
     /* ── Inner T: local heartbeat at SUBSTRATE_INT/4 interval ── */
     if (g->total_ticks > 0 && g->total_ticks % (SUBSTRATE_INT / 4) == 0) {
-        int out_idx = g->n_nodes - 1;
+        int out_idx = (CHILD_OUTPUT_IDX < g->n_nodes) ? CHILD_OUTPUT_IDX : g->n_nodes - 1;
         if (out_idx >= 0 && g->nodes[out_idx].alive) {
             int32_t output_val = g->nodes[out_idx].val;
             int32_t delta = output_val - g->prev_output;
@@ -1581,13 +1606,38 @@ void engine_tick(Engine *eng) {
                             child->nodes[r].val = (int32_t)(n->accum / n_inp);
                     }
 
-                    for (int ct = 0; ct < 64; ct++)
-                        if (!child_tick_once(child)) break;
+                    /* Idle-run early-out: if the child has produced zero
+                     * output for SUBSTRATE_INT consecutive parent ticks,
+                     * skip ticking — it's dead weight without wave physics.
+                     * Resets the moment parent injects non-zero retina. */
+                    int retina_live = 0;
+                    for (int r = 0; r < 8 && r < child->n_nodes; r++)
+                        if (child->nodes[r].val != 0) { retina_live = 1; break; }
 
-                    /* Read output from last node */
-                    int out_idx = child->n_nodes - 1;
-                    if (out_idx >= 0 && child->nodes[out_idx].alive)
-                        n->val = child->nodes[out_idx].val;
+                    if (child->idle_run >= SUBSTRATE_INT && !retina_live) {
+                        /* Still idle — don't burn cycles, parent keeps its own val */
+                    } else {
+                        if (retina_live) child->idle_run = 0;
+
+                        for (int ct = 0; ct < 64; ct++)
+                            if (!child_tick_once(child)) break;
+
+                        /* Read output from child's designated output node.
+                         * Output stays at CHILD_OUTPUT_IDX even as child grows.
+                         * Zero output = child has nothing to say — don't clobber parent. */
+                        int out_idx = (CHILD_OUTPUT_IDX < child->n_nodes) ?
+                                       CHILD_OUTPUT_IDX : child->n_nodes - 1;
+                        int32_t child_out = 0;
+                        if (out_idx >= 0 && child->nodes[out_idx].alive)
+                            child_out = child->nodes[out_idx].val;
+
+                        if (child_out != 0) {
+                            n->val = child_out;
+                            child->idle_run = 0;
+                        } else {
+                            child->idle_run++;
+                        }
+                    }
 
                     n->last_active = (uint32_t)T_now(&eng->T);
                     n->n_incoming = 0; n->accum = 0;
