@@ -739,9 +739,15 @@ int graph_compute_topology(Graph *g, int z_depth) {
  * NESTING — systems containing systems
  * ══════════════════════════════════════════════════════════════ */
 
-/* Find the output node by topology: deepest Z-depth.
- * Position determines meaning — output is where signal propagates TO. */
+/* Find the output node: look for "output" by name first (children),
+ * fall back to deepest Z-depth (parent graphs where names are content-derived).
+ * Children have fixed names; parent nodes have content-derived names. */
 static int graph_output_node(const Graph *g) {
+    /* Named output node (children) */
+    for (int k = 0; k < g->n_nodes; k++)
+        if (g->nodes[k].alive && strcmp(g->nodes[k].name, "output") == 0)
+            return k;
+    /* Fallback: deepest Z-depth */
     int best = g->n_nodes - 1;
     int max_z = -1;
     for (int k = 0; k < g->n_nodes; k++) {
@@ -1122,9 +1128,26 @@ static int nest_spawn(Engine *eng, int node_id) {
         child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
 
-    /* No prescribed wiring. Nodes have identities and positions.
-     * The grow loop discovers topology from co-activation when
-     * the first retina feed arrives. Physics runs, topology emerges. */
+    /* Bootstrap wiring: the seed topology that makes emergence possible.
+     * Like the .lang's bootstrap ROM — you need initial structure to grow from.
+     * Retina pairs → hidden nodes, hidden → output.
+     * Hebbian will reshape these. Grow will add more. Prune will kill dead ones.
+     * But without this seed, there's no propagation path and no co-activation
+     * for the grow loop to detect. Bootstrap deadlock otherwise. */
+    for (int r = 0; r < 8; r += 2) {
+        int hidden_target = 8 + r / 2;
+        if (hidden_target < child->n_nodes)
+            graph_wire(child, r, r + 1, hidden_target, 128, 0);
+    }
+    {
+        int out_idx = graph_output_node(child);
+        for (int h = 0; h < 4; h++) {
+            int h1 = 8 + h;
+            int h2 = 8 + ((h + 1) % 4);
+            if (h1 < child->n_nodes && h2 < child->n_nodes && out_idx < child->n_nodes)
+                graph_wire(child, h1, h2, out_idx, 64, 0);
+        }
+    }
 
     eng->child_owner[slot] = node_id;
     eng->n_children++;
