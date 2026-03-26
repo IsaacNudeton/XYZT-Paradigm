@@ -1122,22 +1122,9 @@ static int nest_spawn(Engine *eng, int node_id) {
         child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
 
-    /* Wire retina pairs to hidden nodes, not directly to output.
-     * (r0,r1)→hidden_0, (r2,r3)→hidden_1, (r4,r5)→hidden_2, (r6,r7)→hidden_3.
-     * Hidden nodes are at indices 8,9,10,11. Output is at index 12. */
-    for (int r = 0; r < 8; r += 2) {
-        int hidden_target = 8 + r / 2;
-        graph_wire(child, r, r + 1, hidden_target, 128, 0);
-    }
-    /* Wire hidden nodes to output: each hidden feeds forward */
-    {
-        int out_idx = child->n_nodes - 1;  /* output is last node = 12 */
-        for (int h = 0; h < 4; h++) {
-            int h1 = 8 + h;
-            int h2 = 8 + ((h + 1) % 4);
-            graph_wire(child, h1, h2, out_idx, 64, 0);
-        }
-    }
+    /* No prescribed wiring. Nodes have identities and positions.
+     * The grow loop discovers topology from co-activation when
+     * the first retina feed arrives. Physics runs, topology emerges. */
 
     eng->child_owner[slot] = node_id;
     eng->n_children++;
