@@ -180,61 +180,6 @@ __global__ void kernel_yee_accum(float *V_accum, float *V_signed,
     V_autocorr[p] = V_autocorr[p] * YEE_ACC_DECAY + V[p] * V_prev[p];
 }
 
-/* ══════════════════════════════════════════════════════════════
- * KERNEL 5: GAIN — self-sustaining signal restoration
- *
- * Where the accumulator says signal is alive (above threshold),
- * add a fraction of the supply amplitude to V in the same sign.
- * Where signal is dead, do nothing — gain region stays dark.
- *
- * This is the XYZT transistor. Not a switch. An amplifier.
- * Supply + signal → amplified signal.
- * Supply + no signal → 0.
- * Proven: gain_amplifies, gain_no_signal, gain_bounded.
- *
- * The substrate sustains itself. No CPU re-injection needed.
- * ══════════════════════════════════════════════════════════════ */
-
-#define YEE_GAIN_THRESHOLD 0.05f   /* min accum to be "alive" */
-#define YEE_GAIN_RATE      0.02f   /* fraction of supply per tick */
-
-__global__ void kernel_yee_gain(float *V, const float *V_accum,
-                                 const float *L, float threshold,
-                                 float rate, int n) {
-    int p = blockIdx.x * blockDim.x + threadIdx.x;
-    if (p >= n) return;
-
-    /* Only amplify where signal is alive AND L is low (wire region).
-     * High-L (wall) voxels don't gain — they're barriers, not cavities.
-     * The L-field IS the gain map: low L = conductive = amplify.
-     * High L = resistive = dark. */
-    if (V_accum[p] < threshold) return;
-    if (L[p] > YEE_L_VAC) return;  /* walls don't amplify */
-
-    /* Supply scales inversely with L: lower impedance = more gain.
-     * At L=L_WIRE (1.0): full rate. At L=L_VAC (9.0): zero.
-     * Continuous, not binary. The impedance IS the gain control. */
-    float gain_factor = (YEE_L_VAC - L[p]) / (YEE_L_VAC - YEE_L_WIRE);
-    if (gain_factor < 0.0f) gain_factor = 0.0f;
-
-    float v = V[p];
-    float abs_v = fabsf(v);
-
-    /* Saturating gain: supply proportional to (ceiling - |V|).
-     * Near zero: full gain. Near ceiling: gain → 0.
-     * Prevents runaway amplification in interior wire voxels.
-     * gain_bounded: output ≤ signal + supply (energy conservation). */
-    float headroom = (1.0f - abs_v);
-    if (headroom <= 0.0f) return;  /* at ceiling, no more gain */
-    float supply = rate * gain_factor * headroom;
-
-    /* Coherent amplification: add supply in the same sign as V.
-     * Not noise injection. Signal gets louder. Silence stays silent. */
-    if (v > 0.0f) V[p] = v + supply;
-    else if (v < 0.0f) V[p] = v - supply;
-    /* v == 0 exactly: no amplification. Distinction requires nonzero. */
-}
-
 __global__ void kernel_yee_hebbian(float *L, const float *V_accum,
                                     float strengthen_rate, float weaken_rate,
                                     float threshold, int n) {
@@ -383,16 +328,10 @@ extern "C" int yee_tick(void) {
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
 
-    /* Step 4: Gain — self-sustaining signal restoration.
-     * Where accum says signal is alive and L is low, amplify V.
-     * The substrate sustains its own signals. */
-    kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
-        d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
-
     /* Copy current V to V_prev for next tick's autocorrelation */
     YEE_CHECK(cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice));
 
-    /* Single sync: ensures I, accum, and gain are done before next tick */
+    /* Single sync: ensures I and accum are done before next tick */
     YEE_CHECK(cudaDeviceSynchronize());
 
     return 0;
@@ -407,10 +346,8 @@ extern "C" int yee_tick_async(void) {
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
-    kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
-        d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
     cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice);
-    /* I, accum, gain still running — CPU is free to work */
+    /* I and accum still running — CPU is free to work */
     return 0;
 }
 
