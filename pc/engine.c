@@ -739,6 +739,19 @@ int graph_compute_topology(Graph *g, int z_depth) {
  * NESTING — systems containing systems
  * ══════════════════════════════════════════════════════════════ */
 
+/* Find the output node by topology: deepest Z-depth.
+ * Position determines meaning — output is where signal propagates TO. */
+static int graph_output_node(const Graph *g) {
+    int best = g->n_nodes - 1;
+    int max_z = -1;
+    for (int k = 0; k < g->n_nodes; k++) {
+        if (!g->nodes[k].alive) continue;
+        int kz = coord_z(g->nodes[k].coord);
+        if (kz > max_z) { max_z = kz; best = k; }
+    }
+    return best;
+}
+
 int child_tick_once(Graph *g) {
     /* ══════════════════════════════════════════════════════════════
      * NEW: Child Hebbian Learning (Retinal Co-activation)
@@ -885,11 +898,17 @@ int child_tick_once(Graph *g) {
     }
 
     /* ── Grow: wire co-active pairs to downstream nodes ── */
-    #define CHILD_OUTPUT_IDX 12   /* 8 retina + 4 hidden = output at 12 */
     #define CHILD_MAX_NODES  64   /* children can grow beyond initial 13 */
     if (g->grow_interval > 0 && (g->total_ticks % (unsigned)g->grow_interval == 0)) {
-        int out = CHILD_OUTPUT_IDX;
-        if (out >= g->n_nodes) out = g->n_nodes - 1;
+        /* Output node = deepest Z-depth. Topology determines output,
+         * not a magic index. If all nodes are at same Z, use last. */
+        int out = g->n_nodes - 1;
+        int max_z = -1;
+        for (int k = 0; k < g->n_nodes; k++) {
+            if (!g->nodes[k].alive) continue;
+            int kz = coord_z(g->nodes[k].coord);
+            if (kz > max_z) { max_z = kz; out = k; }
+        }
         for (int i = 0; i < g->n_nodes; i++) {
             if (!g->nodes[i].alive || g->nodes[i].val == 0) continue;
             for (int j = i + 1; j < g->n_nodes; j++) {
@@ -905,23 +924,33 @@ int child_tick_once(Graph *g) {
                     dst = out;
 
                 /* No target found — grow a NEW hidden node.
-                 * Appends after output (output stays at CHILD_OUTPUT_IDX).
-                 * The child develops its own topology from the data. */
+                 * Appends after current output. The child develops
+                 * its own topology from the data. */
                 if (dst < 0 && g->n_nodes < CHILD_MAX_NODES && g->n_nodes < MAX_NODES) {
                     int new_id = g->n_nodes;
                     Node *new_n = &g->nodes[new_id];
                     memset(new_n, 0, sizeof(Node));
                     snprintf(new_n->name, NAME_LEN, "h_%d", new_id);
                     new_n->alive = 1;
-                    new_n->identity.len = 64;
                     new_n->plasticity = PLASTICITY_DEFAULT;
                     new_n->Z = g->nodes[0].Z;
-                    g->n_nodes++;
 
-                    /* Wire: (i, j) → new_hidden, and new_hidden → output.
-                     * Use j as co-source for the output feed — no self-loop. */
-                    graph_wire(g, new_id, j, out, 32, 0);
-                    g->total_grown++;
+                    /* Identity: XOR parent sources with position hash.
+                     * Different positions → different identities → Hebbian
+                     * can differentiate. No zero-identity tissue. */
+                    new_n->identity = g->nodes[i].identity;
+                    uint32_t pos_hash = hash32((const uint8_t *)&new_id, sizeof(new_id));
+                    for (int w = 0; w < BS_WORDS && w < (int)(sizeof(pos_hash)/8 + 1); w++)
+                        new_n->identity.w[w] ^= ((uint64_t)pos_hash << (w * 17));
+                    if (new_n->identity.len < 16) new_n->identity.len = 16;
+
+                    /* Coordinate from name hash — position IS meaning */
+                    uint32_t hx = hash32((const uint8_t *)new_n->name, (int)strlen(new_n->name));
+                    uint32_t hy = hash32((const uint8_t *)&hx, sizeof(hx));
+                    uint32_t hz = hash32((const uint8_t *)&hy, sizeof(hy));
+                    new_n->coord = coord_pack(hx % 64, hy % 64, hz % 64);
+
+                    g->n_nodes++;
                     dst = new_id;
                 }
 
@@ -935,7 +964,7 @@ int child_tick_once(Graph *g) {
 
     /* ── Inner T: local heartbeat at SUBSTRATE_INT/4 interval ── */
     if (g->total_ticks > 0 && g->total_ticks % (SUBSTRATE_INT / 4) == 0) {
-        int out_idx = (CHILD_OUTPUT_IDX < g->n_nodes) ? CHILD_OUTPUT_IDX : g->n_nodes - 1;
+        int out_idx = graph_output_node(g);
         if (out_idx >= 0 && g->nodes[out_idx].alive) {
             int32_t output_val = g->nodes[out_idx].val;
             int32_t delta = output_val - g->prev_output;
@@ -1041,21 +1070,27 @@ static int nest_spawn(Engine *eng, int node_id) {
      * Each retina node reads spatial substrate from its octant.
      * Replaces scalar int32_t passthrough — children see parent's
      * spatial structure directly via zero-copy retina pointer. */
+    /* Identity derivation: each child node inherits parent identity
+     * XOR'd with a position hash. Different nodes get different identities.
+     * Hebbian can differentiate. No zero-identity tissue. */
     char rname[32];
     for (int r = 0; r < 8; r++) {
         snprintf(rname, 32, "retina_%d", r);
         int rid = graph_add(child, rname, 0, &eng->T);
         if (rid >= 0) {
             child->nodes[rid].alive = 1;
-            child->nodes[rid].layer_zero = 0;  /* NOT source — receives from retina */
-            child->nodes[rid].identity.len = 64;
+            child->nodes[rid].layer_zero = 0;
+            child->nodes[rid].identity = owner->identity;
+            uint32_t ph = hash32((const uint8_t *)rname, (int)strlen(rname));
+            for (int w = 0; w < BS_WORDS && w < 2; w++)
+                child->nodes[rid].identity.w[w] ^= ((uint64_t)ph << (w * 17));
+            if (child->nodes[rid].identity.len < 16)
+                child->nodes[rid].identity.len = 16;
             child->nodes[rid].Z = owner->Z;
             child->nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
-    /* 4 hidden nodes — intermediate processing layer.
-     * Without these, all edges target output directly (star topology, depth=1).
-     * Hidden nodes allow retina → hidden → hidden → output chains (depth>1). */
+    /* 4 hidden nodes — intermediate processing layer. */
     for (int h = 0; h < 4; h++) {
         char hname[32];
         snprintf(hname, 32, "hidden_%d", h);
@@ -1063,7 +1098,12 @@ static int nest_spawn(Engine *eng, int node_id) {
         if (hid >= 0) {
             child->nodes[hid].alive = 1;
             child->nodes[hid].layer_zero = 0;
-            child->nodes[hid].identity.len = 64;
+            child->nodes[hid].identity = owner->identity;
+            uint32_t ph = hash32((const uint8_t *)hname, (int)strlen(hname));
+            for (int w = 0; w < BS_WORDS && w < 2; w++)
+                child->nodes[hid].identity.w[w] ^= ((uint64_t)ph << (w * 17));
+            if (child->nodes[hid].identity.len < 16)
+                child->nodes[hid].identity.len = 16;
             child->nodes[hid].Z = owner->Z;
             child->nodes[hid].plasticity = PLASTICITY_DEFAULT;
         }
@@ -1072,7 +1112,12 @@ static int nest_spawn(Engine *eng, int node_id) {
     if (out >= 0) {
         child->nodes[out].alive = 1;
         child->nodes[out].layer_zero = 0;
-        child->nodes[out].identity.len = 64;
+        child->nodes[out].identity = owner->identity;
+        uint32_t ph = hash32((const uint8_t *)"output", 6);
+        for (int w = 0; w < BS_WORDS && w < 2; w++)
+            child->nodes[out].identity.w[w] ^= ((uint64_t)ph << (w * 17));
+        if (child->nodes[out].identity.len < 16)
+            child->nodes[out].identity.len = 16;
         child->nodes[out].Z = owner->Z;
         child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
@@ -1609,8 +1654,7 @@ void engine_tick(Engine *eng) {
                 Node *n = &g->nodes[owner_id];
                 Graph *child = &eng->child_pool[c];
 
-                int out_idx = (CHILD_OUTPUT_IDX < child->n_nodes) ?
-                               CHILD_OUTPUT_IDX : child->n_nodes - 1;
+                int out_idx = graph_output_node(child);
                 int32_t child_out = 0;
                 if (out_idx >= 0 && child->nodes[out_idx].alive)
                     child_out = child->nodes[out_idx].val;
