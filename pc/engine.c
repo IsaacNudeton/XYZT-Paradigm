@@ -1613,15 +1613,27 @@ void engine_tick(Engine *eng) {
                 Graph *child = &eng->child_pool[c];
 
                 /* Inject retina */
-                if (child->retina && child->retina_len >= 64) {
+                if (child->retina && child->retina_len >= 8) {
                     for (int r = 0; r < 8 && r < child->n_nodes; r++) {
-                        int ox = r & 1, oy = (r >> 1) & 1, oz = (r >> 2) & 1;
-                        int32_t octant_val = 0;
-                        for (int lz = oz*2; lz < oz*2+2; lz++)
-                            for (int ly = oy*2; ly < oy*2+2; ly++)
-                                for (int lx = ox*2; lx < ox*2+2; lx++)
-                                    octant_val += child->retina[lx + ly*4 + lz*16];
+                        /* Topological retina: first 8 bytes are the 8 corners
+                         * of the unit cube at the parent's exact position.
+                         * Each node sees one distinct voxel. Direct read. */
+                        int32_t octant_val = (int32_t)child->retina[r];
                         child->nodes[r].val = octant_val;
+
+                        /* Fold retina into identity: what the child sees
+                         * becomes who the child IS. Hebbian differentiates
+                         * by identity — if two children see different spatial
+                         * patterns, their identities diverge, and their
+                         * Hebbian targets diverge, and their topologies diverge.
+                         * Slow fold: XOR one bit per tick from the retina hash.
+                         * Identity drifts with experience, not overwritten. */
+                        if (octant_val != 0) {
+                            uint32_t rv = hash32((const uint8_t *)&octant_val, sizeof(octant_val));
+                            int bit_pos = (int)(child->total_ticks + r) % BS_MAXBITS;
+                            int cur = bs_get(&child->nodes[r].identity, bit_pos);
+                            bs_set(&child->nodes[r].identity, bit_pos, cur ^ (rv & 1));
+                        }
                     }
                 } else {
                     int n_inp = child->n_nodes > 1 ? child->n_nodes - 1 : 1;

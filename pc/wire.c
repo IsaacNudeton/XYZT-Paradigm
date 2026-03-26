@@ -235,15 +235,42 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
         int gy = coord_y(owner->coord) % YEE_GY;
         int gz = coord_z(owner->coord) % YEE_GZ;
 
-        int cx = gx / CUBE_DIM, cy = gy / CUBE_DIM, cz = gz / CUBE_DIM;
-        int bx = cx * CUBE_DIM, by = cy * CUBE_DIM, bz = cz * CUBE_DIM;
-
-        /* Gather 4x4x4 voxels — read from unified memory if available */
+        /* Topological retina: 8 nodes sample 8 corners of the unit cube
+         * at the parent's exact position. Each node sees a different voxel.
+         * Different parent positions → different voxels → different retina.
+         * Like V1: adjacent neurons, overlapping but distinct receptive fields.
+         * Wraps at grid boundaries (torus). */
         int lp = 0;
+        for (int lz = 0; lz < 2; lz++)
+            for (int ly = 0; ly < 2; ly++)
+                for (int lx = 0; lx < 2; lx++) {
+                    int vx = (gx + lx) % YEE_GX;
+                    int vy = (gy + ly) % YEE_GY;
+                    int vz = (gz + lz) % YEE_GZ;
+                    int vid = vx + vy * YEE_GX + vz * YEE_GX * YEE_GY;
+                    if (acc) {
+                        float raw = acc[vid] * 256.0f;
+                        retina_bufs[c][lp++] = (raw > 255.0f) ? 255 :
+                                               (raw < 0.0f) ? 0 : (uint8_t)raw;
+                    } else if (yee_substrate) {
+                        retina_bufs[c][lp++] = yee_substrate[vid];
+                    } else {
+                        retina_bufs[c][lp++] = 0;
+                    }
+                }
+        /* Fill rest of retina buffer with surrounding neighborhood.
+         * Expands from unit cube to 4×4×4 for full context. */
         for (int lz = 0; lz < CUBE_DIM; lz++)
             for (int ly = 0; ly < CUBE_DIM; ly++)
                 for (int lx = 0; lx < CUBE_DIM; lx++) {
-                    int vid = (bx+lx) + (by+ly)*YEE_GX + (bz+lz)*YEE_GX*YEE_GY;
+                    if (lp >= CUBE_SIZE) break;
+                    int vx = (gx - 1 + lx) % YEE_GX;
+                    int vy = (gy - 1 + ly) % YEE_GY;
+                    int vz = (gz - 1 + lz) % YEE_GZ;
+                    if (vx < 0) vx += YEE_GX;
+                    if (vy < 0) vy += YEE_GY;
+                    if (vz < 0) vz += YEE_GZ;
+                    int vid = vx + vy * YEE_GX + vz * YEE_GX * YEE_GY;
                     if (acc) {
                         float raw = acc[vid] * 256.0f;
                         retina_bufs[c][lp++] = (raw > 255.0f) ? 255 :
@@ -256,7 +283,7 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
                 }
 
         eng->child_pool[c].retina = retina_bufs[c];
-        eng->child_pool[c].retina_len = CUBE_SIZE;
+        eng->child_pool[c].retina_len = lp;
     }
     return 0;
 }
