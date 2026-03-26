@@ -773,12 +773,14 @@ int child_tick_once(Graph *g) {
             Node *b = &g->nodes[j];
             if (!b->alive || b->val < 128) continue;
 
-            /* Find a hidden node as destination (same logic as grow block).
-             * Retina nodes (0-7) are inputs — never wire TO them.
-             * Hidden nodes are 8..out-1, output is last. */
-            int out = g->n_nodes - 1;
+            /* Find a hidden node as destination.
+             * Retina nodes (0..n_retina-1) are inputs — never wire TO them.
+             * Hidden nodes start after retina, output found by name. */
+            int out = graph_output_node(g);
+            int n_retina = (g->n_nodes > 28) ? 27 : 8;  /* 27 or legacy 8 */
             int dst = -1;
-            for (int h = 8; h < out; h++) {
+            for (int h = n_retina; h < g->n_nodes; h++) {
+                if (h == out) continue;
                 if (h == i || h == j) continue;
                 if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
             }
@@ -919,10 +921,10 @@ int child_tick_once(Graph *g) {
             if (!g->nodes[i].alive || g->nodes[i].val == 0) continue;
             for (int j = i + 1; j < g->n_nodes; j++) {
                 if (!g->nodes[j].alive || g->nodes[j].val == 0) continue;
-                /* Find a downstream target: prefer existing hidden nodes (8..n-1, skip output),
-                 * fall back to output. Don't wire to retina (0-7). */
+                /* Find a downstream target: prefer hidden nodes, skip retina and output. */
+                int n_ret = (g->n_nodes > 28) ? 27 : 8;
                 int dst = -1;
-                for (int h = 8; h < g->n_nodes; h++) {
+                for (int h = n_ret; h < g->n_nodes; h++) {
                     if (h == out || h == i || h == j) continue;
                     if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
                 }
@@ -1072,15 +1074,13 @@ static int nest_spawn(Engine *eng, int node_id) {
     graph_init(&eng->child_pool[slot]);
     Graph *child = &eng->child_pool[slot];
 
-    /* 8 retina input nodes (one per octant of parent's 4^3 cube).
-     * Each retina node reads spatial substrate from its octant.
-     * Replaces scalar int32_t passthrough — children see parent's
-     * spatial structure directly via zero-copy retina pointer. */
-    /* Identity derivation: each child node inherits parent identity
-     * XOR'd with a position hash. Different nodes get different identities.
-     * Hebbian can differentiate. No zero-identity tissue. */
+    /* 27 retina input nodes (3×3×3 spatial sampling).
+     * Each node reads one voxel from the parent's local neighborhood.
+     * 27 distinct observers at 27 distinct positions — like cortical
+     * vertices on a surface. More observers = more spatial resolution
+     * = sharper identity differentiation through the fold. */
     char rname[32];
-    for (int r = 0; r < 8; r++) {
+    for (int r = 0; r < 27; r++) {
         snprintf(rname, 32, "retina_%d", r);
         int rid = graph_add(child, rname, 0, &eng->T);
         if (rid >= 0) {
@@ -1096,8 +1096,9 @@ static int nest_spawn(Engine *eng, int node_id) {
             child->nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
-    /* 4 hidden nodes — intermediate processing layer. */
-    for (int h = 0; h < 4; h++) {
+    /* 8 hidden nodes — intermediate processing layer.
+     * Scaled from 4 to match the larger retina surface. */
+    for (int h = 0; h < 8; h++) {
         char hname[32];
         snprintf(hname, 32, "hidden_%d", h);
         int hid = graph_add(child, hname, 0, &eng->T);
@@ -1128,22 +1129,25 @@ static int nest_spawn(Engine *eng, int node_id) {
         child->nodes[out].plasticity = PLASTICITY_DEFAULT;
     }
 
-    /* Bootstrap wiring: the seed topology that makes emergence possible.
-     * Like the .lang's bootstrap ROM — you need initial structure to grow from.
-     * Retina pairs → hidden nodes, hidden → output.
-     * Hebbian will reshape these. Grow will add more. Prune will kill dead ones.
-     * But without this seed, there's no propagation path and no co-activation
-     * for the grow loop to detect. Bootstrap deadlock otherwise. */
-    for (int r = 0; r < 8; r += 2) {
-        int hidden_target = 8 + r / 2;
-        if (hidden_target < child->n_nodes)
-            graph_wire(child, r, r + 1, hidden_target, 128, 0);
-    }
+    /* Bootstrap wiring: seed topology for 27-retina + 8-hidden + output.
+     * Groups of ~3 adjacent retina nodes → each hidden node.
+     * Hidden nodes → output. Hebbian reshapes. Grow adds. Prune kills dead.
+     * Without this seed: bootstrap deadlock. */
     {
+        int n_retina = 27, n_hidden = 8;
+        int hidden_base = n_retina;  /* hidden nodes start after retina */
+        /* Wire retina groups to hidden: every 3-4 retina nodes share a hidden target */
+        for (int r = 0; r < n_retina; r++) {
+            int r2 = (r + 1) % n_retina;
+            int h_target = hidden_base + (r * n_hidden / n_retina);
+            if (h_target < child->n_nodes && r < child->n_nodes && r2 < child->n_nodes)
+                graph_wire(child, r, r2, h_target, 128, 0);
+        }
+        /* Wire hidden pairs to output */
         int out_idx = graph_output_node(child);
-        for (int h = 0; h < 4; h++) {
-            int h1 = 8 + h;
-            int h2 = 8 + ((h + 1) % 4);
+        for (int h = 0; h < n_hidden; h++) {
+            int h1 = hidden_base + h;
+            int h2 = hidden_base + ((h + 1) % n_hidden);
             if (h1 < child->n_nodes && h2 < child->n_nodes && out_idx < child->n_nodes)
                 graph_wire(child, h1, h2, out_idx, 64, 0);
         }
@@ -1613,10 +1617,10 @@ void engine_tick(Engine *eng) {
                 Graph *child = &eng->child_pool[c];
 
                 /* Inject retina */
-                if (child->retina && child->retina_len >= 8) {
-                    for (int r = 0; r < 8 && r < child->n_nodes; r++) {
-                        /* Topological retina: first 8 bytes are the 8 corners
-                         * of the unit cube at the parent's exact position.
+                if (child->retina && child->retina_len >= 27) {
+                    for (int r = 0; r < 27 && r < child->n_nodes; r++) {
+                        /* Topological retina: first 27 bytes are the 3×3×3
+                         * neighborhood at the parent's position.
                          * Each node sees one distinct voxel. Direct read. */
                         int32_t octant_val = (int32_t)child->retina[r];
                         child->nodes[r].val = octant_val;
