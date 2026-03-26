@@ -197,9 +197,6 @@ __global__ void kernel_yee_accum(float *V_accum, float *V_signed,
 
 #define YEE_GAIN_THRESHOLD 0.05f   /* min accum to be "alive" */
 #define YEE_GAIN_RATE      0.02f   /* fraction of supply per tick */
-#define YEE_GAIN_WARMUP    155     /* SUBSTRATE_INT: let Hebbian carve first */
-
-static uint64_t yee_tick_count = 0; /* tracks ticks for gain warmup */
 
 __global__ void kernel_yee_gain(float *V, const float *V_accum,
                                  const float *L, float threshold,
@@ -373,8 +370,6 @@ extern "C" void yee_destroy(void) {
 }
 
 extern "C" int yee_tick(void) {
-    yee_tick_count++;
-
     /* Step 1: Update V from I divergence */
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
 
@@ -388,13 +383,11 @@ extern "C" int yee_tick(void) {
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
 
-    /* Step 4: Gain — only after Hebbian has carved the L-field.
-     * First SUBSTRATE_INT ticks: learn without gain. All voxels start
-     * at L_WIRE — gain would amplify everything in a uniform conductor.
-     * After warmup: L-field has walls and wires, gain is selective. */
-    if (yee_tick_count > YEE_GAIN_WARMUP)
-        kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
-            d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
+    /* Step 4: Gain — self-sustaining signal restoration.
+     * Where accum says signal is alive and L is low, amplify V.
+     * The substrate sustains its own signals. */
+    kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
+        d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
 
     /* Copy current V to V_prev for next tick's autocorrelation */
     YEE_CHECK(cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice));
@@ -409,15 +402,13 @@ extern "C" int yee_tick(void) {
  * CPU can do work while GPU runs. Call yee_sync() before
  * reading GPU state or injecting new sources. */
 extern "C" int yee_tick_async(void) {
-    yee_tick_count++;
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
     YEE_CHECK(cudaDeviceSynchronize());  /* V→I dependency (leapfrog) */
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
-    if (yee_tick_count > YEE_GAIN_WARMUP)
-        kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
-            d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
+    kernel_yee_gain<<<YEE_GRID, YEE_BLOCK>>>(
+        d_V, d_V_accum, d_L, YEE_GAIN_THRESHOLD, YEE_GAIN_RATE, YEE_N);
     cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice);
     /* I, accum, gain still running — CPU is free to work */
     return 0;
