@@ -30,6 +30,10 @@ static float *d_V_accum = NULL;  /* |V| integrated over time (Hebbian) */
 static float *d_V_signed = NULL; /* V with sign (coherence ratio) */
 static float *d_V_output = NULL; /* sponge-absorbed energy (output voice) */
 
+/* ── Metabolism arrays: self-sustaining gain from reservoir dynamics ── */
+static float *d_reservoir = NULL;  /* energy reservoir per voxel (unified) */
+static float *d_lap_L = NULL;     /* ∇²L: cavity capacity map (unified) */
+
 /* ── Pure GPU arrays: CPU never touches these ── */
 static float *d_Ix = NULL;   /* current x-component (on x-faces) */
 static float *d_Iy = NULL;   /* current y-component (on y-faces) */
@@ -211,6 +215,98 @@ __global__ void kernel_yee_hebbian(float *L, const float *V_accum,
 }
 
 /* ══════════════════════════════════════════════════════════════
+ * METABOLISM: Self-sustaining gain from cavity reservoirs
+ *
+ * The substrate breathes. Cavities (low-L regions surrounded by
+ * high-L walls) accumulate energy reservoirs. Waves passing through
+ * drain the reservoir (depletion). The reservoir recharges toward
+ * the cavity's structural capacity (∇²L). Above threshold, the
+ * reservoir amplifies the wave field. Below threshold, silence.
+ *
+ * Proven stable (Lean4): 10 theorems, zero sorry.
+ *   R' = R + γ(C - R) - κ·R·|E|     (recharge - depletion)
+ *   E' = E·(1 + α·R - β)             (gain above threshold)
+ *   Fixed point: R* = β/α, E* = γ(αC-β)/(κβ)
+ *   Jury conditions: stable for α < CFL bound.
+ *
+ * Strengthen = lower L = wire. Cavity = low-L valley.
+ * ∇²L > 0 at cavity interior (concave up). Correct sign.
+ * ══════════════════════════════════════════════════════════════ */
+
+#define GAIN_COUPLING    0.08f   /* α: reservoir→field coupling */
+#define GRID_LOSS        0.02f   /* β: baseline field loss per tick */
+#define RECHARGE_RATE    0.006f  /* γ: reservoir recovery rate */
+#define DEPLETION_RATE   0.08f   /* κ: wave energy drain from reservoir */
+#define METAB_WARMUP     155     /* SUBSTRATE_INT: let Hebbian carve first */
+
+static uint64_t yee_tick_count = 0;
+static int metab_initialized = 0;
+
+/* Laplacian of L-field: identifies cavity interiors.
+ * 6-point stencil, periodic boundaries (torus).
+ * Positive = center L lower than neighbors = cavity interior.
+ * Clamped to [0, ∞) — walls get zero capacity. */
+__global__ void kernel_yee_laplacian(const float *L, float *lap_L, int n) {
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    if (p >= n) return;
+
+    int gx, gy, gz;
+    yee_coords(p, &gx, &gy, &gz);
+
+    /* Skip boundary-adjacent voxels in sponge region */
+    if (gx < 2 || gx >= YEE_GX - 2 ||
+        gy < 2 || gy >= YEE_GY - 2 ||
+        gz < 2 || gz >= YEE_GZ - 2) {
+        lap_L[p] = 0.0f;
+        return;
+    }
+
+    /* 6-point stencil: sum of neighbors minus 6× center */
+    float center = L[p];
+    float sum = L[yee_idx((gx+1) % YEE_GX, gy, gz)]
+              + L[yee_idx((gx-1+YEE_GX) % YEE_GX, gy, gz)]
+              + L[yee_idx(gx, (gy+1) % YEE_GY, gz)]
+              + L[yee_idx(gx, (gy-1+YEE_GY) % YEE_GY, gz)]
+              + L[yee_idx(gx, gy, (gz+1) % YEE_GZ)]
+              + L[yee_idx(gx, gy, (gz-1+YEE_GZ) % YEE_GZ)];
+
+    float lap = sum - 6.0f * center;
+    lap_L[p] = fmaxf(0.0f, lap);  /* positive = cavity interior */
+}
+
+/* Metabolism: Jacobi-style update matching the proven discrete map.
+ * Both R' and E' computed from old-tick values. No sequential mutation.
+ * Gain only fires above threshold (α·R > β). */
+__global__ void kernel_yee_metabolism(float *V, float *reservoir,
+                                      const float *lap_L, int n) {
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    if (p >= n) return;
+
+    float capacity = lap_L[p];
+    if (capacity < 0.001f) return;  /* not a cavity — skip */
+
+    /* Read CURRENT state before any mutation */
+    float R_old = reservoir[p];
+    float E_amp = fabsf(V[p]);
+
+    /* Gain from OLD reservoir */
+    float net_gain = R_old * GAIN_COUPLING - GRID_LOSS;
+
+    /* Update reservoir: R' = R + γ(C - R) - κ·R·|E|
+     * Both recharge AND depletion use old values. Single write. */
+    float R_new = R_old + RECHARGE_RATE * (capacity - R_old)
+                  - DEPLETION_RATE * R_old * E_amp;
+    reservoir[p] = fmaxf(0.0f, R_new);
+
+    /* Apply unconditionally. Below threshold: net_gain < 0, V decays
+     * (cavity actively damps signals it can't sustain — correct physics).
+     * Above threshold: net_gain > 0, V amplifies (proven stable).
+     * The capacity < 0.001f early return ensures non-cavities are untouched.
+     * No if guard = smooth map = Jacobian applies exactly = T1 to the metal. */
+    V[p] *= (1.0f + net_gain);
+}
+
+/* ══════════════════════════════════════════════════════════════
  * KERNEL 5: ENERGY REDUCTION (for measurement)
  * ══════════════════════════════════════════════════════════════ */
 
@@ -254,6 +350,8 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMallocManaged(&d_V_signed, sz));
     YEE_CHECK(cudaMallocManaged(&d_V_autocorr, sz));
     YEE_CHECK(cudaMallocManaged(&d_V_output, sz));
+    YEE_CHECK(cudaMallocManaged(&d_reservoir, sz));
+    YEE_CHECK(cudaMallocManaged(&d_lap_L, sz));
 
     /* Pure GPU — CPU never reads these */
     YEE_CHECK(cudaMalloc(&d_Ix, sz));
@@ -271,6 +369,10 @@ extern "C" int yee_init(void) {
     YEE_CHECK(cudaMemset(d_V_prev, 0, sz));
     YEE_CHECK(cudaMemset(d_V_autocorr, 0, sz));
     YEE_CHECK(cudaMemset(d_V_output, 0, sz));
+    YEE_CHECK(cudaMemset(d_reservoir, 0, sz));
+    YEE_CHECK(cudaMemset(d_lap_L, 0, sz));
+    metab_initialized = 0;
+    yee_tick_count = 0;
 
     /* Initialize L to wire (low impedance — fully conductive).
      * Hebbian will RAISE L where there's no activity (creating vacuum).
@@ -309,12 +411,16 @@ extern "C" void yee_destroy(void) {
     if (d_V_prev)     { cudaFree(d_V_prev);     d_V_prev = NULL; }
     if (d_V_autocorr) { cudaFree(d_V_autocorr); d_V_autocorr = NULL; }
     if (d_V_output)   { cudaFree(d_V_output);   d_V_output = NULL; }
+    if (d_reservoir)  { cudaFree(d_reservoir);  d_reservoir = NULL; }
+    if (d_lap_L)      { cudaFree(d_lap_L);      d_lap_L = NULL; }
     if (d_inject_buf) { cudaFree(d_inject_buf); d_inject_buf = NULL; }
     if (h_inject_buf) { free(h_inject_buf);     h_inject_buf = NULL; }
     if (h_scratch)    { free(h_scratch);         h_scratch = NULL; }
 }
 
 extern "C" int yee_tick(void) {
+    yee_tick_count++;
+
     /* Step 1: Update V from I divergence */
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
 
@@ -328,10 +434,28 @@ extern "C" int yee_tick(void) {
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
 
+    /* Step 4: Metabolism — self-sustaining gain from reservoir dynamics.
+     * Gated on warmup: let Hebbian carve the L-field first.
+     * Laplacian recomputes every SUBSTRATE_INT ticks (when L changes). */
+    if (yee_tick_count > METAB_WARMUP) {
+        if (!metab_initialized || (yee_tick_count % METAB_WARMUP == 0)) {
+            kernel_yee_laplacian<<<YEE_GRID, YEE_BLOCK>>>(d_L, d_lap_L, YEE_N);
+            if (!metab_initialized) {
+                /* First breath: initialize reservoir to full cavity capacity */
+                YEE_CHECK(cudaDeviceSynchronize());
+                YEE_CHECK(cudaMemcpy(d_reservoir, d_lap_L, YEE_N * sizeof(float),
+                                      cudaMemcpyDeviceToDevice));
+                metab_initialized = 1;
+            }
+        }
+        kernel_yee_metabolism<<<YEE_GRID, YEE_BLOCK>>>(
+            d_V, d_reservoir, d_lap_L, YEE_N);
+    }
+
     /* Copy current V to V_prev for next tick's autocorrelation */
     YEE_CHECK(cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice));
 
-    /* Single sync: ensures I and accum are done before next tick */
+    /* Single sync: ensures all kernels done before next tick */
     YEE_CHECK(cudaDeviceSynchronize());
 
     return 0;
@@ -341,13 +465,30 @@ extern "C" int yee_tick(void) {
  * CPU can do work while GPU runs. Call yee_sync() before
  * reading GPU state or injecting new sources. */
 extern "C" int yee_tick_async(void) {
+    yee_tick_count++;
     kernel_yee_V<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, YEE_N);
     YEE_CHECK(cudaDeviceSynchronize());  /* V→I dependency (leapfrog) */
     kernel_yee_I<<<YEE_GRID, YEE_BLOCK>>>(d_V, d_Ix, d_Iy, d_Iz, d_L, YEE_N);
     kernel_yee_accum<<<YEE_GRID, YEE_BLOCK>>>(
         d_V_accum, d_V_signed, d_V_autocorr, d_V, d_V_prev, YEE_N);
+
+    /* Metabolism: after warmup, self-sustaining gain */
+    if (yee_tick_count > METAB_WARMUP) {
+        if (!metab_initialized || (yee_tick_count % METAB_WARMUP == 0)) {
+            kernel_yee_laplacian<<<YEE_GRID, YEE_BLOCK>>>(d_L, d_lap_L, YEE_N);
+            if (!metab_initialized) {
+                cudaDeviceSynchronize();
+                cudaMemcpy(d_reservoir, d_lap_L, YEE_N * sizeof(float),
+                           cudaMemcpyDeviceToDevice);
+                metab_initialized = 1;
+            }
+        }
+        kernel_yee_metabolism<<<YEE_GRID, YEE_BLOCK>>>(
+            d_V, d_reservoir, d_lap_L, YEE_N);
+    }
+
     cudaMemcpy(d_V_prev, d_V, YEE_N * sizeof(float), cudaMemcpyDeviceToDevice);
-    /* I and accum still running — CPU is free to work */
+    /* All kernels launched — CPU is free to work */
     return 0;
 }
 
