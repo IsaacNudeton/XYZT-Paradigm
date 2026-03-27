@@ -765,27 +765,30 @@ int child_tick_once(Graph *g) {
      * ══════════════════════════════════════════════════════════════ */
     int new_edges_grown = 0;
     
-    for (int i = 0; i < g->n_nodes; i++) {
+    /* Hoist output node and retina count outside the pair scan */
+    int out_node = graph_output_node(g);
+    int n_retina = (g->n_nodes > 28) ? 27 : 8;
+
+    /* Only scan co-active retina pairs — not all node pairs.
+     * Hidden and output nodes don't drive Hebbian wiring directly;
+     * they receive from retina co-activation. O(n_retina²) not O(n²). */
+    for (int i = 0; i < n_retina && i < g->n_nodes; i++) {
         Node *a = &g->nodes[i];
         if (!a->alive || a->val < 128) continue;
 
-        for (int j = i + 1; j < g->n_nodes; j++) {
+        for (int j = i + 1; j < n_retina && j < g->n_nodes; j++) {
             Node *b = &g->nodes[j];
             if (!b->alive || b->val < 128) continue;
 
-            /* Find a hidden node as destination.
-             * Retina nodes (0..n_retina-1) are inputs — never wire TO them.
-             * Hidden nodes start after retina, output found by name. */
-            int out = graph_output_node(g);
-            int n_retina = (g->n_nodes > 28) ? 27 : 8;  /* 27 or legacy 8 */
+            /* Find a hidden node as destination. */
             int dst = -1;
             for (int h = n_retina; h < g->n_nodes; h++) {
-                if (h == out) continue;
+                if (h == out_node) continue;
                 if (h == i || h == j) continue;
                 if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
             }
-            if (dst < 0 && graph_find_edge(g, i, j, out) < 0)
-                dst = out;
+            if (dst < 0 && graph_find_edge(g, i, j, out_node) < 0)
+                dst = out_node;
 
             if (dst >= 0) {
                 int e_idx = graph_find_edge(g, i, j, dst);
