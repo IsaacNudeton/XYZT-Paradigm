@@ -187,17 +187,26 @@ The rest is physics.
 
 ---
 
-## What's NOT Claimed
+## What's NOT YET Tested
 
-- This is not claimed to be competitive with transformers at language tasks.
-- The engine has never been tested on language generation, code generation,
-  or any standard AI benchmark.
-- The 295 tests cover engine mechanics (topology, collision, coherence,
-  save/load, inference, prediction, self-observation) — not task performance.
+- The engine has not been tested on language, code, or standard benchmarks.
+  Not because the architecture can't — because the experiment hasn't been run.
+- The 295 tests cover engine mechanics, not task performance.
 - T3 measures child divergence, not reasoning capability.
 - The autonomous loop (SESSION_HANDOFF.md) is specified but not implemented.
-- Whether the L-field can learn compositional structure from real data
-  at scale is an experimental question, not a proven claim.
+- Whether the L-field learns compositional structure from real data at
+  scale is the experiment that determines everything.
+
+This is not the same category as transformers. Transformers are frozen
+functions that predict the next most likely token. This engine learns
+every tick, verifies predictions against physics, observes itself, and
+feeds its output back as input. One parameter vs trillions. Physics-
+verified vs statistically likely. Always learning vs frozen at inference.
+
+The autonomous loop doesn't compete with GPT. It replaces the paradigm.
+That claim becomes T1 when the loop closes and the experiment runs.
+Until then, it's T2 — strong signal, architecturally derived, untested
+at scale.
 
 ---
 
