@@ -760,38 +760,54 @@ static int graph_output_node(const Graph *g) {
 
 int child_tick_once(Graph *g) {
     /* ══════════════════════════════════════════════════════════════
-     * NEW: Child Hebbian Learning (Retinal Co-activation)
-     * Direct wiring between co-active retina nodes
+     * Child Hebbian Learning (Retinal Co-activation)
+     *
+     * Positional edge map: address IS meaning. Edge (a,b,d) lives
+     * at position a*N*N + b*N + d in a flat array. O(1) lookup.
+     * No scanning. No hashing. You know where it is because its
+     * address IS what it is.
      * ══════════════════════════════════════════════════════════════ */
     int new_edges_grown = 0;
-    
+
     /* Hoist output node and retina count outside the pair scan */
     int out_node = graph_output_node(g);
     int n_retina = (g->n_nodes > 28) ? 27 : 8;
+    int N = g->n_nodes;
+    if (N > 64) N = 64;  /* CHILD_MAX_NODES */
+
+    /* Positional edge map for O(1) lookup.
+     * Uses g->edge_map if pre-built by caller (parallel phase).
+     * Falls back to linear scan if not available. */
+    int map_size = N * N * N;
+    int *edge_at = g->edge_map;
 
     /* Only scan co-active retina pairs — not all node pairs.
      * Hidden and output nodes don't drive Hebbian wiring directly;
-     * they receive from retina co-activation. O(n_retina²) not O(n²). */
-    for (int i = 0; i < n_retina && i < g->n_nodes; i++) {
+     * they receive from retina co-activation. */
+    for (int i = 0; i < n_retina && i < N; i++) {
         Node *a = &g->nodes[i];
         if (!a->alive || a->val < 128) continue;
 
-        for (int j = i + 1; j < n_retina && j < g->n_nodes; j++) {
+        for (int j = i + 1; j < n_retina && j < N; j++) {
             Node *b = &g->nodes[j];
             if (!b->alive || b->val < 128) continue;
 
-            /* Find a hidden node as destination. */
+            /* Find a hidden node as destination — positional lookup */
             int dst = -1;
-            for (int h = n_retina; h < g->n_nodes; h++) {
-                if (h == out_node) continue;
-                if (h == i || h == j) continue;
-                if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
+            for (int h = n_retina; h < N; h++) {
+                if (h == out_node || h == i || h == j) continue;
+                if (edge_at && edge_at[i * N * N + j * N + h] == 0) { dst = h; break; }
+                if (!edge_at && graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
             }
-            if (dst < 0 && graph_find_edge(g, i, j, out_node) < 0)
-                dst = out_node;
+            if (dst < 0) {
+                int has = edge_at ? (edge_at[i * N * N + j * N + out_node] != 0) :
+                                    (graph_find_edge(g, i, j, out_node) >= 0);
+                if (!has) dst = out_node;
+            }
 
             if (dst >= 0) {
-                int e_idx = graph_find_edge(g, i, j, dst);
+                int e_idx = edge_at ? (edge_at[i * N * N + j * N + dst] - 1) :
+                                      graph_find_edge(g, i, j, dst);
                 if (e_idx >= 0) {
                     /* Edge exists to this dst: strengthen */
                     int nw = g->edges[e_idx].weight + 2;
@@ -801,11 +817,17 @@ int child_tick_once(Graph *g) {
                 } else if (new_edges_grown < 10) {
                     graph_wire(g, i, j, dst, 16, 0);
                     new_edges_grown++;
+                    /* Update map for new edge */
+                    if (edge_at && g->n_edges > 0) {
+                        int ne = g->n_edges - 1;
+                        int a2 = g->edges[ne].src_a, b2 = g->edges[ne].src_b, d2 = g->edges[ne].dst;
+                        if (a2 < N && b2 < N && d2 < N)
+                            edge_at[a2 * N * N + b2 * N + d2] = ne + 1;
+                    }
                 }
             }
         }
     }
-
     /* ══════════════════════════════════════════════════════════════
      * Original TLine propagation
      * ══════════════════════════════════════════════════════════════ */
@@ -1666,13 +1688,38 @@ void engine_tick(Engine *eng) {
                 n_work++;
             }
 
-            /* Phase B: tick all non-idle children in parallel */
+            /* Phase B: tick all non-idle children in parallel.
+             * Each child gets a positional edge map allocated once,
+             * rebuilt every tick (O(E) where E < 200), freed after. */
             { int w;
+            for (w = 0; w < n_work; w++) {
+                Graph *child = &eng->child_pool[child_work[w]];
+                int cn = child->n_nodes;
+                if (cn > 64) cn = 64;
+                child->edge_map = (int *)malloc(cn * cn * cn * sizeof(int));
+            }
             #pragma omp parallel for schedule(dynamic)
             for (w = 0; w < n_work; w++) {
                 Graph *child = &eng->child_pool[child_work[w]];
-                for (int ct = 0; ct < 64; ct++)
+                int cn = child->n_nodes;
+                if (cn > 64) cn = 64;
+                int msz = cn * cn * cn;
+                for (int ct = 0; ct < 64; ct++) {
+                    /* Rebuild map each tick — O(E), E < 200. No calloc. */
+                    if (child->edge_map) {
+                        memset(child->edge_map, 0, msz * sizeof(int));
+                        for (int e = 0; e < child->n_edges; e++) {
+                            int a = child->edges[e].src_a, b = child->edges[e].src_b, d = child->edges[e].dst;
+                            if (a < cn && b < cn && d < cn)
+                                child->edge_map[a * cn * cn + b * cn + d] = e + 1;
+                        }
+                    }
                     if (!child_tick_once(child)) break;
+                }
+            }
+            for (w = 0; w < n_work; w++) {
+                free(eng->child_pool[child_work[w]].edge_map);
+                eng->child_pool[child_work[w]].edge_map = NULL;
             }
             }
 

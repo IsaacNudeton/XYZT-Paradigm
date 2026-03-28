@@ -374,6 +374,7 @@ typedef struct {
     int      local_heartbeat;   /* how many local heartbeats this child has lived */
     uint8_t  drive;             /* 0=curiosity, 1=frustration, 2=boredom */
     uint16_t idle_run;           /* consecutive parent ticks with zero output */
+    int     *edge_map;           /* positional edge map: [a*N*N+b*N+d] = edge_idx+1 */
 
     /* Z-bucket cache for O(E+N) propagation (rebuilt when topology changes) */
     int     *z_edge_idx;        /* edge indices sorted by dest z-level */
