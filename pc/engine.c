@@ -1303,8 +1303,24 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
      *
      * Fallback: 3-tier hash of first 12 identity bytes.
      *   Fast but von Neumann at the front door. */
-    /* Retina placement: wave physics decides coordinates */
-    if (data->len >= 8 && yee_is_initialized()) {
+    /* Retina placement: wave physics decides coordinates.
+     * Internal nodes (_voice_, _so_) inherit coords from their source —
+     * they're echoes, not new data. No wave probe, no grid wipe. */
+    if (name[0] == '_') {
+        /* Internal node: place near the graph's center of mass */
+        int cx = 0, cy = 0, cz = 0, alive = 0;
+        for (int i = 0; i < g0->n_nodes; i++) {
+            if (!g0->nodes[i].alive || i == id0) continue;
+            cx += coord_x(g0->nodes[i].coord);
+            cy += coord_y(g0->nodes[i].coord);
+            cz += coord_z(g0->nodes[i].coord);
+            alive++;
+        }
+        if (alive > 0) {
+            g0->nodes[id0].coord = coord_pack(cx / alive, cy / alive, cz / alive);
+        }
+        g0->z_cache_n_nodes = -1;
+    } else if (data->len >= 8 && yee_is_initialized()) {
         uint8_t raw[64];
         int raw_len = data->len / 8;
         if (raw_len > 64) raw_len = 64;

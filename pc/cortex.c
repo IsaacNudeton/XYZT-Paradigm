@@ -224,7 +224,9 @@ int cortex_predict(Cortex *c) {
 
     if (n_preds == 0) return 0;
 
-    /* Step 3: Clear wave state, inject predictions at reduced amplitude */
+    /* Step 3: Clear and inject predictions at reduced amplitude.
+     * Predict needs its own clean grid — hypotheses must propagate
+     * without interference from prior wave state. */
     yee_clear_fields();
 
     /* Reuse the YeeSource layout (voxel_id, amplitude, strength) */
@@ -286,6 +288,10 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
     if (!c->gpu_ok) return 0;
 
     for (int cycle = 0; cycle < n_cycles; cycle++) {
+
+        /* 0. CLEAR — E/H fields are ephemeral scratch space.
+         * L-field persists. Each cycle starts clean. */
+        yee_clear_fields();
 
         /* 1. TICK — physics + graph run for one SUBSTRATE_INT cycle */
         for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
