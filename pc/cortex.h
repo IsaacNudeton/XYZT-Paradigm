@@ -47,6 +47,12 @@ int cortex_predict(Cortex *c);
  * itself think. Returns the node ID of the self-observation, or -1. */
 int cortex_self_observe(Cortex *c);
 
+/* Autonomous heartbeat: the full loop running continuously.
+ * Perceive → predict → verify → self-observe → voice → feedback.
+ * No human command needed. The engine thinks on its own.
+ * Returns total cycles completed. */
+int cortex_heartbeat(Cortex *c, int n_cycles);
+
 /* Cleanup */
 void cortex_destroy(Cortex *c);
 

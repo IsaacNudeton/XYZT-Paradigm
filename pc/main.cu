@@ -1503,10 +1503,46 @@ int main(int argc, char *argv[]) {
             } else if (strncmp(line, "load ", 5) == 0) {
                 cortex_load(&ctx, line + 5);
                 printf("  Loaded.\n");
+            } else if (strncmp(line, "heartbeat", 9) == 0) {
+                int n = 10;
+                if (len > 10) n = atoi(line + 10);
+                if (n < 1) n = 1; if (n > 10000) n = 10000;
+                printf("  Heartbeat: %d autonomous cycles...\n", n);
+                int done = cortex_heartbeat(&ctx, n);
+                Graph *g = &ctx.eng.shells[0].g;
+                printf("  %d cycles. nodes=%d edges=%d children=%d drive=%d\n",
+                       done, g->n_nodes, g->n_edges, ctx.eng.n_children, g->drive);
             } else {
-                printf("  Unknown. Try: ingest, tick, query, save, load, quit\n");
+                printf("  Unknown. Try: ingest, tick, query, predict, observe, heartbeat, save, load, quit\n");
             }
         }
+        cortex_destroy(&ctx);
+    } else if (strcmp(argv[1], "heartbeat") == 0) {
+        /* Standalone autonomous mode: init, load, heartbeat N cycles */
+        Cortex ctx;
+        if (cortex_init(&ctx) != 0) { printf("Cortex init failed\n"); return 1; }
+        if (argc >= 3) {
+            if (cortex_load(&ctx, argv[2]) == 0)
+                printf("Loaded: %s\n", argv[2]);
+        }
+        int n = (argc >= 4) ? atoi(argv[3]) : 100;
+        if (n < 1) n = 1;
+        printf("=== AUTONOMOUS HEARTBEAT: %d cycles ===\n\n", n);
+        printf("The engine is on its own.\n");
+        printf("Perceive → predict → verify → self-observe → voice → feedback.\n\n");
+        int done = cortex_heartbeat(&ctx, n);
+        Graph *g = &ctx.eng.shells[0].g;
+        printf("\n=== HEARTBEAT COMPLETE ===\n");
+        printf("  Cycles: %d\n", done);
+        printf("  Nodes: %d\n", g->n_nodes);
+        printf("  Edges: %d\n", g->n_edges);
+        printf("  Children: %d\n", ctx.eng.n_children);
+        printf("  Drive: %s\n", g->drive == 0 ? "curiosity" :
+                                g->drive == 1 ? "frustration" : "boredom");
+        printf("  Ingested: %llu\n", (unsigned long long)ctx.n_ingested);
+        printf("  Total ticks: %llu\n", (unsigned long long)ctx.eng.total_ticks);
+        engine_save(&ctx.eng, "state.xyzt");
+        printf("  State saved to state.xyzt\n");
         cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "sing") == 0 && argc >= 3) {
         /* Sonify the L-field: knowledge as a chord, dreaming as a fade */

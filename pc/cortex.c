@@ -268,6 +268,92 @@ int cortex_predict(Cortex *c) {
     return verified;
 }
 
+/* ══════════════════════════════════════════════════════════════
+ * THE AUTONOMOUS HEARTBEAT
+ *
+ * Every component already existed. This function connects them.
+ * Each cycle: tick → sense → voice → predict → self-observe → feedback.
+ * The output feeds back as input. x = f(x). The loop closes.
+ *
+ * The engine turns on.
+ * ══════════════════════════════════════════════════════════════ */
+
+extern int wire_output_decode(uint8_t *decoded, int max_bytes);
+extern int wire_retina_inject(const uint8_t *data, int len, float amplitude);
+extern int yee_tick(void);
+
+int cortex_heartbeat(Cortex *c, int n_cycles) {
+    if (!c->gpu_ok) return 0;
+
+    for (int cycle = 0; cycle < n_cycles; cycle++) {
+
+        /* 1. TICK — physics + graph run for one SUBSTRATE_INT cycle */
+        for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
+            wire_engine_to_yee(&c->eng);
+            yee_tick_async();
+            engine_tick(&c->eng);
+            yee_sync();
+        }
+
+        /* 2. SENSE — read the grid into the graph */
+        wire_yee_retinas(&c->eng, c->yee_sub);
+        wire_yee_to_engine(&c->eng);
+        yee_hebbian(0.01f, 0.005f);
+
+        /* 3. VOICE — read the engine's own output.
+         * The sponge has been absorbing boundary energy every tick.
+         * Whatever survived propagation through the L-field IS the voice. */
+        uint8_t voice[64];
+        int voice_len = wire_output_decode(voice, 64);
+
+        /* 4. PREDICT — graph proposes, physics verifies.
+         * 0.3x amplitude hypotheses. Sponge kills wrong ones.
+         * Verified predictions strengthen edges. */
+        int verified = cortex_predict(c);
+
+        /* 5. SELF-OBSERVE — every 4th cycle.
+         * The engine reads its own resonance pattern, encodes it,
+         * and ingests it as a new node. The engine sees itself.
+         * Not every cycle — too much self-nesting floods the graph. */
+        if (cycle % 4 == 0) {
+            cortex_self_observe(c);
+        }
+
+        /* 6. FEEDBACK — voice re-enters through retina.
+         * The engine hears itself speak. Output becomes input.
+         * x = f(x). The loop closes here. */
+        if (voice_len > 0) {
+            char vname[64];
+            snprintf(vname, 64, "_voice_%06llu",
+                     (unsigned long long)c->eng.total_ticks);
+            BitStream bs;
+            encode_bytes(&bs, voice, voice_len);
+            engine_ingest(&c->eng, vname, &bs);
+            c->n_ingested++;
+        }
+
+        /* 7. DRIVE — emotional states trigger actions.
+         * Frustration: explore (dream with thermal noise).
+         * Boredom: introspect (extra self-observation).
+         * Curiosity: keep perceiving (default — do nothing extra). */
+        uint8_t drive = c->eng.shells[0].g.drive;
+        if (drive == 1) {
+            /* Frustrated — dream: inject noise, see what resonates */
+            DreamResult dreams[4];
+            infer_dream(&c->eng, dreams, 4, 100);
+        } else if (drive == 2 && cycle % 4 != 0) {
+            /* Bored — extra introspection (if not already self-observing) */
+            cortex_self_observe(c);
+        }
+        /* drive == 0: curiosity. The default tick loop IS curiosity. */
+
+        /* 8. PERSIST */
+        engine_save(&c->eng, "state.xyzt");
+    }
+
+    return n_cycles;
+}
+
 void cortex_destroy(Cortex *c) {
     free(c->yee_sub);
     c->yee_sub = NULL;
