@@ -774,6 +774,10 @@ int child_tick_once(Graph *g) {
     int n_retina = (g->n_nodes > 28) ? 27 : 8;
     int N = g->n_nodes;
     if (N > 64) N = 64;  /* CHILD_MAX_NODES */
+    /* Cap N to edge_map allocation size to prevent overflow when
+     * child grows during the 64-tick cycle */
+    if (g->edge_map && g->edge_map_n > 0 && N > g->edge_map_n)
+        N = g->edge_map_n;
 
     /* Positional edge map for O(1) lookup.
      * Uses g->edge_map if pre-built by caller (parallel phase).
@@ -1099,13 +1103,16 @@ static int nest_spawn(Engine *eng, int node_id) {
     graph_init(&eng->child_pool[slot]);
     Graph *child = &eng->child_pool[slot];
 
-    /* 27 retina input nodes (3×3×3 spatial sampling).
-     * Each node reads one voxel from the parent's local neighborhood.
-     * 27 distinct observers at 27 distinct positions — like cortical
-     * vertices on a surface. More observers = more spatial resolution
-     * = sharper identity differentiation through the fold. */
+    /* Retina input nodes: 3×3×D_z spatial sampling.
+     * 3D: 27 nodes (3×3×3). 2D: 9 nodes (3×3×1).
+     * Each node reads one voxel from the parent's local neighborhood. */
+#if YEE_GZ > 1
+    int n_retina = 27;  /* 3×3×3 */
+#else
+    int n_retina = 9;   /* 3×3×1 */
+#endif
     char rname[32];
-    for (int r = 0; r < 27; r++) {
+    for (int r = 0; r < n_retina; r++) {
         snprintf(rname, 32, "retina_%d", r);
         int rid = graph_add(child, rname, 0, &eng->T);
         if (rid >= 0) {
@@ -1121,9 +1128,10 @@ static int nest_spawn(Engine *eng, int node_id) {
             child->nodes[rid].plasticity = PLASTICITY_DEFAULT;
         }
     }
-    /* 8 hidden nodes — intermediate processing layer.
-     * Scaled from 4 to match the larger retina surface. */
-    for (int h = 0; h < 8; h++) {
+    /* Hidden nodes — intermediate processing layer.
+     * 3D: 8 (scaled to 27-retina). 2D: 4 (scaled to 9-retina). */
+    int n_hidden = (YEE_GZ > 1) ? 8 : 4;
+    for (int h = 0; h < n_hidden; h++) {
         char hname[32];
         snprintf(hname, 32, "hidden_%d", h);
         int hid = graph_add(child, hname, 0, &eng->T);
@@ -1658,8 +1666,9 @@ void engine_tick(Engine *eng) {
                 Graph *child = &eng->child_pool[c];
 
                 /* Inject retina */
-                if (child->retina && child->retina_len >= 27) {
-                    for (int r = 0; r < 27 && r < child->n_nodes; r++) {
+                int n_ret = (YEE_GZ > 1) ? 27 : 9;
+                if (child->retina && child->retina_len >= n_ret) {
+                    for (int r = 0; r < n_ret && r < child->n_nodes; r++) {
                         /* Topological retina: first 27 bytes are the 3×3×3
                          * neighborhood at the parent's position.
                          * Each node sees one distinct voxel. Direct read. */
@@ -1713,6 +1722,7 @@ void engine_tick(Engine *eng) {
                 int cn = child->n_nodes;
                 if (cn > 64) cn = 64;
                 child->edge_map = (int *)malloc(cn * cn * cn * sizeof(int));
+                child->edge_map_n = cn;
             }
             #pragma omp parallel for schedule(dynamic)
             for (w = 0; w < n_work; w++) {
@@ -1736,6 +1746,7 @@ void engine_tick(Engine *eng) {
             for (w = 0; w < n_work; w++) {
                 free(eng->child_pool[child_work[w]].edge_map);
                 eng->child_pool[child_work[w]].edge_map = NULL;
+                eng->child_pool[child_work[w]].edge_map_n = 0;
             }
             }
 
