@@ -2898,7 +2898,7 @@ static int load_node(FILE *f, Node *n) {
     if (fread(n->identity.w, sizeof(uint64_t), BS_WORDS, f) != BS_WORDS) return -1;
     int32_t bslen;
     if (fread(&bslen, 4, 1, f) != 1) return -1;
-    n->identity.len = bslen;
+    n->identity.len = (bslen > BS_MAXBITS) ? BS_MAXBITS : bslen;
     if (fread(n->name, 1, NAME_LEN, f) != NAME_LEN) return -1;
     if (fread(&n->created, 4, 1, f) != 1) return -1;
     if (fread(&n->last_active, 4, 1, f) != 1) return -1;

@@ -100,7 +100,7 @@ static const double SHELL_Z[3] = { 1.0, 1.5, 2.25 };
 /* ══════════════════════════════════════════════════════════════
  * BITSTREAM — distinction primitive (the 2)
  * ══════════════════════════════════════════════════════════════ */
-#define BS_WORDS   32   /* 2048 bits = 256 bytes raw content (was 128 = 1KB) */
+#define BS_WORDS   96   /* 6144 bits = 768 bytes — holds FP_TOTAL(5312) and OT_TOTAL(4096) */
 #define BS_MAXBITS (BS_WORDS * 64)
 #define FP_TOTAL   5312    /* 7-layer text fingerprint total bits */
 

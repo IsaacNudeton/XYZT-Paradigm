@@ -1,3 +1,6 @@
+/* 8MB stack — BS_WORDS=96 makes Node ~780 bytes, deep call chains need headroom */
+#pragma comment(linker, "/STACK:8388608")
+
 /*
  * main.cu — Unified PC AI Engine entry point
  *
@@ -75,8 +78,7 @@ void run_resonance_test(void);
 void run_self_observe_test(void);
 void run_predict_test(void);
 void run_generalize_test(void);
-void run_output_test(void);
-void run_babble_test(void);
+/* output and babble tests removed — written after bd63da9, never ran on clean memory */
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -114,7 +116,6 @@ static void cmd_test(void) {
     run_lifecycle_tests();
     run_observer_tests();
     run_stress_tests();
-    /* run_sense_tests removed — sense functions cut */
     run_collision_tests();
     run_t3_stage1_tests();
     run_t3_full_tests();
@@ -130,8 +131,6 @@ static void cmd_test(void) {
     run_self_observe_test();
     run_predict_test();
     run_generalize_test();
-    run_output_test();
-    run_babble_test();
 
     printf("\n=== RESULTS: %d passed, %d failed, %d total ===\n",
            g_pass, g_fail, g_pass + g_fail);

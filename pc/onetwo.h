@@ -12,10 +12,8 @@
 
 #include "engine.h"
 
-/* Fingerprint width must fit in BS_MAXBITS (BS_WORDS * 64).
- * Step 1: clamp to 2048 to stop the overflow.
- * Step 2: raise BS_WORDS to 64 and restore 4096. */
-#define OT_TOTAL 2048
+/* 4096-bit fixed output — matches BS_MAXBITS (64 words × 64 bits) */
+#define OT_TOTAL 4096
 
 /* Section offsets */
 #define OT_RUN_OFF     0
