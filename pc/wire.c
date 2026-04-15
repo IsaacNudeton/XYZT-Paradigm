@@ -240,7 +240,11 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
          * distinct voxel. 27 observers = 27 cortical vertices.
          * Wraps at grid boundaries (torus). */
         int lp = 0;
+#if YEE_GZ > 1
         for (int lz = -1; lz <= 1; lz++)
+#else
+        { int lz = 0;  /* 2D: single Z plane */
+#endif
             for (int ly = -1; ly <= 1; ly++)
                 for (int lx = -1; lx <= 1; lx++) {
                     int vx = (gx + lx + YEE_GX) % YEE_GX;
@@ -257,6 +261,9 @@ int wire_yee_retinas(Engine *eng, uint8_t *yee_substrate) {
                         retina_bufs[c][lp++] = 0;
                     }
                 }
+#if YEE_GZ <= 1
+        }  /* close 2D lz block */
+#endif
         /* Fill remaining buffer with extended neighborhood */
         while (lp < CUBE_SIZE) retina_bufs[c][lp++] = 0;
 

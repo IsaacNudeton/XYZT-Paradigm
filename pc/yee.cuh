@@ -215,6 +215,9 @@ float *yee_ptr_signed(void);
 float *yee_ptr_output(void);
 float *yee_ptr_autocorr(void);
 
+/* Substrate measurement — the signal tells us d, we don't tell it */
+float measure_d_eff(int voxel_id, int n_ticks);
+
 #ifdef __cplusplus
 }
 #endif

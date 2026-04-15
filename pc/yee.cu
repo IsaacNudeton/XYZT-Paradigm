@@ -685,9 +685,11 @@ __global__ void kernel_yee_sponge(float *V, float *Ix, float *Iy,
     /* Distance to nearest face */
     int dx = gx < YEE_GX - 1 - gx ? gx : YEE_GX - 1 - gx;
     int dy = gy < YEE_GY - 1 - gy ? gy : YEE_GY - 1 - gy;
-    int dz = gz < YEE_GZ - 1 - gz ? gz : YEE_GZ - 1 - gz;
     int d = dx < dy ? dx : dy;
+#if YEE_GZ > 2
+    int dz = gz < YEE_GZ - 1 - gz ? gz : YEE_GZ - 1 - gz;
     if (dz < d) d = dz;
+#endif
 
     if (d < width) {
         float damp = 1.0f - rate * (float)(width - d) / (float)width;
@@ -783,3 +785,98 @@ extern "C" float *yee_ptr_accum(void)   { return d_V_accum; }
 extern "C" float *yee_ptr_signed(void)  { return d_V_signed; }
 extern "C" float *yee_ptr_output(void)  { return d_V_output; }
 extern "C" float *yee_ptr_autocorr(void){ return d_V_autocorr; }
+
+/* ══════════════════════════════════════════════════════════════
+ * SUBSTRATE MEASUREMENT — effective waveguide dimension
+ *
+ * Inject a delta pulse at a voxel. Run N ticks with sponge.
+ * Measure which face-pairs absorbed energy.
+ * d_eff = count of active dimensions.
+ *
+ * The signal tells us d. We don't tell it.
+ * Destructive: clears E/H fields. L-field untouched.
+ * ══════════════════════════════════════════════════════════════ */
+
+#define MEAS_SPONGE_WIDTH 4
+#define MEAS_SPONGE_RATE  0.15f
+#define MEAS_NOISE_THRESH 0.05f  /* face exists if > 5% of max face */
+
+extern "C" float measure_d_eff(int voxel_id, int n_ticks) {
+    if (voxel_id < 0 || voxel_id >= YEE_N || !d_V) return 0.0f;
+
+    /* 1. Clear — destructive. L-field survives. */
+    yee_clear_fields();
+    yee_clear_output();
+
+    /* 2. Inject delta pulse at target voxel */
+    YeeSource src;
+    src.voxel_id = voxel_id;
+    src.amplitude = 1.0f;
+    src.strength = 1.0f;
+    yee_inject(&src, 1);
+
+    /* 3. Propagate with sponge — energy travels outward,
+     * hits boundaries, gets absorbed into d_V_output.
+     * Each face captures what arrived. */
+    for (int t = 0; t < n_ticks; t++) {
+        yee_tick();
+        yee_apply_sponge(MEAS_SPONGE_WIDTH, MEAS_SPONGE_RATE);
+    }
+
+    /* 4. Read absorption per face-pair.
+     * Direct access to d_V_output — no download, no malloc.
+     * Unified memory. The grid IS the data. */
+    cudaDeviceSynchronize();
+
+    float face_energy[6] = {0};  /* -X, +X, -Y, +Y, -Z, +Z */
+
+    for (int p = 0; p < YEE_N; p++) {
+        if (d_V_output[p] < 1e-10f) continue;
+
+        int gx, gy, gz;
+        yee_coords(p, &gx, &gy, &gz);
+
+        /* Distance to each face */
+        int dists[6] = {
+            gx,                /* -X */
+            YEE_GX - 1 - gx,  /* +X */
+            gy,                /* -Y */
+            YEE_GY - 1 - gy,  /* +Y */
+            gz,                /* -Z */
+            YEE_GZ - 1 - gz   /* +Z */
+        };
+
+        /* Assign to nearest face only */
+        int min_d = dists[0], min_face = 0;
+        for (int f = 1; f < 6; f++) {
+            if (dists[f] < min_d) { min_d = dists[f]; min_face = f; }
+        }
+
+        /* Only count voxels in the sponge region */
+        if (min_d < MEAS_SPONGE_WIDTH) {
+            face_energy[min_face] += d_V_output[p];
+        }
+    }
+
+    /* 5. Sum face-pairs: X = (-X + +X), Y = (-Y + +Y), Z = (-Z + +Z) */
+    float pair_energy[3];
+    pair_energy[0] = face_energy[0] + face_energy[1];  /* X */
+    pair_energy[1] = face_energy[2] + face_energy[3];  /* Y */
+    pair_energy[2] = face_energy[4] + face_energy[5];  /* Z */
+
+    /* 6. d_eff = count of pairs above noise floor */
+    float max_pair = 0;
+    for (int i = 0; i < 3; i++)
+        if (pair_energy[i] > max_pair) max_pair = pair_energy[i];
+
+    if (max_pair < 1e-10f) return 0.0f;
+
+    float threshold = max_pair * MEAS_NOISE_THRESH;
+    float d_eff = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        if (pair_energy[i] > threshold)
+            d_eff += 1.0f;
+    }
+
+    return d_eff;
+}

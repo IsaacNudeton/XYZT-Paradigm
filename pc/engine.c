@@ -955,10 +955,21 @@ int child_tick_once(Graph *g) {
                 int dst = -1;
                 for (int h = n_ret; h < g->n_nodes; h++) {
                     if (h == out || h == i || h == j) continue;
-                    if (graph_find_edge(g, i, j, h) < 0) { dst = h; break; }
+                    int has_edge;
+                    if (edge_at && i < N && j < N && h < N)
+                        has_edge = (edge_at[i * N * N + j * N + h] != 0);
+                    else
+                        has_edge = (graph_find_edge(g, i, j, h) >= 0);
+                    if (!has_edge) { dst = h; break; }
                 }
-                if (dst < 0 && graph_find_edge(g, i, j, out) < 0)
-                    dst = out;
+                if (dst < 0) {
+                    int has_out;
+                    if (edge_at && i < N && j < N && out < N)
+                        has_out = (edge_at[i * N * N + j * N + out] != 0);
+                    else
+                        has_out = (graph_find_edge(g, i, j, out) >= 0);
+                    if (!has_out) dst = out;
+                }
 
                 /* No target found — grow a NEW hidden node.
                  * Appends after current output. The child develops

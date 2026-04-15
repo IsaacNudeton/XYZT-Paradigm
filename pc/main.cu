@@ -36,6 +36,7 @@ extern "C" {
 #include "transducer.h"
 #include "io.h"
 #include "infer.h"
+/* measure_d_eff lives in yee.cu — substrate measurement, no boundary crossing */
 #include "cortex.h"
 #include "sonify.h"
 }
@@ -1542,6 +1543,102 @@ int main(int argc, char *argv[]) {
         printf("  Total ticks: %llu\n", (unsigned long long)ctx.eng.total_ticks);
         engine_save(&ctx.eng, "state.xyzt");
         printf("  State saved to state.xyzt\n");
+        cortex_destroy(&ctx);
+    } else if (strcmp(argv[1], "d_eff") == 0) {
+        /* ═══════════════════════════════════════════════════════
+         * THE EXPERIMENT: d=2 → d=3 transition across heartbeat
+         *
+         * 1. Ingest data, tick without heartbeat (carve L-field)
+         * 2. Measure d_eff (before loop closes)
+         * 3. Run heartbeat (close the loop)
+         * 4. Measure d_eff again (after loop closes)
+         *
+         * Paper predicts: d increases when output feeds back.
+         * ═══════════════════════════════════════════════════════ */
+        Cortex ctx;
+        if (cortex_init(&ctx) != 0) { printf("Cortex init failed\n"); return 1; }
+        Engine *eng = &ctx.eng;
+        Graph *g = &eng->shells[0].g;
+
+        printf("=== WAVEGUIDE DIMENSION EXPERIMENT ===\n\n");
+
+        /* Phase 1: Feed data — give the engine something to carve */
+        printf("--- Phase 1: Ingest + tick (no heartbeat) ---\n");
+        static const char *feed[] = {
+            "the quick brown fox jumps over the lazy dog by the river",
+            "a brown fox runs through the forest near the winding river",
+            "the lazy dog sleeps under the oak tree beside the river bank",
+            "fox and dog rest together on the grassy river bank at dawn",
+            "hydrogen bonds form between water molecules in liquid state",
+            "carbon atoms create diamond lattice under extreme pressure",
+            "oxygen reacts with iron producing rust on exposed surfaces",
+            "nitrogen makes up most of the atmosphere above sea level",
+        };
+        int n_feed = sizeof(feed) / sizeof(feed[0]);
+        for (int i = 0; i < n_feed; i++) {
+            cortex_ingest(&ctx, feed[i], (const uint8_t *)feed[i],
+                         (int)strlen(feed[i]));
+        }
+        printf("  Ingested: %d items\n", n_feed);
+
+        /* Tick without heartbeat — carve the L-field */
+        int carve_cycles = 5;
+        for (int c = 0; c < carve_cycles; c++) {
+            cortex_tick(&ctx, 1);
+        }
+        printf("  Ticked: %d cycles (%d ticks)\n",
+               carve_cycles, carve_cycles * (int)SUBSTRATE_INT);
+
+        /* Pick a measurement voxel — first alive node's position */
+        int meas_vid = -1;
+        int meas_node = -1;
+        for (int i = 0; i < g->n_nodes; i++) {
+            if (!g->nodes[i].alive || g->nodes[i].layer_zero) continue;
+            int gx = coord_x(g->nodes[i].coord) % YEE_GX;
+            int gy = coord_y(g->nodes[i].coord) % YEE_GY;
+            int gz = coord_z(g->nodes[i].coord) % YEE_GZ;
+            meas_vid = gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
+            meas_node = i;
+            break;
+        }
+        if (meas_vid < 0) {
+            /* Fallback: grid center */
+            meas_vid = YEE_GX/2 + (YEE_GY/2)*YEE_GX + (YEE_GZ/2)*YEE_GX*YEE_GY;
+            printf("  No alive nodes — measuring at grid center\n");
+        } else {
+            printf("  Measuring at node[%d] '%s' voxel %d\n",
+                   meas_node, g->nodes[meas_node].name, meas_vid);
+        }
+
+        /* Phase 2: Measure d_eff BEFORE heartbeat */
+        printf("\n--- Phase 2: d_eff BEFORE heartbeat ---\n");
+        float d_before = measure_d_eff(meas_vid, 200);
+        printf("  d_eff = %.2f\n", d_before);
+
+        /* Phase 3: Run heartbeat — close the loop */
+        printf("\n--- Phase 3: Heartbeat (10 cycles) ---\n");
+        int hb = cortex_heartbeat(&ctx, 10);
+        printf("  Completed: %d cycles\n", hb);
+        printf("  Nodes: %d, Edges: %d, Children: %d\n",
+               g->n_nodes, g->n_edges, eng->n_children);
+
+        /* Phase 4: Measure d_eff AFTER heartbeat */
+        printf("\n--- Phase 4: d_eff AFTER heartbeat ---\n");
+        float d_after = measure_d_eff(meas_vid, 200);
+        printf("  d_eff = %.2f\n", d_after);
+
+        /* The result */
+        printf("\n=== RESULT ===\n");
+        printf("  d_before = %.2f\n", d_before);
+        printf("  d_after  = %.2f\n", d_after);
+        printf("  delta    = %.2f\n", d_after - d_before);
+        if (d_after > d_before)
+            printf("  >>> d INCREASED. Loop adds confinement. <<<\n");
+        else if (d_after < d_before)
+            printf("  >>> d DECREASED. Loop reduces confinement. <<<\n");
+        else
+            printf("  >>> d UNCHANGED. Loop had no dimensional effect. <<<\n");
+
         cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "sing") == 0 && argc >= 3) {
         /* Sonify the L-field: knowledge as a chord, dreaming as a fade */

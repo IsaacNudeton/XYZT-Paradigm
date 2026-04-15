@@ -329,6 +329,12 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
          * The engine hears itself speak. Output becomes input.
          * x = f(x). The loop closes here. */
         if (voice_len > 0) {
+            /* Substrate closure: voice re-enters through the retina.
+             * Sponge absorbs on x=63. Retina injects on x=0.
+             * The wave hears its own echo. x = f(x) through physics. */
+            wire_retina_inject(voice, voice_len, 0.5f);
+
+            /* Graph memory: voice also becomes a node for Hebbian to learn from. */
             char vname[64];
             snprintf(vname, 64, "_voice_%06llu",
                      (unsigned long long)c->eng.total_ticks);
