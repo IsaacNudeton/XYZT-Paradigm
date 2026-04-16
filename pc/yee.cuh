@@ -60,8 +60,8 @@
  */
 #define YEE_ALPHA   0.5f    /* Observer: CFL timestep. {2,3}'s free parameter. */
 #define YEE_C       1.0f    /* capacitance (unit, fixed) */
-#define YEE_R       0.02f   /* series resistance (loss, empirical) */
-#define YEE_G       0.01f   /* shunt conductance (loss, empirical) */
+#define YEE_R       0.01f   /* series resistance (base loss per cell) */
+#define YEE_G       0.02f   /* shunt conductance: G > R = antiscreening (asymptotic freedom) */
 #define YEE_L_WIRE  1.0f    /* wire state: unit impedance (convention) */
 #define YEE_L_VAC   9.0f    /* wall state: high impedance (engineering choice) */
 #define YEE_L_MIN   0.75f   /* DERIVED: 3 * alpha² / C (CFL floor) */

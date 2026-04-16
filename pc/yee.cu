@@ -374,11 +374,19 @@ extern "C" int yee_init(void) {
     metab_initialized = 0;
     yee_tick_count = 0;
 
-    /* Initialize L to wire (low impedance — fully conductive).
-     * Hebbian will RAISE L where there's no activity (creating vacuum).
-     * Starting from vacuum deadlocks: no signal → no Hebbian → no wires.
-     * Unified memory: write directly, no copy needed. */
-    for (int i = 0; i < YEE_N; i++) d_L[i] = YEE_L_WIRE;
+    /* Initialize L to vacuum (high impedance) with a seed channel at x=0.
+     * The substrate starts hungry. Signal enters through the retina face
+     * and has to EARN each dimension. Hebbian lowers L where signal flows,
+     * creating wires from vacuum. Dimensions without activity stay dark.
+     *
+     * Seed: x < 4 (retina sponge width) starts at L_WIRE.
+     * Everything else: L_VAC. The signal must carve its way through.
+     * This avoids the deadlock (some conductance exists at the entry point)
+     * while letting d_eff start low and grow with learning. */
+    for (int i = 0; i < YEE_N; i++) {
+        int gx = i % YEE_GX;
+        d_L[i] = (gx < 4) ? YEE_L_WIRE : YEE_L_VAC;
+    }
 
     h_scratch = (float *)malloc(YEE_GRID * sizeof(float));
 
@@ -836,26 +844,16 @@ extern "C" float measure_d_eff(int voxel_id, int n_ticks) {
         int gx, gy, gz;
         yee_coords(p, &gx, &gy, &gz);
 
-        /* Distance to each face */
-        int dists[6] = {
-            gx,                /* -X */
-            YEE_GX - 1 - gx,  /* +X */
-            gy,                /* -Y */
-            YEE_GY - 1 - gy,  /* +Y */
-            gz,                /* -Z */
-            YEE_GZ - 1 - gz   /* +Z */
-        };
-
-        /* Assign to nearest face only */
-        int min_d = dists[0], min_face = 0;
-        for (int f = 1; f < 6; f++) {
-            if (dists[f] < min_d) { min_d = dists[f]; min_face = f; }
-        }
-
-        /* Only count voxels in the sponge region */
-        if (min_d < MEAS_SPONGE_WIDTH) {
-            face_energy[min_face] += d_V_output[p];
-        }
+        /* Count toward EVERY face this voxel is in the sponge of.
+         * Corner voxels contribute to all faces they touch.
+         * No tie-breaking bias. The physics is symmetric. */
+        float e = d_V_output[p];
+        if (gx < MEAS_SPONGE_WIDTH)              face_energy[0] += e;  /* -X */
+        if (gx >= YEE_GX - MEAS_SPONGE_WIDTH)    face_energy[1] += e;  /* +X */
+        if (gy < MEAS_SPONGE_WIDTH)              face_energy[2] += e;  /* -Y */
+        if (gy >= YEE_GY - MEAS_SPONGE_WIDTH)    face_energy[3] += e;  /* +Y */
+        if (gz < MEAS_SPONGE_WIDTH)              face_energy[4] += e;  /* -Z */
+        if (gz >= YEE_GZ - MEAS_SPONGE_WIDTH)    face_energy[5] += e;  /* +Z */
     }
 
     /* 5. Sum face-pairs: X = (-X + +X), Y = (-Y + +Y), Z = (-Z + +Z) */
@@ -864,19 +862,25 @@ extern "C" float measure_d_eff(int voxel_id, int n_ticks) {
     pair_energy[1] = face_energy[2] + face_energy[3];  /* Y */
     pair_energy[2] = face_energy[4] + face_energy[5];  /* Z */
 
-    /* 6. d_eff = count of pairs above noise floor */
+    /* 6. d_eff = continuous sum of normalized face-pair energies.
+     * Each dimension contributes its fraction of the max absorption.
+     * d=3.0 means all faces absorbed equally (isotropic).
+     * d=2.3 means one dimension conducts 70% less (anisotropic carving).
+     * The substrate tells us how many dimensions it uses. */
+    float total = pair_energy[0] + pair_energy[1] + pair_energy[2];
+    if (total < 1e-10f) return 0.0f;
+
     float max_pair = 0;
     for (int i = 0; i < 3; i++)
         if (pair_energy[i] > max_pair) max_pair = pair_energy[i];
 
-    if (max_pair < 1e-10f) return 0.0f;
-
-    float threshold = max_pair * MEAS_NOISE_THRESH;
     float d_eff = 0.0f;
-    for (int i = 0; i < 3; i++) {
-        if (pair_energy[i] > threshold)
-            d_eff += 1.0f;
-    }
+    for (int i = 0; i < 3; i++)
+        d_eff += pair_energy[i] / max_pair;  /* 1.0 for strongest, <1.0 for weaker */
+
+    /* Print face breakdown so we can see which axis got suppressed */
+    printf("    faces: X=%.1f Y=%.1f Z=%.1f (max=%.1f) → d=%.2f\n",
+           pair_energy[0], pair_energy[1], pair_energy[2], max_pair, d_eff);
 
     return d_eff;
 }

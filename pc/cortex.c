@@ -293,12 +293,16 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
          * L-field persists. Each cycle starts clean. */
         yee_clear_fields();
 
-        /* 1. TICK — physics + graph run for one SUBSTRATE_INT cycle */
+        /* 1. TICK — physics + graph run for one SUBSTRATE_INT cycle.
+         * Sponge runs periodically to accumulate boundary absorption
+         * into d_V_output — this IS the voice. Without sponge,
+         * the output accumulator stays zero and the voice is silent. */
         for (int t = 0; t < (int)SUBSTRATE_INT; t++) {
             wire_engine_to_yee(&c->eng);
             yee_tick_async();
             engine_tick(&c->eng);
             yee_sync();
+            if (t % 10 == 9) yee_apply_sponge(4, 0.03f);
         }
 
         /* 2. SENSE — read the grid into the graph */
@@ -325,16 +329,11 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
             cortex_self_observe(c);
         }
 
-        /* 6. FEEDBACK — voice re-enters through retina.
-         * The engine hears itself speak. Output becomes input.
-         * x = f(x). The loop closes here. */
+        /* 6. FEEDBACK — voice becomes a node.
+         * The voice has content. That content determines where it lives
+         * in the grid. The node creates density. Signal bends toward it.
+         * Hebbian carves channels. Dimensions open through physics. */
         if (voice_len > 0) {
-            /* Substrate closure: voice re-enters through the retina.
-             * Sponge absorbs on x=63. Retina injects on x=0.
-             * The wave hears its own echo. x = f(x) through physics. */
-            wire_retina_inject(voice, voice_len, 0.5f);
-
-            /* Graph memory: voice also becomes a node for Hebbian to learn from. */
             char vname[64];
             snprintf(vname, 64, "_voice_%06llu",
                      (unsigned long long)c->eng.total_ticks);

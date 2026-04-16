@@ -18,6 +18,7 @@
  * The wave propagates through L-field. Position = where energy peaks. */
 int wire_retina_inject(const uint8_t *data, int len, float amplitude);
 
+
 /* Find energy peak after retina injection + propagation.
  * Returns coord_pack(peak_x, peak_y, peak_z). */
 uint32_t wire_retina_find_peak(void);

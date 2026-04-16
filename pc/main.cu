@@ -1546,98 +1546,112 @@ int main(int argc, char *argv[]) {
         cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "d_eff") == 0) {
         /* ═══════════════════════════════════════════════════════
-         * THE EXPERIMENT: d=2 → d=3 transition across heartbeat
+         * THE EXPERIMENT: interleaved heartbeat from cycle 1
          *
-         * 1. Ingest data, tick without heartbeat (carve L-field)
-         * 2. Measure d_eff (before loop closes)
-         * 3. Run heartbeat (close the loop)
-         * 4. Measure d_eff again (after loop closes)
+         * Retina (x=0) and feedback (y=0) develop simultaneously.
+         * No head start for X. Both directions compete from tick 1.
+         * d_eff measured every 25 cycles to watch X vs Y develop.
          *
-         * Paper predicts: d increases when output feeds back.
+         * Hypothesis: Y should open as feedback carves y-direction
+         * channels, pushing d from ~1 toward 2.
          * ═══════════════════════════════════════════════════════ */
         Cortex ctx;
         if (cortex_init(&ctx) != 0) { printf("Cortex init failed\n"); return 1; }
         Engine *eng = &ctx.eng;
         Graph *g = &eng->shells[0].g;
 
-        printf("=== WAVEGUIDE DIMENSION EXPERIMENT ===\n\n");
+        printf("=== INTERLEAVED HEARTBEAT DIMENSION EXPERIMENT ===\n\n");
 
-        /* Phase 1: Feed data — give the engine something to carve */
-        printf("--- Phase 1: Ingest + tick (no heartbeat) ---\n");
-        static const char *feed[] = {
-            "the quick brown fox jumps over the lazy dog by the river",
-            "a brown fox runs through the forest near the winding river",
-            "the lazy dog sleeps under the oak tree beside the river bank",
-            "fox and dog rest together on the grassy river bank at dawn",
-            "hydrogen bonds form between water molecules in liquid state",
-            "carbon atoms create diamond lattice under extreme pressure",
-            "oxygen reacts with iron producing rust on exposed surfaces",
-            "nitrogen makes up most of the atmosphere above sea level",
-        };
-        int n_feed = sizeof(feed) / sizeof(feed[0]);
-        for (int i = 0; i < n_feed; i++) {
-            cortex_ingest(&ctx, feed[i], (const uint8_t *)feed[i],
-                         (int)strlen(feed[i]));
+        /* Blank grid baseline */
+        printf("--- Blank grid baseline ---\n");
+        int cx = YEE_GX/2, cy = YEE_GY/2, cz = YEE_GZ/2;
+        int center_vid = cx + cy * YEE_GX + cz * YEE_GX * YEE_GY;
+        float d_blank = measure_d_eff(center_vid, 200);
+        printf("  d_eff(blank) = %.3f\n\n", d_blank);
+
+        /* Ingest data — the engine eats its own source */
+        printf("--- Ingest ---\n");
+        {
+            const char *feed_file = (argc >= 3) ? argv[2] : "engine.c";
+            FILE *ff = fopen(feed_file, "r");
+            int n_feed = 0;
+            if (ff) {
+                char line[512];
+                while (fgets(line, sizeof(line), ff) && n_feed < 200) {
+                    int len = (int)strlen(line);
+                    if (len < 10) continue;
+                    if (line[len-1] == '\n') line[--len] = '\0';
+                    cortex_ingest(&ctx, line, (const uint8_t *)line, len);
+                    n_feed++;
+                }
+                fclose(ff);
+                printf("  Ingested: %d lines from '%s'\n", n_feed, feed_file);
+            } else {
+                printf("  Could not open '%s' — using fallback\n", feed_file);
+                static const char *fb[] = {
+                    "the quick brown fox jumps over the lazy dog by the river",
+                    "hydrogen bonds form between water molecules in liquid state",
+                    "carbon atoms create diamond lattice under extreme pressure",
+                    "oxygen reacts with iron producing rust on exposed surfaces",
+                };
+                for (int i = 0; i < 4; i++)
+                    cortex_ingest(&ctx, fb[i], (const uint8_t *)fb[i],
+                                 (int)strlen(fb[i]));
+                n_feed = 4;
+                printf("  Ingested: %d fallback items\n", n_feed);
+            }
         }
-        printf("  Ingested: %d items\n", n_feed);
 
-        /* Tick without heartbeat — carve the L-field */
-        int carve_cycles = 5;
-        for (int c = 0; c < carve_cycles; c++) {
-            cortex_tick(&ctx, 1);
-        }
-        printf("  Ticked: %d cycles (%d ticks)\n",
-               carve_cycles, carve_cycles * (int)SUBSTRATE_INT);
-
-        /* Pick a measurement voxel — first alive node's position */
+        /* Pick measurement voxel — first alive node */
         int meas_vid = -1;
-        int meas_node = -1;
         for (int i = 0; i < g->n_nodes; i++) {
-            if (!g->nodes[i].alive || g->nodes[i].layer_zero) continue;
-            int gx = coord_x(g->nodes[i].coord) % YEE_GX;
-            int gy = coord_y(g->nodes[i].coord) % YEE_GY;
-            int gz = coord_z(g->nodes[i].coord) % YEE_GZ;
+            Node *nd = &g->nodes[i];
+            if (!nd->alive || nd->layer_zero) continue;
+            int gx = coord_x(nd->coord) % YEE_GX;
+            int gy = coord_y(nd->coord) % YEE_GY;
+            int gz = coord_z(nd->coord) % YEE_GZ;
             meas_vid = gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
-            meas_node = i;
+            printf("  Measuring at node[%d] '%s' voxel %d\n", i, nd->name, meas_vid);
             break;
         }
         if (meas_vid < 0) {
-            /* Fallback: grid center */
-            meas_vid = YEE_GX/2 + (YEE_GY/2)*YEE_GX + (YEE_GZ/2)*YEE_GX*YEE_GY;
+            meas_vid = center_vid;
             printf("  No alive nodes — measuring at grid center\n");
-        } else {
-            printf("  Measuring at node[%d] '%s' voxel %d\n",
-                   meas_node, g->nodes[meas_node].name, meas_vid);
         }
 
-        /* Phase 2: Measure d_eff BEFORE heartbeat */
-        printf("\n--- Phase 2: d_eff BEFORE heartbeat ---\n");
-        float d_before = measure_d_eff(meas_vid, 200);
-        printf("  d_eff = %.2f\n", d_before);
+        /* Full heartbeat from cycle 1 — retina (x=0) + feedback (y=0)
+         * develop simultaneously. No head start for either direction. */
+        int total_cycles = 25;
+        printf("\n--- Heartbeat: %d cycles (retina x=0 + feedback y=0 interleaved) ---\n",
+               total_cycles);
+        printf("\n  === d_eff CURVE ===\n");
+        printf("  cycle  d_eff   nodes  edges\n");
 
-        /* Phase 3: Run heartbeat — close the loop */
-        printf("\n--- Phase 3: Heartbeat (10 cycles) ---\n");
-        int hb = cortex_heartbeat(&ctx, 10);
-        printf("  Completed: %d cycles\n", hb);
+        float d_first = -1, d_last = -1;
+        for (int c = 0; c < total_cycles; c++) {
+            cortex_heartbeat(&ctx, 1);
+            if ((c+1) % 5 == 0) {
+                float d = measure_d_eff(meas_vid, 200);
+                printf("  %4d   %.3f   %4d   %4d\n",
+                       c+1, d, g->n_nodes, g->n_edges);
+                if (d_first < 0) d_first = d;
+                d_last = d;
+            }
+        }
+
+        /* Result */
+        printf("\n=== RESULT ===\n");
+        printf("  d_eff(25)  = %.3f\n", d_first);
+        printf("  d_eff(200) = %.3f\n", d_last);
+        printf("  delta      = %.3f\n", d_last - d_first);
         printf("  Nodes: %d, Edges: %d, Children: %d\n",
                g->n_nodes, g->n_edges, eng->n_children);
-
-        /* Phase 4: Measure d_eff AFTER heartbeat */
-        printf("\n--- Phase 4: d_eff AFTER heartbeat ---\n");
-        float d_after = measure_d_eff(meas_vid, 200);
-        printf("  d_eff = %.2f\n", d_after);
-
-        /* The result */
-        printf("\n=== RESULT ===\n");
-        printf("  d_before = %.2f\n", d_before);
-        printf("  d_after  = %.2f\n", d_after);
-        printf("  delta    = %.2f\n", d_after - d_before);
-        if (d_after > d_before)
-            printf("  >>> d INCREASED. Loop adds confinement. <<<\n");
-        else if (d_after < d_before)
-            printf("  >>> d DECREASED. Loop reduces confinement. <<<\n");
+        if (d_last > d_first + 0.05f)
+            printf("  >>> d CLIMBING. Y dimension opening. <<<\n");
+        else if (d_last < d_first - 0.05f)
+            printf("  >>> d FALLING. Still collapsing toward d=1. <<<\n");
         else
-            printf("  >>> d UNCHANGED. Loop had no dimensional effect. <<<\n");
+            printf("  >>> d STABLE. No dimensional change. <<<\n");
 
         cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "sing") == 0 && argc >= 3) {

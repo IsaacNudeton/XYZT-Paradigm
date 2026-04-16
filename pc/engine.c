@@ -1316,30 +1316,17 @@ int engine_ingest(Engine *eng, const char *name, const BitStream *data) {
 
     /* Coordinate assignment: where does this data live in the grid?
      *
-     * USE_RETINA: holographic injection on x=0 face → wave propagation →
-     *   energy peak IS the address. No hash. Position from physics.
+     * All nodes start with hash-derived coords from graph_add (name → xyz).
+     * External nodes with Yee active get refined by retina placement:
+     *   inject on x=0 face → wave propagation → energy peak IS the address.
      *   Slower (60 Yee ticks per ingest) but substrate-native.
      *
-     * Fallback: 3-tier hash of first 12 identity bytes.
-     *   Fast but von Neumann at the front door. */
-    /* Retina placement: wave physics decides coordinates.
-     * Internal nodes (_voice_, _so_) inherit coords from their source —
-     * they're echoes, not new data. No wave probe, no grid wipe. */
-    if (name[0] == '_') {
-        /* Internal node: place near the graph's center of mass */
-        int cx = 0, cy = 0, cz = 0, alive = 0;
-        for (int i = 0; i < g0->n_nodes; i++) {
-            if (!g0->nodes[i].alive || i == id0) continue;
-            cx += coord_x(g0->nodes[i].coord);
-            cy += coord_y(g0->nodes[i].coord);
-            cz += coord_z(g0->nodes[i].coord);
-            alive++;
-        }
-        if (alive > 0) {
-            g0->nodes[id0].coord = coord_pack(cx / alive, cy / alive, cz / alive);
-        }
-        g0->z_cache_n_nodes = -1;
-    } else if (data->len >= 8 && yee_is_initialized()) {
+     * Internal nodes (_voice_, _so_) keep their hash coords.
+     * Their names encode content (tick number, resonance pattern).
+     * Hash gives them diverse positions — they create density at
+     * different locations, pulling signal into new grid regions.
+     * No centroid collapse. Position IS meaning. */
+    if (data->len >= 8 && yee_is_initialized() && name[0] != '_') {
         uint8_t raw[64];
         int raw_len = data->len / 8;
         if (raw_len > 64) raw_len = 64;

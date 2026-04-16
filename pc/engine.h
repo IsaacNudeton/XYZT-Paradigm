@@ -95,7 +95,10 @@ static inline int xyzt_ctzll(uint64_t x) {
 #define PLASTICITY_COOL     0.005f  /* boredom decrement */
 
 /* Shell impedance: K = 3/2 per boundary crossing */
-static const double SHELL_Z[3] = { 1.0, 1.5, 2.25 };
+/* Shell impedances from root multiplicities: r = sqrt(m_short(IV5)/m_short(IV4)) = sqrt(3/2).
+ * Each shell boundary multiplies by sqrt(3/2) = 1.2247...
+ * Derived in alpha_impedance_paper.md Section 3.1. */
+static const double SHELL_Z[3] = { 1.0, 1.224744871391589, 1.5 };
 
 /* ══════════════════════════════════════════════════════════════
  * BITSTREAM — distinction primitive (the 2)
