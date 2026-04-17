@@ -19,6 +19,8 @@ t3_*.txt
 
 # Generated data
 sweep_results.tsv
+*.pdb
+pc/state.xyzt
 
 # Temp build script variants (canonical: build.bat, rebuild.bat)
 pc/build_now.bat

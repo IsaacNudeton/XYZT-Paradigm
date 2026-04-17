@@ -28,7 +28,7 @@ This means the topology competes. Strong patterns survive. Weak ones starve. The
 
 ## What's been tested
 
-The `pc/` engine runs 322 tests covering:
+The `pc/` engine runs 285 tests covering:
 
 - **3D Yee wave substrate** (v0.14): 64×64×64 FDTD grid replaces the cellular automaton. Voltage and current propagate via Maxwell's equations with per-voxel inductance (L) as the single learnable parameter. Leaky integrator bridges wave energy to uint8_t (0-255) for CPU readback. Hebbian learning strengthens (lowers L) where waves are active, weakens (raises L) where quiet. CFL-stable at alpha=0.5 with L >= 0.75. T3 passes with 3 children diverging on wave physics.
 - **Yee persistence** (v0.14.1): L-field and accumulator survive save/load via YEE1 block. The learned impedance topology — the physical wiring diagram — persists across restarts.
@@ -40,6 +40,7 @@ The `pc/` engine runs 322 tests covering:
 - **Dream mode**: `xyzt_pc.exe dream` — inject thermal noise, read what resonates. Deep knowledge rings longest without any input.
 - **Self-observation**: cortex reads its own coherence field, ingests observations. The engine watches itself think. Growth decelerates — converges.
 - **Prediction loop**: graph proposes at 0.3x amplitude. Sponge verifies. The physics prevents hallucination.
+- **Autonomous heartbeat** (`cortex_heartbeat`): closed 9-phase loop — CLEAR → TICK(155) → SENSE → VOICE → PREDICT → SELF-OBSERVE → FEEDBACK → DRIVE → PERSIST. The engine perceives, speaks (sponge boundary absorption decoded back to bytes), predicts (graph proposes, physics verifies), watches itself (self-observation every 4th cycle), feeds its own voice back as a new node, and acts on drive states (frustration → dream, boredom → introspect, curiosity → keep perceiving). No external prompting. The loop runs autonomously.
 - **Three observer depths**: Z=0 (amplitude), Z=3 (coherence), Z=4 (autocorrelation). The dead zone is observer-depth-dependent. Computation never stops — the observer determines what's visible.
 - **Sonification**: `xyzt_pc.exe sing` — L-field topology as audio. Each cavity = a tone. The engine sings its knowledge.
 - **10 adversarial stress tests**: node ceiling, fingerprint collision, temporal burst, contradiction storm, self-similarity, hash collision, save/load cycles, child saturation, empty engine, long-run stability.
@@ -62,7 +63,7 @@ proof/
   v9/        3302-line reference implementation with shells and nesting (48 tests)
   lean4/     10 formal proofs in Lean4
   spec/      XYZT.lang instruction set + assembly programs (adder, counter, FSM, SR latch)
-pc/          CPU + GPU engine — unified v3/v6/v9, 3D Yee substrate, CUDA sm_75 (256 tests)
+pc/          CPU + GPU engine — unified v3/v6/v9, 3D Yee substrate, CUDA sm_75 (285 tests)
 pico/        Autonomous firmware — RP2040, same paradigm on bare metal
 pi-zero2/    Bare-metal kernel — ARM, no OS
 shared/      Shared sense layer across devices
