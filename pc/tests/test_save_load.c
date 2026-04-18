@@ -183,11 +183,12 @@ void run_yee_save_load_tests(void) {
     yee_destroy();
     yee_init();
 
-    /* Verify L is now uniform (default L_WIRE = 1.0) */
+    /* Verify L matches init pattern: L_WIRE(1.0) at x<4, L_VAC(9.0) elsewhere */
     float *h_L_uniform = (float *)malloc(YEE_TEST_N * sizeof(float));
     yee_download_L(h_L_uniform, YEE_TEST_N);
-    int uniform_ok = (h_L_uniform[0] == 1.0f && h_L_uniform[1000] == 1.0f &&
-                      h_L_uniform[262143] == 1.0f);
+    int uniform_ok = (h_L_uniform[0] == 1.0f &&         /* x=0: seed region */
+                      h_L_uniform[1000] == 9.0f &&       /* x=40: vacuum */
+                      h_L_uniform[262143] == 9.0f);      /* x=63: vacuum */
     check("yee_sl: L uniform after re-init", 1, uniform_ok);
     free(h_L_uniform);
 

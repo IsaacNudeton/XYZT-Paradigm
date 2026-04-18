@@ -329,11 +329,14 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
             cortex_self_observe(c);
         }
 
-        /* 6. FEEDBACK — voice becomes a node.
-         * The voice has content. That content determines where it lives
-         * in the grid. The node creates density. Signal bends toward it.
-         * Hebbian carves channels. Dimensions open through physics. */
+        /* 6. FEEDBACK — voice re-enters through both paths.
+         * Physics path: retina injection on x=0 face. The wave hears
+         * its own echo. Sponge absorbs on x=63, retina injects on x=0.
+         * Graph path: voice becomes a node for Hebbian to learn from.
+         * Both paths close the loop. x = f(x) through physics AND graph. */
         if (voice_len > 0) {
+            /* Substrate closure: voice re-enters through the retina */
+            wire_retina_inject(voice, voice_len, 0.5f);
             char vname[64];
             snprintf(vname, 64, "_voice_%06llu",
                      (unsigned long long)c->eng.total_ticks);
