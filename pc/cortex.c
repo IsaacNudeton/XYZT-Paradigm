@@ -302,7 +302,11 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
             yee_tick_async();
             engine_tick(&c->eng);
             yee_sync();
-            if (t % 10 == 9) yee_apply_sponge(4, 0.03f);
+            if (t % 10 == 9) {
+                yee_apply_sponge(4, 0.03f);
+                yee_sync();  /* sponge writes d_V_output via unified memory —
+                              * must complete before next wire_engine_to_yee reads it */
+            }
         }
 
         /* 2. SENSE — read the grid into the graph */
@@ -320,6 +324,7 @@ int cortex_heartbeat(Cortex *c, int n_cycles) {
          * 0.3x amplitude hypotheses. Sponge kills wrong ones.
          * Verified predictions strengthen edges. */
         int verified = cortex_predict(c);
+        (void)verified;
 
         /* 5. SELF-OBSERVE — every 4th cycle.
          * The engine reads its own resonance pattern, encodes it,

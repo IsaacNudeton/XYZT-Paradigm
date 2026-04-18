@@ -1654,6 +1654,112 @@ int main(int argc, char *argv[]) {
             printf("  >>> d STABLE. No dimensional change. <<<\n");
 
         cortex_destroy(&ctx);
+    } else if (strcmp(argv[1], "loop_test") == 0) {
+        /* ═══════════════════════════════════════════════════════
+         * LOOP CLOSURE EXPERIMENT
+         *
+         * Does self-reference change the substrate's dimensionality?
+         *
+         * Phase 1: Ingest + carve with cortex_tick (no heartbeat).
+         *          The L-field gets shaped by data but the voice
+         *          never re-enters the grid. Loop is OPEN.
+         * Phase 2: Measure d_eff on the carved field → d_before.
+         * Phase 3: Run cortex_heartbeat (loop CLOSED — voice hits
+         *          retina via wire_retina_inject). Same carved field,
+         *          now with self-referencing feedback.
+         * Phase 4: Measure d_eff → d_after.
+         *
+         * If d_after > d_before, self-reference adds a confinement
+         * boundary. The 5th dimension shows up empirically.
+         * ═══════════════════════════════════════════════════════ */
+        #define LT_CARVE_CYCLES   10   /* cortex_tick cycles to carve L-field */
+        #define LT_HEARTBEAT_CYCLES 25 /* heartbeat cycles with loop closed */
+        #define LT_MEAS_TICKS     200  /* ticks per d_eff measurement */
+
+        Cortex ctx;
+        if (cortex_init(&ctx) != 0) { printf("Cortex init failed\n"); return 1; }
+        Engine *eng = &ctx.eng;
+        Graph *g = &eng->shells[0].g;
+
+        printf("=== LOOP CLOSURE EXPERIMENT ===\n\n");
+
+        /* --- Phase 1: Ingest + carve (loop OPEN) --- */
+        const char *feed_file = (argc >= 3) ? argv[2] : "cortex.c";
+        FILE *ff = fopen(feed_file, "r");
+        int n_feed = 0;
+        if (ff) {
+            char line[512];
+            while (fgets(line, sizeof(line), ff) && n_feed < 30) {
+                int len = (int)strlen(line);
+                if (len < 20) continue;
+                if (line[len-1] == '\n') line[--len] = '\0';
+                cortex_ingest(&ctx, line, (const uint8_t *)line, len);
+                n_feed++;
+            }
+            fclose(ff);
+        }
+        printf("  Ingested: %d lines from '%s'\n", n_feed, feed_file);
+
+        printf("  Carving: %d cortex_tick cycles (no heartbeat, loop open)...\n",
+               LT_CARVE_CYCLES);
+        cortex_tick(&ctx, LT_CARVE_CYCLES);
+        printf("  Carved. Nodes=%d Edges=%d\n\n", g->n_nodes, g->n_edges);
+
+        /* Pick measurement voxel — first alive non-layer-zero node */
+        int meas_vid = -1;
+        for (int i = 0; i < g->n_nodes; i++) {
+            Node *nd = &g->nodes[i];
+            if (!nd->alive || nd->layer_zero) continue;
+            int gx = coord_x(nd->coord) % YEE_GX;
+            int gy = coord_y(nd->coord) % YEE_GY;
+            int gz = coord_z(nd->coord) % YEE_GZ;
+            meas_vid = gx + gy * YEE_GX + gz * YEE_GX * YEE_GY;
+            printf("  Measuring at node[%d] '%s' voxel %d\n", i, nd->name, meas_vid);
+            break;
+        }
+        if (meas_vid < 0) {
+            meas_vid = YEE_GX/2 + (YEE_GY/2)*YEE_GX + (YEE_GZ/2)*YEE_GX*YEE_GY;
+            printf("  No alive nodes — measuring at grid center\n");
+        }
+
+        /* --- Phase 2: Measure d_eff (loop OPEN) --- */
+        printf("\n--- d_eff BEFORE loop closure ---\n");
+        float d_before = measure_d_eff(meas_vid, LT_MEAS_TICKS);
+
+        /* --- Phase 3: Heartbeat (loop CLOSED) --- */
+        printf("\n--- Heartbeat: %d cycles (loop closed, voice → retina) ---\n",
+               LT_HEARTBEAT_CYCLES);
+        printf("  cycle  d_eff   nodes  edges  children\n");
+        for (int c = 0; c < LT_HEARTBEAT_CYCLES; c++) {
+            cortex_heartbeat(&ctx, 1);
+            if ((c+1) % 5 == 0) {
+                float d = measure_d_eff(meas_vid, LT_MEAS_TICKS);
+                printf("  %4d   %.3f   %4d   %4d   %4d\n",
+                       c+1, d, g->n_nodes, g->n_edges, eng->n_children);
+            }
+        }
+
+        /* --- Phase 4: Final measurement --- */
+        printf("\n--- d_eff AFTER loop closure ---\n");
+        float d_after = measure_d_eff(meas_vid, LT_MEAS_TICKS);
+
+        /* --- Verdict --- */
+        float delta = d_after - d_before;
+        printf("\n=== RESULT ===\n");
+        printf("  d_before (loop open)   = %.3f\n", d_before);
+        printf("  d_after  (loop closed) = %.3f\n", d_after);
+        printf("  delta                  = %+.3f\n", delta);
+        printf("  Nodes: %d, Edges: %d, Children: %d\n",
+               g->n_nodes, g->n_edges, eng->n_children);
+
+        if (delta > 0.05f)
+            printf("  >>> d INCREASED. Self-reference adds confinement. <<<\n");
+        else if (delta < -0.05f)
+            printf("  >>> d DECREASED. Self-reference collapses a dimension. <<<\n");
+        else
+            printf("  >>> d STABLE. Loop closure did not change dimensionality. <<<\n");
+
+        cortex_destroy(&ctx);
     } else if (strcmp(argv[1], "sing") == 0 && argc >= 3) {
         /* Sonify the L-field: knowledge as a chord, dreaming as a fade */
         Engine eng;
